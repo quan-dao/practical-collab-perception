@@ -98,7 +98,7 @@ def partition_pointcloud(pc_in_glo: np.ndarray, box: Box, tol=1e-2) -> Tuple:
 
 
 def get_clean_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5,
-                               dyna_classes=('vehicle', 'human'), debug=False) -> np.ndarray:
+                               dyna_classes=('vehicle', 'human'), debug=False, center_radius=2.) -> np.ndarray:
     sd_tokens = get_pointclouds_sequence_token(nusc, sample_token, num_samples)
     ref_rec = nusc.get('sample_data', sd_tokens[-1])
 
@@ -116,6 +116,9 @@ def get_clean_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5,
     for _sd_token in sd_tokens:
         lidar_path = nusc.get_sample_data_path(_sd_token)
         pc = np.fromfile(lidar_path, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
+        # remove ego points
+        mask = ~((np.abs(pc[:, 0]) < center_radius) & (np.abs(pc[:, 1]) < center_radius))
+        pc = pc[mask]
         # get time lag
         sd_rec = nusc.get('sample_data', _sd_token)
         pc_times = np.tile(np.array([[ref_time - sd_rec['timestamp'] * 1e-6]]), (pc.shape[0], 1))
