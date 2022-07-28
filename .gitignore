@@ -15,3 +15,9 @@ venv/
 *.bin
 output
 version.py
+
+data/nuscenes
+build
+--cfg_file
+--version
+_dev_space
