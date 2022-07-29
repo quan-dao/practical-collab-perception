@@ -10,6 +10,11 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+try:
+    import hostlist
+    import idr_torch
+except:
+    pass
 
 
 def check_numpy_to_torch(x):
@@ -58,8 +63,9 @@ def rotate_points_along_z(points, angle):
 
 
 def mask_points_by_range(points, limit_range):
-    mask = (points[:, 0] >= limit_range[0]) & (points[:, 0] <= limit_range[3]) \
-           & (points[:, 1] >= limit_range[1]) & (points[:, 1] <= limit_range[4])
+    mask = (points[:, 0] >= limit_range[0]) & (points[:, 0] < limit_range[3]) \
+           & (points[:, 1] >= limit_range[1]) & (points[:, 1] < limit_range[4]) \
+           & (points[:, 2] >= limit_range[2]) & (points[:, 2] < limit_range[5])
     return mask
 
 
@@ -141,7 +147,7 @@ def keep_arrays_by_name(gt_names, used_classes):
     return inds
 
 
-def init_dist_slurm(tcp_port, local_rank, backend='nccl'):
+def init_dist_slurm():
     """
     modified from https://github.com/open-mmlab/mmdetection
     Args:
@@ -151,36 +157,42 @@ def init_dist_slurm(tcp_port, local_rank, backend='nccl'):
     Returns:
 
     """
-    proc_id = int(os.environ['SLURM_PROCID'])
-    ntasks = int(os.environ['SLURM_NTASKS'])
-    node_list = os.environ['SLURM_NODELIST']
-    num_gpus = torch.cuda.device_count()
-    torch.cuda.set_device(proc_id % num_gpus)
-    addr = subprocess.getoutput('scontrol show hostname {} | head -n1'.format(node_list))
-    os.environ['MASTER_PORT'] = str(tcp_port)
-    os.environ['MASTER_ADDR'] = addr
-    os.environ['WORLD_SIZE'] = str(ntasks)
-    os.environ['RANK'] = str(proc_id)
-    dist.init_process_group(backend=backend)
+    # get SLURM var
+    rank = int(os.environ['SLURM_PROCID'])
+    local_rank = int(os.environ['SLURM_LOCALID'])
+    size = int(os.environ['SLURM_NTASKS'])
+    cpus_per_task = int(os.environ['SLURM_CPUS_PER_TASK'])
+    # get node list from slurm
+    hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
+    # get IDs of reserved GPU
+    gpu_ids = os.environ['SLURM_STEP_GPUS'].split(",")
+    # define MASTER_ADD & MASTER_PORT
+    os.environ['MASTER_ADDR'] = hostnames[0]
+    os.environ['MASTER_PORT'] = str(12345 + int(min(gpu_ids)))  # to avoid port conflict on the same node
+
+    dist.init_process_group(backend='nccl',
+                            init_method='env://',
+                            world_size=idr_torch.size,
+                            rank=idr_torch.rank)
+
+    torch.cuda.set_device(idr_torch.local_rank)
 
     total_gpus = dist.get_world_size()
     rank = dist.get_rank()
     return total_gpus, rank
 
 
-def init_dist_pytorch(tcp_port, local_rank, backend='nccl'):
+def init_dist_pytorch():
     if mp.get_start_method(allow_none=True) is None:
         mp.set_start_method('spawn')
-    # os.environ['MASTER_PORT'] = str(tcp_port)
-    # os.environ['MASTER_ADDR'] = 'localhost'
-    num_gpus = torch.cuda.device_count()
-    torch.cuda.set_device(local_rank % num_gpus)
 
+    num_gpus = idr_torch.size
+    torch.cuda.set_device(idr_torch.local_rank)
     dist.init_process_group(
-        backend=backend,
-        # init_method='tcp://127.0.0.1:%d' % tcp_port,
-        # rank=local_rank,
-        # world_size=num_gpus
+        backend='nccl',
+        init_method='env://',
+        rank=idr_torch.rank,
+        world_size=num_gpus
     )
     rank = dist.get_rank()
     return num_gpus, rank

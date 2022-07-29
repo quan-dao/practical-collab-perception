@@ -17,7 +17,7 @@ def get_git_commit_number():
     return git_commit_number
 
 
-script_version = get_git_commit_number()
+script_version = "0.5.2+c233477"  # get_git_commit_number()
 
 
 if script_version not in __version__:
