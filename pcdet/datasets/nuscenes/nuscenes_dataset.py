@@ -24,6 +24,10 @@ class NuScenesDataset(DatasetTemplate):
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
 
+        if self.dataset_cfg.get('USE_MINI_TRAINVAL', False):
+            self.infos.sort(key=lambda e: e['timestamp'])
+            self.infos = self.infos[::8]  # use 1/8th of the trainval data
+
         if dataset_cfg.get('USE_CLEAN_MERGE_POINTCLOUD', False):
             self.use_clean_merge_pointcloud = True
             self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
