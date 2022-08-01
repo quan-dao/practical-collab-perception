@@ -15,5 +15,5 @@ conda deactivate
 module load pytorch-gpu/py3/1.7.0+hvd-0.21.0
 
 set -x
-srun python -u train.py --cfg_file cfgs/nuscenes_models/cbgs_dyn_pp_centerpoint.yaml --batch_size 1 \
-    --extra_tag test_pp_div8
+srun python -u train.py --cfg_file cfgs/nuscenes_models/cbgs_dyn_pp_centerpoint.yaml --batch_size 3 \
+    --extra_tag test_pp_div8_bs3 --fix_random_seed
