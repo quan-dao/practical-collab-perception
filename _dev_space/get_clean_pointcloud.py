@@ -180,8 +180,12 @@ def get_clean_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5,
             pts_in_box[:, :3] = apply_transform_to_points(ref_from_glo @ glo_from_box, pts_in_box[:, :3])
             dyna_pc.append(pts_in_box)
 
-    dyna_pc = np.vstack(dyna_pc)
-    merge_pc = np.vstack([static_pc, dyna_pc])
+    if dyna_pc:
+        dyna_pc = np.vstack(dyna_pc)
+        merge_pc = np.vstack([static_pc, dyna_pc])
+    else:
+        merge_pc = static_pc
+
     if not debug:
         return merge_pc
     else:
