@@ -2,9 +2,9 @@
 #SBATCH --job-name=build_openpcdet
 #SBATCH --partition=prepost
 #SBATCH --qos=qos_gpu-dev
-#SBATCH --output=./log_out/build_openpcdet_%j.out
-#SBATCH --error=./log_err/build_openpcdet_%j.err
-#SBATCH --time=00:25:00
+#SBATCH --output=./tools/idr_log/build_openpcdet_%j.out
+#SBATCH --error=./tools/idr_log/build_openpcdet_%j.err
+#SBATCH --time=00:20:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 

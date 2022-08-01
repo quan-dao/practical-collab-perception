@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=gen_kitti_db
+#SBATCH --job-name=gen_nusc_db
 #SBATCH --partition=prepost
 #SBATCH --qos=qos_gpu-dev
-#SBATCH --output=./log_out/gen_kitti_db_%j.out
-#SBATCH --error=./log_err/gen_kitti_db_%j.err
+#SBATCH --output=./tools/idr_log/gen_nusc_db_%j.out
+#SBATCH --error=./tools/idr_log/gen_nusc_db_%j.err
 #SBATCH --time=01:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12

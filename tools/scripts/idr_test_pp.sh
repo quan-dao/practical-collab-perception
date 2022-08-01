@@ -3,7 +3,7 @@
 #SBATCH --partition=prepost
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
-#SBATCH --time=00:05:00
+#SBATCH --time=00:07:00
 #SBATCH --output=idr_log/test_pp_%j.out
 #SBATCH --error=idr_log/test_pp_%j.err
 
