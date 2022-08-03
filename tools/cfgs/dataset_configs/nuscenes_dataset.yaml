@@ -4,7 +4,7 @@ DATA_PATH: '../data/nuscenes'
 VERSION: 'v1.0-trainval'
 
 USE_MINI_TRAINVAL: False
-USE_CLEAN_MERGE_POINTCLOUD: False
+USE_CLEAN_MERGE_POINTCLOUD: True
 NUM_SAMPLES_IN_SEQUENCE: 5
 
 MAX_SWEEPS: 10
@@ -48,6 +48,7 @@ DATA_AUGMENTOR:
           DATABASE_WITH_FAKELIDAR: False
           REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
           LIMIT_WHOLE_SCENE: True
+          ADD_POINT_TYPE_INDICATOR: True
 
         - NAME: random_world_flip
           ALONG_AXIS_LIST: ['x', 'y']
@@ -61,8 +62,8 @@ DATA_AUGMENTOR:
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'point_indicator'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'point_indicator'],
 }
 
 

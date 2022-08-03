@@ -401,6 +401,10 @@ class DataBaseSampler(object):
             obj_points_list.append(obj_points)
 
         obj_points = np.concatenate(obj_points_list, axis=0)
+        if self.sampler_cfg.get('ADD_POINT_TYPE_INDICATOR', False):
+            obj_points_type = np.tile(np.array([[3]]), (obj_points.shape[0], 1))
+            obj_points = np.concatenate([obj_points, obj_points_type], axis=1)
+
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
 
         large_sampled_gt_boxes = box_utils.enlarge_box3d(

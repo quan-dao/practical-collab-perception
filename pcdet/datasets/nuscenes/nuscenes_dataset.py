@@ -132,7 +132,7 @@ class NuScenesDataset(DatasetTemplate):
 
         info = copy.deepcopy(self.infos[index])
         points = get_merge_pointcloud(self.nusc, info['token'], num_samples=self.num_samples_in_sequence,
-                                      debug=False, clean_using_annos=self.use_clean_merge_pointcloud)
+                                      clean_using_annos=self.use_clean_merge_pointcloud)
 
         input_dict = {
             'points': points,

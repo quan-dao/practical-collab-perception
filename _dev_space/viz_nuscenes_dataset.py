@@ -37,10 +37,10 @@ logger = common_utils.create_logger('./dummy_log.txt')
 
 cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                    'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
-cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 'random_world_rotation',
+cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['random_world_flip', 'random_world_rotation',
                                        'random_world_scaling']
 cfg.VERSION = 'v1.0-mini'
-cfg.USE_CLEAN_MERGE_POINTCLOUD = False
+cfg.USE_CLEAN_MERGE_POINTCLOUD = True
 
 
 nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
@@ -68,12 +68,18 @@ plt.show()
 pc = data_dict['points']
 gt_boxes = data_dict['gt_boxes']
 print(gt_boxes[:10, -1])
-
 _boxes = viz_boxes(gt_boxes)
-show_pointcloud(pc[:, :3], _boxes)
 
+mask_un_cleaned = (pc[:, -1] == 0) | (pc[:, -1] == 1) | (pc[:, -1] == 3)
+show_pointcloud(pc[mask_un_cleaned, :3], _boxes)
 
+mask_cleaned = (pc[:, -1] == 0) | (pc[:, -1] == 2) | (pc[:, -1] == 3)
+assert np.any(pc[:, -1] == 2)
 
+colors = np.zeros((pc.shape[0], 3))
+colors[pc[:, -1] == 2, 2] = 1  # blue for dyna_pc
+colors[pc[:, -1] == 3, 1] = 1  # green for database sampled pc
+show_pointcloud(pc[mask_cleaned, :3], _boxes, colors[mask_cleaned])
 
 
 
