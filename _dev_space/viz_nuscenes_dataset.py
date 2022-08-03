@@ -37,8 +37,10 @@ logger = common_utils.create_logger('./dummy_log.txt')
 
 cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                    'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
-# cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['random_world_flip', 'random_world_rotation',
-#                                        'random_world_scaling']
+cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 'random_world_rotation',
+                                       'random_world_scaling']
+cfg.VERSION = 'v1.0-mini'
+cfg.USE_CLEAN_MERGE_POINTCLOUD = False
 
 
 nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
@@ -59,7 +61,6 @@ for k, v in data_dict.items():
 
 print(data_dict['metadata'])
 
-# 10: f2d48fe35d5646659dc339e1d36886f9
 sample_rec = nuscenes_dataset.nusc.get('sample', data_dict['metadata']['token'])
 nuscenes_dataset.nusc.render_sample_data(sample_rec['data']['CAM_FRONT'])
 plt.show()

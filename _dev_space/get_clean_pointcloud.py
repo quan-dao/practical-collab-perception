@@ -97,8 +97,8 @@ def partition_pointcloud(pc_in_glo: np.ndarray, box: Box, tol=1e-2) -> Tuple:
     return pts_in_box, pc_in_glo[np.logical_not(mask_inside)]
 
 
-def get_clean_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5,
-                               dyna_classes=('vehicle', 'human'), debug=False, center_radius=2.) -> np.ndarray:
+def get_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5, dyna_classes=('vehicle', 'human'),
+                         debug=False, center_radius=2., clean_using_annos=False) -> np.ndarray:
     sd_tokens = get_pointclouds_sequence_token(nusc, sample_token, num_samples)
     ref_rec = nusc.get('sample_data', sd_tokens[-1])
 
@@ -140,27 +140,28 @@ def get_clean_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5,
         # ===
         # partition pc into static & dynamic
         # ===
-        boxes = nusc.get_boxes(_sd_token)
-        # remove nondynamic & empty boxes
-        mask_nonempty = []
-        inst_tokens = []
-        for _bi, box in enumerate(boxes):
-            anno_rec = nusc.get('sample_annotation', box.token)
-            inst_tokens.append(anno_rec['instance_token'])
-            if box.name.split('.')[0] not in dyna_classes:
-                continue
-            num_pts = anno_rec['num_lidar_pts'] + anno_rec['num_radar_pts']
-            if num_pts > 0:
-                mask_nonempty.append(_bi)
-        boxes = [boxes[_bi] for _bi in mask_nonempty]
-        inst_tokens = [inst_tokens[_bi] for _bi in mask_nonempty]
-        # iterate boxes, accumulate points of annotation
-        for _inst_token, box in zip(inst_tokens, boxes):
-            pts_in_box, pc = partition_pointcloud(pc, box)
-            if _inst_token in annos:
-                annos[_inst_token].append(pts_in_box)
-            else:
-                annos[_inst_token] = [pts_in_box]
+        if clean_using_annos:
+            boxes = nusc.get_boxes(_sd_token)
+            # remove nondynamic & empty boxes
+            mask_nonempty = []
+            inst_tokens = []
+            for _bi, box in enumerate(boxes):
+                anno_rec = nusc.get('sample_annotation', box.token)
+                inst_tokens.append(anno_rec['instance_token'])
+                if box.name.split('.')[0] not in dyna_classes:
+                    continue
+                num_pts = anno_rec['num_lidar_pts'] + anno_rec['num_radar_pts']
+                if num_pts > 0:
+                    mask_nonempty.append(_bi)
+            boxes = [boxes[_bi] for _bi in mask_nonempty]
+            inst_tokens = [inst_tokens[_bi] for _bi in mask_nonempty]
+            # iterate boxes, accumulate points of annotation
+            for _inst_token, box in zip(inst_tokens, boxes):
+                pts_in_box, pc = partition_pointcloud(pc, box)
+                if _inst_token in annos:
+                    annos[_inst_token].append(pts_in_box)
+                else:
+                    annos[_inst_token] = [pts_in_box]
         # store static pc
         static_pc.append(pc)  # in GLOBAL frame
 
@@ -170,15 +171,16 @@ def get_clean_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5,
 
     # get points in boxes that are visible @ the sample_token (so-called dynamic pc)
     dyna_pc = []
-    sample = nusc.get('sample', sample_token)
-    for ann_token in sample['anns']:
-        anno_rec = nusc.get('sample_annotation', ann_token)
-        if anno_rec['instance_token'] in annos:
-            pts_in_box = np.vstack(annos[anno_rec['instance_token']])  # (N_in_box, 3+C)
-            # map pts_in_box from box's frame to ref frame
-            glo_from_box = transform_matrix(anno_rec['translation'], Quaternion(anno_rec['rotation']))
-            pts_in_box[:, :3] = apply_transform_to_points(ref_from_glo @ glo_from_box, pts_in_box[:, :3])
-            dyna_pc.append(pts_in_box)
+    if clean_using_annos:
+        sample = nusc.get('sample', sample_token)
+        for ann_token in sample['anns']:
+            anno_rec = nusc.get('sample_annotation', ann_token)
+            if anno_rec['instance_token'] in annos:
+                pts_in_box = np.vstack(annos[anno_rec['instance_token']])  # (N_in_box, 3+C)
+                # map pts_in_box from box's frame to ref frame
+                glo_from_box = transform_matrix(anno_rec['translation'], Quaternion(anno_rec['rotation']))
+                pts_in_box[:, :3] = apply_transform_to_points(ref_from_glo @ glo_from_box, pts_in_box[:, :3])
+                dyna_pc.append(pts_in_box)
 
     if dyna_pc:
         dyna_pc = np.vstack(dyna_pc)
@@ -215,10 +217,10 @@ if __name__ == '__main__':
     #     nusc.render_sample_data(_sample_rec['data']['CAM_FRONT'])
     #     plt.show()
 
-    merge_pc, mask_dync = get_clean_merge_pointcloud(nusc, sample['token'], debug=True)
+    merge_pc, mask_dync = get_merge_pointcloud(nusc, sample['token'], debug=True)
     pc_colors = np.zeros((merge_pc.shape[0], 3))
     pc_colors[mask_dync, 2] = 1  # blue for dyna
-    show_pointcloud(merge_pc[:, :3], None, pc_colors)
+    show_pointcloud(merge_pc[:, :3], None, pc_colors=None)
 
 
 

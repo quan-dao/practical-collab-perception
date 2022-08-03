@@ -5,7 +5,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
     USE_MINI_TRAINVAL: True
     USE_CLEAN_MERGE_POINTCLOUD: True
-    NUM_SAMPELS_IN_SEQUENCE: 1
+    NUM_SAMPLES_IN_SEQUENCE: 1
 
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
     DATA_PROCESSOR:

@@ -9,7 +9,7 @@ from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
-from _dev_space.get_clean_pointcloud import get_clean_merge_pointcloud
+from _dev_space.get_clean_pointcloud import get_merge_pointcloud
 from nuscenes.nuscenes import NuScenes
 
 
@@ -24,17 +24,14 @@ class NuScenesDataset(DatasetTemplate):
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
 
-        if self.dataset_cfg.get('USE_MINI_TRAINVAL', False):
+        if self.dataset_cfg.get('USE_MINI_TRAINVAL', False) and training:
             self.infos.sort(key=lambda e: e['timestamp'])
             self.infos = self.infos[::8]  # use 1/8th of the trainval data
 
-        if dataset_cfg.get('USE_CLEAN_MERGE_POINTCLOUD', False):
-            self.use_clean_merge_pointcloud = True
-            self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
-            self.num_samples_in_sequence = dataset_cfg.NUM_SAMPELS_IN_SEQUENCE
-        else:
-            self.use_clean_merge_pointcloud = False
-            self.nusc, self.num_samples_in_sequence = None, -1
+        self.use_clean_merge_pointcloud = dataset_cfg.get('USE_CLEAN_MERGE_POINTCLOUD', False)
+        self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
+        self.num_samples_in_sequence = dataset_cfg.NUM_SAMPLES_IN_SEQUENCE
+        assert self.num_samples_in_sequence > 0
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -134,11 +131,8 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
 
         info = copy.deepcopy(self.infos[index])
-        if not self.use_clean_merge_pointcloud:
-            points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
-        else:
-            points = get_clean_merge_pointcloud(self.nusc, info['token'], num_samples=self.num_samples_in_sequence,
-                                                debug=False)
+        points = get_merge_pointcloud(self.nusc, info['token'], num_samples=self.num_samples_in_sequence,
+                                      debug=False, clean_using_annos=self.use_clean_merge_pointcloud)
 
         input_dict = {
             'points': points,
