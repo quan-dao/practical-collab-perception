@@ -43,6 +43,8 @@ class PointFeatureEncoder(object):
     def absolute_coordinates_encoding(self, points=None):
         if points is None:
             num_output_features = len(self.used_feature_list)
+            if 'point_indicator' in self.used_feature_list:
+                num_output_features -= 1
             return num_output_features
 
         point_feature_list = [points[:, 0:3]]
