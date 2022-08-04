@@ -61,7 +61,7 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
             aff = torch.bmm(x.transpose(1, 2).contiguous(), x)  # (B, N, N)
             if _normalize_using_norm:
                 norm = torch.linalg.norm(x, dim=1, keepdim=True)  # (B, 1, N)
-                normalizer = torch.bmm(norm.permute(1, 2).contiguous(), norm)  # (B, N, N)
+                normalizer = torch.bmm(norm.transpose(1, 2).contiguous(), norm)  # (B, N, N)
                 mask_valid_norm = normalizer > 1e-4  # (B, N, N)
                 aff[mask_valid_norm] = aff[mask_valid_norm] / normalizer[mask_valid_norm]
             else:
