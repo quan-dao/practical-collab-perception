@@ -120,7 +120,10 @@ MODEL:
             NUM_UPSAMPLE_FILTERS: [ 128, 128, 128 ]
 
         TEACHER_CKPT: temp_ckpt/clean_nsample1_epo5.pth
-        LOSS_WEIGHTS: [1.0]
+        KD_AFFINITY_LOSS:
+            NORMALIZE_USING_NORM: True
+            DOWNSAMPLE_FACTOR: 2
+        LOSS_WEIGHTS: [1.0, 1.0]
 
 
 OPTIMIZATION:
