@@ -208,7 +208,6 @@ def get_merge_pointcloud(nusc: NuScenes, sample_token: str, num_samples=5, dyna_
                 dyna_pc.append(pts_in_box)
 
     if dyna_pc:
-        print('dyna_pc is not empty ........')
         dyna_pc = np.vstack(dyna_pc)  # (N_in_boxes, 5) - doesn't have flag_in_box like merge_pc
         dyna_indicator = np.tile(np.array([[2]]), (dyna_pc.shape[0], 1))
         dyna_pc = np.concatenate([dyna_pc, dyna_indicator], axis=1)  # (N_in_boxes, 5+1)

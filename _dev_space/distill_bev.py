@@ -32,8 +32,7 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
         student_encoder_fmap = batch_dict['spatial_features_2d']  # (B, C, H, W)
         assert teacher_encoder_fmap.shape == student_encoder_fmap.shape
         kd_loss = self._kd_loss_KLdiv(student_encoder_fmap, teacher_encoder_fmap) * self.model_cfg.LOSS_WEIGHTS[0]
-        batch_dict['kd_loss'] = kd_loss
-        return batch_dict
+        return kd_loss
 
     def _kd_loss_KLdiv(self, student_fmap, teacher_fmap):
         n_bev_channels = student_fmap.shape[1]
