@@ -22,7 +22,7 @@ DATA_CONFIG:
             VOXEL_SIZE: [0.2, 0.2, 8.0]
 
 MODEL:
-    NAME: CenterPoint
+    NAME: DistillBEVCenterPoint
 
     VFE:
         NAME: DynPillarVFE
