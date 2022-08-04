@@ -5,8 +5,8 @@ from pcdet.models.detectors.detector3d_template import Detector3DTemplate
 
 
 class KnowledgeDistillationLoss(Detector3DTemplate):
-    def __init__(self, teacher_model_cfg):
-        super().__init__(teacher_model_cfg, teacher_model_cfg.NUM_CLASS, None)
+    def __init__(self, teacher_model_cfg, num_class, dataset):
+        super().__init__(teacher_model_cfg, num_class=num_class, dataset=dataset)
         self.module_list = self.build_networks()
         self.load_teacher_weights()
         # set teacher to inference mode & freeze teacher's weights
