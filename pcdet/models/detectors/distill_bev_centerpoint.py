@@ -8,7 +8,7 @@ class DistillBEVCenterPoint(CenterPoint):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
         self.module_list = self.build_networks()
         if self.training:
-            self.kd_loss_module = KnowledgeDistillationLoss(model_cfg.DISTILL_BEV)
+            self.kd_loss_module = KnowledgeDistillationLoss(model_cfg.DISTILL_BEV, num_class, dataset)
 
     def forward(self, batch_dict):
         for cur_module in self.module_list:
