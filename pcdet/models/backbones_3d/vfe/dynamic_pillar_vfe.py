@@ -88,7 +88,17 @@ class DynamicPillarVFE(VFETemplate):
         return self.num_filters[-1]
 
     def forward(self, batch_dict, **kwargs):
-        points = batch_dict['points'] # (batch_idx, x, y, z, i, e)
+        # batch_dict['points']  # (batch_idx, x, y, z, intensity, timelag, point_type_indicator)
+        assert batch_dict['points'].shape[1] == 7, \
+            f"points must have point_type_indicator, current points.shape {batch_dict['points'].shape}"
+        if self.model_cfg.USE_UNCLEANED_PC:
+            mask_ = (batch_dict['points'][:, -1] == 0) | (batch_dict['points'][:, -1] == 1) | \
+                    (batch_dict['points'][:, -1] == 3)
+        else:
+            # use cleaned pc (produced by using annotations)
+            mask_ = (batch_dict['points'][:, -1] == 0) | (batch_dict['points'][:, -1] == 2) | \
+                    (batch_dict['points'][:, -1] == 3)
+        points = batch_dict['points'][mask_, :-1]  # (batch_idx, x, y, z, intensity, timelag)
 
         points_coords = torch.floor((points[:, [1,2]] - self.point_cloud_range[[0,1]]) / self.voxel_size[[0,1]]).int()
         mask = ((points_coords >= 0) & (points_coords < self.grid_size[[0,1]])).all(dim=1)

@@ -98,6 +98,30 @@ MODEL:
 
         EVAL_METRIC: kitti
 
+    DISTILL_BEV:
+        VFE:
+            NAME: DynPillarVFE
+            WITH_DISTANCE: False
+            USE_ABSLOTE_XYZ: True
+            USE_NORM: True
+            NUM_FILTERS: [ 64, 64 ]
+            USE_UNCLEANED_PC: False
+
+        MAP_TO_BEV:
+            NAME: PointPillarScatter
+            NUM_BEV_FEATURES: 64
+
+        BACKBONE_2D:
+            NAME: BaseBEVBackbone
+            LAYER_NUMS: [ 3, 5, 5 ]
+            LAYER_STRIDES: [ 2, 2, 2 ]
+            NUM_FILTERS: [ 64, 128, 256 ]
+            UPSAMPLE_STRIDES: [ 0.5, 1, 2 ]
+            NUM_UPSAMPLE_FILTERS: [ 128, 128, 128 ]
+
+        TEACHER_CKPT: temp_ckpt/clean_nsample1_epo5.pth
+        LOSS_WEIGHTS: [1.0]
+
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4
