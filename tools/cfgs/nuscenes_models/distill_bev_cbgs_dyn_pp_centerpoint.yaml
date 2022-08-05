@@ -120,6 +120,7 @@ MODEL:
             NUM_UPSAMPLE_FILTERS: [ 128, 128, 128 ]
 
         DENSE_HEAD:
+            IS_TEACHING: True
             NAME: CenterHead
             CLASS_AGNOSTIC: False
 
