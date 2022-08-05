@@ -24,6 +24,7 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
         state_dict, update_model_state = self._load_state_dict(model_state_disk, strict=False)
 
     def forward(self, batch_dict, tb_dict):
+        self.eval()
         # forward prop in teacher to get teacher's encoder_feat_map
         teacher_dict = {'points': batch_dict['points']}
         for cur_module in self.module_list:
