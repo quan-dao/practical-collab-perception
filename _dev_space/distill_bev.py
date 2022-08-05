@@ -29,20 +29,45 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
         for cur_module in self.module_list:
             teacher_dict = cur_module(teacher_dict)
 
-        teacher_encoder_fmap = teacher_dict['spatial_features_2d']  # (B, C, H, W)
-        student_encoder_fmap = batch_dict['spatial_features_2d']  # (B, C, H, W)
-        assert teacher_encoder_fmap.shape == student_encoder_fmap.shape
+        # Distill encoder
+        tea_enc = teacher_dict['spatial_features_2d']  # (B, C, H, W)
+        stu_enc = batch_dict['spatial_features_2d']  # (B, C, H, W)
+        assert tea_enc.shape == stu_enc.shape
+        enc_kl_div = self._kd_loss_KLdiv(stu_enc, tea_enc)
+        enc_aff_loss = self._kd_loss_affinity(
+            stu_enc, tea_enc, self.aff_cfg.NORMALIZE_USING_NORM, self.aff_cfg.DOWNSAMPLE_FACTOR
+        )
+        enc_l1_loss = self._kd_loss_l1(stu_enc, tea_enc)
 
-        kl_div = self._kd_loss_KLdiv(student_encoder_fmap, teacher_encoder_fmap) * self.model_cfg.LOSS_WEIGHTS[0]
-        aff_loss = self._kd_loss_affinity(
-            student_encoder_fmap, teacher_encoder_fmap,
-            self.aff_cfg.NORMALIZE_USING_NORM, self.aff_cfg.DOWNSAMPLE_FACTOR
-        ) * self.model_cfg.LOSS_WEIGHTS[1]
+        # Distill decoder
+        tea_dec = teacher_dict['decoded_spatial_features_2d']
+        stu_dec = batch_dict['decoded_spatial_features_2d']  # (B, C, H, W)
+        assert tea_dec.shape == stu_dec.shape
+        dec_kl_div = self._kd_loss_KLdiv(stu_dec, tea_dec)
+        dec_aff_loss = self._kd_loss_affinity(
+            stu_dec, tea_dec, self.aff_cfg.NORMALIZE_USING_NORM, self.aff_cfg.DOWNSAMPLE_FACTOR
+        )
+        dec_l1_loss = self._kd_loss_l1(stu_dec, tea_dec)
 
-        kd_loss = kl_div + aff_loss
+        # Distill head's heatmaps
+        tea_hms = teacher_dict['pred_heatmaps']
+        stu_hms = batch_dict['pred_heatmaps']
+        hm_loss = 0.0
+        for _stu_hm, _tea_hm in zip(stu_hms, tea_hms):
+            hm_loss = hm_loss + self._kd_loss_l1(_stu_hm, _tea_hm)
+
+        # Total loss
+        kl_div = (enc_kl_div + dec_kl_div) * self.model_cfg.LOSS_WEIGHTS[0]
+        aff_loss = (enc_aff_loss + dec_aff_loss) * self.model_cfg.LOSS_WEIGHTS[1]
+        l1_loss = (enc_l1_loss + dec_l1_loss) * self.model_cfg.LOSS_WEIGHTS[2]
+        hm_loss = hm_loss * self.model_cfg.LOSS_WEIGHTS[3]
+
+        kd_loss = kl_div + aff_loss + l1_loss + hm_loss
         tb_dict['kd_loss'] = kd_loss.item()
         tb_dict['kd_kl_div'] = kl_div.item()
         tb_dict['kd_aff_loss'] = aff_loss.item()
+        tb_dict['kd_l1_loss'] = l1_loss.item()
+        tb_dict['hm_loss'] = hm_loss.item()
         return kd_loss, tb_dict
 
     def _kd_loss_KLdiv(self, student_fmap, teacher_fmap):
@@ -65,7 +90,7 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
                 mask_valid_norm = normalizer > 1e-4  # (B, N, N)
                 aff[mask_valid_norm] = aff[mask_valid_norm] / normalizer[mask_valid_norm]
             else:
-                mask_valid_norm = torch.ones_like(aff, dtype=torch.bool)
+                mask_valid_norm = None
             return aff, mask_valid_norm
 
         if downsample_factor > 1:
@@ -75,6 +100,17 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
 
         student_aff, stud_valid = _compute_affinity(student_fmap, normalize_using_norm)  # (B, N, N) | N = H * W
         teacher_aff, tea_valid = _compute_affinity(teacher_fmap, normalize_using_norm)  # (B, N, N) | N = H * W
-        _valid = torch.logical_and(stud_valid, tea_valid)  # (B, N, N)
-        aff_loss = F.l1_loss(student_aff[_valid], teacher_aff[_valid], reduction='mean')
+        if normalize_using_norm:
+            _valid = torch.logical_and(stud_valid, tea_valid)  # (B, N, N)
+            aff_loss = F.l1_loss(student_aff[_valid], teacher_aff[_valid], reduction='mean')
+        else:
+            aff_loss = F.l1_loss(student_aff, teacher_aff, reduction='mean')
         return aff_loss
+
+    def _kd_loss_l1(self, stu_fmap, tea_fmap, gt_mask=None):
+        if gt_mask is not None:
+            raise NotImplementedError
+
+        l1_loss = F.l1_loss(stu_fmap, tea_fmap, reduction='mean')
+        return l1_loss
+

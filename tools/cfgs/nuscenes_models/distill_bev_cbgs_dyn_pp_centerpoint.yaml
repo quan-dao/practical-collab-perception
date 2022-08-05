@@ -119,11 +119,54 @@ MODEL:
             UPSAMPLE_STRIDES: [ 0.5, 1, 2 ]
             NUM_UPSAMPLE_FILTERS: [ 128, 128, 128 ]
 
+        DENSE_HEAD:
+            NAME: CenterHead
+            CLASS_AGNOSTIC: False
+
+            CLASS_NAMES_EACH_HEAD: [
+                [ 'car' ],
+                [ 'truck', 'construction_vehicle' ],
+                [ 'bus', 'trailer' ],
+                [ 'barrier' ],
+                [ 'motorcycle', 'bicycle' ],
+                [ 'pedestrian', 'traffic_cone' ],
+            ]
+
+            SHARED_CONV_CHANNEL: 64
+            USE_BIAS_BEFORE_NORM: True
+            NUM_HM_CONV: 2
+            SEPARATE_HEAD_CFG:
+                HEAD_ORDER: [ 'center', 'center_z', 'dim', 'rot' ]
+                HEAD_DICT: {}
+
+            TARGET_ASSIGNER_CONFIG:
+                FEATURE_MAP_STRIDE: 4
+                NUM_MAX_OBJS: 500
+                GAUSSIAN_OVERLAP: 0.1
+                MIN_RADIUS: 2
+
+            LOSS_CONFIG:
+                LOSS_WEIGHTS: {
+                    'cls_weight': 1.0,
+                    'loc_weight': 0.25,
+                    'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2 ]
+                }
+
+            POST_PROCESSING:
+                SCORE_THRESH: 0.1
+                POST_CENTER_LIMIT_RANGE: [ -61.2, -61.2, -10.0, 61.2, 61.2, 10.0 ]
+                MAX_OBJ_PER_SAMPLE: 500
+                NMS_CONFIG:
+                    NMS_TYPE: nms_gpu
+                    NMS_THRESH: 0.2
+                    NMS_PRE_MAXSIZE: 1000
+                    NMS_POST_MAXSIZE: 83
+
         TEACHER_CKPT: temp_ckpt/clean_nsample1_epo5.pth
         KD_AFFINITY_LOSS:
             NORMALIZE_USING_NORM: True
             DOWNSAMPLE_FACTOR: 2
-        LOSS_WEIGHTS: [1.0, 1.0]
+        LOSS_WEIGHTS: [1.0, 1.0, 1.0, 1.0]
 
 
 OPTIMIZATION:
