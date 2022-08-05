@@ -19,9 +19,16 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
 
     def load_teacher_weights(self):
         filename = self.model_cfg.TEACHER_CKPT
-        checkpoint = torch.load(filename, map_location=None)
+        print(f'Distillation | ==> Loading parameters from checkpoint {filename} to CPU')
+        loc_type = torch.device('cpu')
+        checkpoint = torch.load(filename, map_location=loc_type)
         model_state_disk = checkpoint['model_state']
         state_dict, update_model_state = self._load_state_dict(model_state_disk, strict=False)
+        for key in state_dict:
+            if key not in update_model_state:
+                print('Distillation | Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
+
+        print('Distillation | ==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
 
     def forward(self, batch_dict, tb_dict):
         self.eval()
@@ -55,7 +62,7 @@ class KnowledgeDistillationLoss(Detector3DTemplate):
         stu_hms = batch_dict['pred_heatmaps']
         hm_loss = 0.0
         for _stu_hm, _tea_hm in zip(stu_hms, tea_hms):
-            hm_loss = hm_loss + self._kd_loss_l1(_stu_hm, _tea_hm)
+            hm_loss = hm_loss + self._kd_loss_l1(_stu_hm, _tea_hm) / len(stu_hms)
 
         # Total loss
         kl_div = (enc_kl_div + dec_kl_div) * self.model_cfg.LOSS_WEIGHTS[0]
