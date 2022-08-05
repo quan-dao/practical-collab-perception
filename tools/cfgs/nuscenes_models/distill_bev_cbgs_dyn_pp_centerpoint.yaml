@@ -164,7 +164,7 @@ MODEL:
 
         TEACHER_CKPT: temp_ckpt/clean_nsample1_epo5.pth
         KD_AFFINITY_LOSS:
-            NORMALIZE_USING_NORM: True
+            NORMALIZE_USING_NORM: False
             DOWNSAMPLE_FACTOR: 2
         LOSS_WEIGHTS: [1.0, 1.0, 1.0, 1.0]
 
