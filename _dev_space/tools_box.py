@@ -4,7 +4,7 @@ from nuscenes.nuscenes import NuScenes
 from get_clean_pointcloud import show_pointcloud
 
 
-DYNAMIC_CLASSES = ('human', 'vehicle')
+DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
 CENTER_RADIUS = 1.
 
 
@@ -30,7 +30,7 @@ def apply_tf(tf: np.ndarray, points: np.ndarray):
 
 
 def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radius=CENTER_RADIUS, ground_height=None,
-                            return_foreground_mask=False, dyna_cls=DYNAMIC_CLASSES, box_tol=1e-2,
+                            return_foreground_mask=False, dyna_cls=DYNAMIC_CLASSES, box_tol=5e-2,
                             pc_time=None) -> tuple:
     pcfile = nusc.get_sample_data_path(sample_data_token)
     pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
@@ -48,9 +48,9 @@ def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radiu
 
     if return_foreground_mask:
         boxes = nusc.get_boxes(sample_data_token)  # in global
-        mask_foreground = np.zeros(pc.shape[0], dtype=bool)
+        mask_foreground = -np.ones(pc.shape[0])
         glob_from_curr = get_nuscenes_sensor_pose_in_global(nusc, sample_data_token)
-        for box in boxes:
+        for bidx, box in enumerate(boxes):
             if box.name.split('.')[0] not in dyna_cls:
                 continue
             anno_rec = nusc.get('sample_annotation', box.token)
@@ -63,7 +63,7 @@ def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radiu
                 np.abs(pts_wrt_box / np.array([box.wlh[1], box.wlh[0], box.wlh[2]])) < (0.5 + box_tol),
                 axis=1
             )
-            mask_foreground = mask_foreground | mask_inside_box
+            mask_foreground[mask_inside_box] = bidx
 
         return pc, mask_foreground
     else:
@@ -192,3 +192,24 @@ def get_boxes_4viz(nusc, sample_data_token):
         this_box_corners = corners * np.array([box.wlh[1], box.wlh[0], box.wlh[2]])
         out.append(apply_tf(curr_from_box, this_box_corners))
     return out
+
+
+def get_sweeps_token(nusc: NuScenes, curr_sd_token: str, n_sweeps: int, return_time_lag=True) -> list:
+    ref_sd_rec = nusc.get('sample_data', curr_sd_token)
+    ref_time = ref_sd_rec['timestamp'] * 1e-6
+    sd_tokens_times = []
+    for _ in range(n_sweeps):
+        if curr_sd_token == '':
+            break
+        curr_sd = nusc.get('sample_data', curr_sd_token)
+        sd_tokens_times.append((curr_sd_token, ref_time - curr_sd['timestamp'] * 1e-6))
+        # move to previous
+        curr_sd_token = curr_sd['prev']
+
+    # organize from PAST to PRESENCE
+    sd_tokens_times.reverse()
+
+    if return_time_lag:
+        return sd_tokens_times
+    else:
+        return [token for token, _ in sd_tokens_times]
