@@ -4,7 +4,7 @@ from nuscenes.nuscenes import NuScenes
 from get_clean_pointcloud import show_pointcloud
 
 
-DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
+DYNAMIC_CLASSES = ('vehicle',)  # 'human'
 CENTER_RADIUS = 1.
 
 
@@ -30,8 +30,8 @@ def apply_tf(tf: np.ndarray, points: np.ndarray):
 
 
 def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radius=CENTER_RADIUS, ground_height=None,
-                            return_foreground_mask=False, dyna_cls=DYNAMIC_CLASSES, box_tol=5e-2,
-                            pc_time=None) -> tuple:
+                            return_foreground_mask=False, dyna_cls=DYNAMIC_CLASSES, box_tol=1e-2,
+                            pc_time=None, return_gt_clusters=False) -> tuple:
     pcfile = nusc.get_sample_data_path(sample_data_token)
     pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
     if pc_time is not None:
@@ -48,7 +48,7 @@ def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radiu
 
     if return_foreground_mask:
         boxes = nusc.get_boxes(sample_data_token)  # in global
-        mask_foreground = -np.ones(pc.shape[0])
+        mask_foreground = -np.ones(pc.shape[0], dtype=int)
         glob_from_curr = get_nuscenes_sensor_pose_in_global(nusc, sample_data_token)
         for bidx, box in enumerate(boxes):
             if box.name.split('.')[0] not in dyna_cls:
@@ -64,7 +64,8 @@ def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radiu
                 axis=1
             )
             mask_foreground[mask_inside_box] = bidx
-
+        if not return_gt_clusters:
+            mask_foreground = mask_foreground > -1
         return pc, mask_foreground
     else:
         return pc, None
@@ -73,7 +74,7 @@ def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radiu
 def get_nuscenes_pointcloud_in_target_frame(nusc: NuScenes, curr_sd_token: str, target_sd_token: str = None,
                                             center_radius=CENTER_RADIUS, ground_height: float = None,
                                             return_foreground_mask=False,
-                                            pc_range: list = None):
+                                            pc_range: list = None, pc_time=None):
     """
     Get pointcloud and map its points to the target frame represented by target_sd_token
 
@@ -85,11 +86,12 @@ def get_nuscenes_pointcloud_in_target_frame(nusc: NuScenes, curr_sd_token: str, 
         ground_height: to filter points on & below ground
         return_foreground_mask:
         pc_range:
+        pc_time: time lag w.r.t reference sample data
     Returns:
         (np.ndarray): (N, 3+C)
     """
     pc, mask_foreground = get_nuscenes_pointcloud(nusc, curr_sd_token, center_radius, ground_height,
-                                                  return_foreground_mask)
+                                                  return_foreground_mask, pc_time=pc_time)
     if target_sd_token is not None:
         glob_from_curr = get_nuscenes_sensor_pose_in_global(nusc, curr_sd_token)
         glob_from_target = get_nuscenes_sensor_pose_in_global(nusc, target_sd_token)

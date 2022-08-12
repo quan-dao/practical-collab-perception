@@ -13,6 +13,9 @@ nusc = NuScenes(dataroot='../data/nuscenes/v1.0-mini', version='v1.0-mini', verb
 PC_RANGE = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
 MAX_MOVING_DIST = 1.0
 THRESHOLD_INTER_CLUSTER_DIST = 1.0  # 0.
+VOX_SIZE = 0.2
+SIZE = int(np.round((PC_RANGE[3] - PC_RANGE[0]) / VOX_SIZE))
+DIST_XY_NEAR_THRESHOLD = 10.
 
 
 def show_cluster_on_image(xy, labels, ax, marker='o', anno_prefix=''):
@@ -50,9 +53,8 @@ def main(scene_idx, target_sample_idx):
     ref_sd_token = sd_tokens_times[-1][0]
 
     # ========================================
-    dbscanner = DBSCAN(eps=3.0, min_samples=5)  # not moving obj -> less points -> treat them like static
-    vox_size = 0.2
-    size = int(np.round((PC_RANGE[3] - PC_RANGE[0]) / vox_size))
+    dbscanner_near = DBSCAN(eps=2.0, min_samples=5)  # not moving obj -> less points -> treat them like static
+    dbscanner_far = DBSCAN(eps=7.0, min_samples=5)  # not moving obj -> less points -> treat them like static
     # =========================================
 
     pcs, mask_fgrs = [], []
@@ -76,11 +78,46 @@ def main(scene_idx, target_sample_idx):
     pc_bgr = pcs[~mask_fgrs]  # (N_bgr, 3+C)
     pc_fgr = pcs[mask_fgrs]  # (N_fgr, 3+C)
 
+    # split fgr to near & far
+    fgr_dist_xy = np.linalg.norm(pc_fgr[:, :2], axis=1)
+    mask_fgr_near = fgr_dist_xy < DIST_XY_NEAR_THRESHOLD
+    pc_fgr_near = pc_fgr[mask_fgr_near]
+    pc_fgr_far = pc_fgr[~mask_fgr_near]
+
+    dyna_clusters_near, additional_bgr_near = correct_foreground(pc_fgr_near, dbscanner_near)
+    dyna_clusters_far, additional_bgr_far = correct_foreground(pc_fgr_far, dbscanner_far)
+
+    dyna_clusters = []
+    if isinstance(dyna_clusters_near, np.ndarray):
+        dyna_clusters.append(dyna_clusters_near)
+    if isinstance(dyna_clusters_far, np.ndarray):
+        dyna_clusters.append(dyna_clusters_far)
+
+    additional_bgr = []
+    if additional_bgr_near is not None:
+        additional_bgr.append(additional_bgr_near)
+    if additional_bgr_far is not None:
+        additional_bgr.append(additional_bgr_far)
+
+    if additional_bgr:
+        pc_bgr = np.vstack([pc_bgr, *additional_bgr])
+
+    corrected_pc = np.vstack([pc_bgr, *dyna_clusters])
+    pc_colors = np.zeros((corrected_pc.shape[0], 3))
+    pc_colors[pc_bgr.shape[0]:, 0] = 1
+    show_pointcloud(corrected_pc[:, :3], get_boxes_4viz(nusc, ref_sd_token), pc_colors)
+    return
+
+
+def correct_foreground(pc_fgr, dbscanner):
+    if pc_fgr.shape[0] == 0:
+        return [], None
+
     # compute BEV pixel coord
-    pc_fgr_pixels = np.floor((pc_fgr[:, :2] - PC_RANGE[:2]) / vox_size).astype(int)
-    pc_fgr_pixels_1d = pc_fgr_pixels[:, 1] * size + pc_fgr_pixels[:, 0]
+    pc_fgr_pixels = np.floor((pc_fgr[:, :2] - PC_RANGE[:2]) / VOX_SIZE).astype(int)
+    pc_fgr_pixels_1d = pc_fgr_pixels[:, 1] * SIZE + pc_fgr_pixels[:, 0]
     unq_pixels_1d = np.unique(pc_fgr_pixels_1d)
-    unq_pixels_2d = np.stack((unq_pixels_1d % size, unq_pixels_1d // size), axis=1)
+    unq_pixels_2d = np.stack((unq_pixels_1d % SIZE, unq_pixels_1d // SIZE), axis=1)
 
     # clustering
     dbscanner.fit(unq_pixels_2d[:, :2])
@@ -108,7 +145,7 @@ def main(scene_idx, target_sample_idx):
         points_ts = cluster_points[:, 4]
         unq_ts = np.unique(points_ts).tolist()
         unq_ts.reverse()
-        final_center = np.mean(cluster_points[points_ts == 0, :2], axis=0)
+        final_center = np.mean(cluster_points[points_ts == unq_ts[-1], :2], axis=0)
         for ts in unq_ts:
             if ts == 0:
                 break
@@ -119,74 +156,15 @@ def main(scene_idx, target_sample_idx):
 
         dyna_clusters.append(cluster_points)
 
-    dyna_clusters = np.vstack(dyna_clusters)
+    if dyna_clusters:
+        dyna_clusters = np.vstack(dyna_clusters)
 
     if not np.all(mask_fgr_valid):
-        pc_bgr = np.vstack([pc_bgr, pc_fgr[~mask_fgr_valid]])
+        additional_bgr = pc_fgr[~mask_fgr_valid]
+    else:
+        additional_bgr = None
 
-    corrected_pc = np.vstack([pc_bgr, dyna_clusters])
-    pc_colors = np.zeros((corrected_pc.shape[0], 3))
-    pc_colors[pc_bgr.shape[0]:, 0] = 1
-    show_pointcloud(corrected_pc[:, :3], get_boxes_4viz(nusc, ref_sd_token), pc_colors)
-    return
-
-
-
-    # =======================================
-    # fig, ax = plt.subplots(1, 2)
-    # for aix in range(len(ax)):
-    #     ax[aix].grid()
-    #     ax[aix].set_aspect('equal')
-    #     ax[aix].set_xlim([0, size])
-    #     ax[aix].set_ylim([0, size])
-    # show_cluster_on_image(fgr_bev_xy, fgr_labels, ax[0], marker='o', anno_prefix='pr')
-    # ax[1].scatter(pc_fgr_pixels[:, 0], pc_fgr_pixels[:, 1], marker='o')
-    # # show_cluster_on_image(fgr_pixels, prev_fg_mask[prev_fg_mask > -1].astype(int), ax[1], marker='o', anno_prefix='pr')
-    # plt.show()
-    #
-    # chosen_cluster = input('enter chosen cluster: ')
-    # # TODO: find pts inside a cluster
-    # pix_in_cluster = fgr_bev_xy[fgr_labels == int(chosen_cluster)]
-    # min_xy = np.amin(pix_in_cluster, axis=0)
-    # max_xy = np.amax(pix_in_cluster, axis=0)
-    # in_cluster = np.all((pc_fgr_pixels >= min_xy) & (pc_fgr_pixels < max_xy), axis=1)
-    # pts_in_cluster = np.hstack((pc_fgr_pixels[in_cluster], pc_fgr[in_cluster, -1].reshape(-1, 1)))
-    #
-    # unq_ts = np.unique(pts_in_cluster[:, -1]).tolist()
-    # unq_ts.reverse()
-    # print('unq_ts: ', unq_ts)
-    # sub_clusters = [pts_in_cluster[pts_in_cluster[:, -1] == ts] for ts in unq_ts]
-    # sub_clusters_center = [np.copy(np.mean(each[:, :2], axis=0)) for each in sub_clusters]
-    #
-    # _old_sub_clusters = deepcopy(sub_clusters)
-    #
-    # # sequential offset
-    # for sub_clt_idx in range(len(sub_clusters) - 1):
-    #     curr_center = np.mean(sub_clusters[sub_clt_idx][:, :2], axis=0)
-    #     # next_center = np.mean(sub_clusters[sub_clt_idx + 1][:, :2], axis=0)
-    #     next_center = sub_clusters_center[sub_clt_idx + 1]
-    #     offset = next_center - curr_center
-    #     sub_clusters[sub_clt_idx][:, :2] += offset
-    #     sub_clusters[sub_clt_idx + 1] = np.vstack([sub_clusters[sub_clt_idx + 1], sub_clusters[sub_clt_idx]])
-    #
-    # colors_palette = np.array([plt.cm.Spectral(each)[:3] for each in np.linspace(0, 1, len(sub_clusters))])
-    # fig2, ax2 = plt.subplots(1, 3)
-    # for aix in range(len(ax2)):
-    #     ax2[aix].grid()
-    #     ax2[aix].set_aspect('equal')
-    #     ax2[aix].set_xlim([min_xy[0] - 2, max_xy[0] + 2])
-    #     ax2[aix].set_ylim([min_xy[1] - 2, max_xy[1] + 2])
-    # for idx, old_sub_clt, sub_clt in zip(range(len(sub_clusters)), _old_sub_clusters, sub_clusters):
-    #     ax2[0].scatter(old_sub_clt[:, 0], old_sub_clt[:, 1], c=np.tile(colors_palette[[idx]], (old_sub_clt.shape[0], 1)),
-    #                    marker='o')
-    #     ax2[1].scatter([sub_clusters_center[idx][0]], [sub_clusters_center[idx][1]], marker='^',
-    #                    c=colors_palette[[idx]])
-    # ax2[2].scatter(sub_clt[:, 0], sub_clt[:, 1],
-    #                c=np.tile(colors_palette[[idx]], (sub_clt.shape[0], 1)),
-    #                marker='o')
-    #
-    # plt.show()
-    # np.save(f'cluster_{chosen_cluster}.npy', pts_in_cluster)
+    return dyna_clusters, additional_bgr
 
 
 if __name__ == '__main__':
