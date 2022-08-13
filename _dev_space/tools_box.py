@@ -4,7 +4,7 @@ from nuscenes.nuscenes import NuScenes
 from get_clean_pointcloud import show_pointcloud
 
 
-DYNAMIC_CLASSES = ('vehicle',)  # 'human'
+DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
 CENTER_RADIUS = 1.
 
 
@@ -201,12 +201,11 @@ def get_sweeps_token(nusc: NuScenes, curr_sd_token: str, n_sweeps: int, return_t
     ref_time = ref_sd_rec['timestamp'] * 1e-6
     sd_tokens_times = []
     for _ in range(n_sweeps):
-        if curr_sd_token == '':
-            break
         curr_sd = nusc.get('sample_data', curr_sd_token)
         sd_tokens_times.append((curr_sd_token, ref_time - curr_sd['timestamp'] * 1e-6))
         # move to previous
-        curr_sd_token = curr_sd['prev']
+        if curr_sd['prev'] != '':
+            curr_sd_token = curr_sd['prev']
 
     # organize from PAST to PRESENCE
     sd_tokens_times.reverse()
@@ -215,3 +214,7 @@ def get_sweeps_token(nusc: NuScenes, curr_sd_token: str, n_sweeps: int, return_t
         return sd_tokens_times
     else:
         return [token for token, _ in sd_tokens_times]
+
+
+def check_list_to_numpy(ls):
+    return np.array(ls) if isinstance(ls, list) else ls

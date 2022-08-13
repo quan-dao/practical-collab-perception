@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import open3d as o3d
 
 
-def show_pointcloud(xyz, boxes=None, pc_colors=None):
+def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None):
     """
     Visualize pointcloud & annotations
     Args:
@@ -34,6 +34,11 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None):
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
+
+    if fgr_mask is not None:
+        pc_colors = np.zeros((xyz.shape[0], 3))
+        pc_colors[fgr_mask, 0] = 1
+
     if pc_colors is not None:
         pcd.colors = o3d.utility.Vector3dVector(pc_colors)
     if boxes is not None:

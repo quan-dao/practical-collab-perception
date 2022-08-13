@@ -10,6 +10,7 @@ from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
 from _dev_space.get_clean_pointcloud import get_merge_pointcloud
+from _dev_space.get_sweeps import get_sweeps
 from nuscenes.nuscenes import NuScenes
 
 
@@ -28,10 +29,7 @@ class NuScenesDataset(DatasetTemplate):
             self.infos.sort(key=lambda e: e['timestamp'])
             self.infos = self.infos[::8]  # use 1/8th of the trainval data
 
-        self.use_clean_merge_pointcloud = dataset_cfg.get('USE_CLEAN_MERGE_POINTCLOUD', False)
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
-        self.num_samples_in_sequence = dataset_cfg.NUM_SAMPLES_IN_SEQUENCE
-        assert self.num_samples_in_sequence > 0
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -131,14 +129,24 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
 
         info = copy.deepcopy(self.infos[index])
-        points = get_merge_pointcloud(self.nusc, info['token'], num_samples=self.num_samples_in_sequence,
-                                      clean_using_annos=self.use_clean_merge_pointcloud)
+        # points = get_merge_pointcloud(self.nusc, info['token'], num_samples=self.num_samples_in_sequence,
+        #                               clean_using_annos=self.use_clean_merge_pointcloud)
+        _out = get_sweeps(self.nusc, info['token'], n_sweeps=self.dataset_cfg.MAX_SWEEPS,
+                          correct_dyna_pts=self.dataset_cfg.get('CORRECT_DYNA_PTS', True),
+                          use_gt_fgr=self.dataset_cfg.get('USE_GT_FGR', True),
+                          pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], bev_pix_size=0.2, dist_xy_near_threshold=10.,
+                          debug=self.dataset_cfg.get('DEBUG', False))
+        points = _out[0]
 
         input_dict = {
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token']}
         }
+        if self.dataset_cfg.get('DEBUG', False):
+            input_dict['dataset_debug_points_mask_fgr'] = _out[1]
+            input_dict['dataset_debug_emc_sweeps'] = _out[2]
+            input_dict['dataset_debug_emc_mask_fgr'] = _out[3]
 
         if 'gt_boxes' in info:
             if self.dataset_cfg.get('FILTER_MIN_POINTS_IN_GT', False):
