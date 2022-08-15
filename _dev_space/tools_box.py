@@ -1,10 +1,11 @@
 from pyquaternion import Quaternion
 import numpy as np
 from nuscenes.nuscenes import NuScenes
+from nuscenes.utils.geometry_utils import view_points
 from get_clean_pointcloud import show_pointcloud
 
 
-DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
+DYNAMIC_CLASSES = ('vehicle',)  # 'human'
 CENTER_RADIUS = 1.
 
 
@@ -218,3 +219,128 @@ def get_sweeps_token(nusc: NuScenes, curr_sd_token: str, n_sweeps: int, return_t
 
 def check_list_to_numpy(ls):
     return np.array(ls) if isinstance(ls, list) else ls
+
+
+def project_pointcloud_to_image(nusc: NuScenes, sweep_token: str, cam_token: str, sweep: np.ndarray):
+    """
+    Args:
+        nusc:
+        sweep_token:
+        cam_token:
+        sweep: (N, 3+C) in lidar frame
+    Returns:
+        sweep_pix_coord: (N, 2) pixel coordinate
+        sweep_in_img: (N,) - bool | True for points in image
+    """
+    # map sweep to camera frame
+    glob_from_lidar = get_nuscenes_sensor_pose_in_global(nusc, sweep_token)
+    glob_from_cam = get_nuscenes_sensor_pose_in_global(nusc, cam_token)
+    cam_from_lidar = np.linalg.inv(glob_from_cam) @ glob_from_lidar
+    sweep_cam_coord = apply_tf(cam_from_lidar, sweep[:, :3])  # (N, 3)
+    sweep_in_img = sweep_cam_coord[:, 2] > 1.  # depth > 1.
+
+    # project
+    cam_rec = nusc.get('sample_data', cam_token)
+    cam_cs_rec = nusc.get('calibrated_sensor', cam_rec['calibrated_sensor_token'])
+    sweep_pix_coord = view_points(sweep_cam_coord.T, np.array(cam_cs_rec['camera_intrinsic']), normalize=True)  # (3, N)
+    sweep_pix_coord = sweep_pix_coord[:2].T  # (N, 2)
+
+    # in side img
+    cam_size = np.array([cam_rec['width'], cam_rec['height']])
+    sweep_in_img = np.all((sweep_pix_coord >= 1.) & (sweep_pix_coord < (cam_size - 1)), axis=1) & sweep_in_img
+
+    return sweep_pix_coord, sweep_in_img
+
+
+def get_nuscenes_pointcloud_partitioned_by_instances(nusc: NuScenes, curr_sd_token: str, target_sd_token: str,
+                                                     pc_time=None, box_tol=1e-2) -> tuple:
+    pcfile = nusc.get_sample_data_path(curr_sd_token)
+    pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
+
+    # pad pc with time
+    if pc_time is not None:
+        assert isinstance(pc_time, float)
+        pc = np.concatenate([pc, np.tile(np.array([[pc_time]]), (pc.shape[0], 1))], axis=1)
+
+    # remove ego points
+    too_close_mask = np.square(pc[:, :2]).sum(axis=1) < CENTER_RADIUS ** 2
+    pc = pc[np.logical_not(too_close_mask)]
+
+    # map pc to global frame
+    glob_from_curr = get_nuscenes_sensor_pose_in_global(nusc, curr_sd_token)
+    pc[:, :3] = apply_tf(glob_from_curr, pc[:, :3])
+
+    # to map pc to target frame
+    target_from_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(nusc, target_sd_token))
+
+    # partition pc using instances
+    boxes = nusc.get_boxes(curr_sd_token)  # in global
+    mask_foreground = np.zeros(pc.shape[0], dtype=bool)
+    instances = dict()
+    for bidx, box in enumerate(boxes):
+        if box.name.split('.')[0] not in DYNAMIC_CLASSES:
+            continue
+        anno_rec = nusc.get('sample_annotation', box.token)
+        if anno_rec['num_lidar_pts'] == 0:
+            continue
+
+        # map pc to box's local frame
+        box_from_glob = np.linalg.inv(tf(box.center, box.orientation))
+        pts_wrt_box = apply_tf(box_from_glob, pc[:, :3])
+        # find pts inside box
+        mask_inside_box = np.all(
+            np.abs(pts_wrt_box / np.array([box.wlh[1], box.wlh[0], box.wlh[2]])) < (0.5 + box_tol),
+            axis=1
+        )
+        mask_foreground = mask_foreground | mask_inside_box
+
+        # map box's pts to target frame
+        box_pts = pc[mask_inside_box]
+        box_pts[:, :3] = apply_tf(target_from_glob, box_pts[:, :3])
+        instances[anno_rec['instance_token']] = box_pts
+
+    # background points
+    background = pc[~mask_foreground]
+    background[:, :3] = apply_tf(target_from_glob, background[:, :3])
+
+    return background, instances
+
+
+def get_target_sample_token(nusc, scene_idx: int, target_sample_idx: int):
+    scene = nusc.scene[scene_idx]
+    sample_token = scene['first_sample_token']
+    for _ in range(target_sample_idx - 1):
+        sample_rec = nusc.get('sample', sample_token)
+        sample_token = sample_rec['next']
+
+    return sample_token
+
+
+def compute_bev_coord(pts: np.ndarray, pc_range: np.ndarray, bev_pix_size: float, pts_feat=None):
+    """
+    Compute occupancy in BEV -> output has less element than input
+    Returns:
+        occ_2d (np.ndarray): (N_occ, 2) - pix_x, pix_y
+        occ_feat (np.ndarray): (N_occ, N_feat)
+    """
+    # find in range
+    mask_in_range = np.all((pts[:, :3] >= pc_range[:3]) & (pts[:, :3] < (pc_range[3:] - 1e-3)), axis=1)
+
+    bev_size = np.floor((pc_range[3: 5] - pc_range[0: 2]) / bev_pix_size).astype(int)  # [width, height]
+
+    pts_pixel_coord = np.floor((pts[mask_in_range, :2] - pc_range[:2]) / bev_pix_size).astype(int)
+
+    pts_1d = pts_pixel_coord[:, 1] * bev_size[0] + pts_pixel_coord[:, 0]
+    occ_1d, inv_indices, counts = np.unique(pts_1d, return_inverse=True, return_counts=True)
+
+    if pts_feat is not None:
+        assert len(pts_feat.shape) == 2, f"pts_feat must have shape of (N_pts, N_feat)"
+        pts_feat = pts_feat[mask_in_range]
+        pix_feat = np.zeros((occ_1d.shape[0], pts_feat.shape[1]))
+        np.add.at(pix_feat, inv_indices, pts_feat)
+        pix_feat /= counts.reshape(-1, 1)
+    else:
+        pix_feat = None
+
+    occ_2d = np.stack((occ_1d % bev_size[0], occ_1d // bev_size[0]), axis=1)  # (N_occ, 2)
+    return occ_2d, pix_feat
