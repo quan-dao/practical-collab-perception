@@ -4,6 +4,7 @@ from pcdet.utils import common_utils
 from pcdet.datasets import NuScenesDataset
 from get_clean_pointcloud import show_pointcloud, apply_transform_to_points
 import matplotlib.pyplot as plt
+from tools_box import get_boxes_4viz
 
 
 def viz_boxes(boxes: np.ndarray):
@@ -37,15 +38,15 @@ logger = common_utils.create_logger('./dummy_log.txt')
 
 cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                    'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
-cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 'random_world_rotation',
-                                       'random_world_scaling']
+cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip',
+                                       'random_world_rotation', 'random_world_scaling']
 cfg.VERSION = 'v1.0-mini'
 cfg.USE_CLEAN_MERGE_POINTCLOUD = True
 cfg.DEBUG = True
 
 
 nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
-data_dict = nuscenes_dataset[30]
+data_dict = nuscenes_dataset[100]  # 400, 200, 100
 
 
 for k, v in data_dict.items():
@@ -68,16 +69,16 @@ plt.show()
 
 pc = data_dict['points']
 pc_fgr_mask = data_dict['dataset_debug_points_mask_fgr']
-gt_boxes = data_dict['gt_boxes']
-print(gt_boxes[:10, -1])
-_boxes = viz_boxes(gt_boxes)
-
 
 emc_only_pc = data_dict['dataset_debug_emc_sweeps']
 emc_only_pc_mask_fgr = data_dict['dataset_debug_emc_mask_fgr']
-show_pointcloud(emc_only_pc[:, :3], _boxes, fgr_mask=emc_only_pc_mask_fgr)
+show_pointcloud(emc_only_pc[:, :3], get_boxes_4viz(nuscenes_dataset.nusc, sample_rec['data']['LIDAR_TOP']),
+                fgr_mask=emc_only_pc_mask_fgr)
 
-print('whatt?: ', pc_fgr_mask.astype(int).sum())
-show_pointcloud(pc[:, :3], _boxes, fgr_mask=pc_fgr_mask)
+# print('whatt?: ', pc_fgr_mask.astype(int).sum())
+gt_boxes = data_dict['gt_boxes']
+print(gt_boxes[:10, -1])
+_boxes = viz_boxes(gt_boxes)
+show_pointcloud(pc[:, :3], _boxes, fgr_mask=None)
 
 

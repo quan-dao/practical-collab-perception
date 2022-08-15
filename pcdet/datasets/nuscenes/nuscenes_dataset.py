@@ -134,7 +134,7 @@ class NuScenesDataset(DatasetTemplate):
         _out = get_sweeps(self.nusc, info['token'], n_sweeps=self.dataset_cfg.MAX_SWEEPS,
                           correct_dyna_pts=self.dataset_cfg.get('CORRECT_DYNA_PTS', True),
                           use_gt_fgr=self.dataset_cfg.get('USE_GT_FGR', True),
-                          pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], bev_pix_size=0.2, dist_xy_near_threshold=10.,
+                          pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], bev_pix_size=0.2, dist_xy_near_threshold=20.,
                           debug=self.dataset_cfg.get('DEBUG', False))
         points = _out[0]
 
