@@ -2,7 +2,7 @@ from pyquaternion import Quaternion
 import numpy as np
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
-from get_clean_pointcloud import show_pointcloud
+from _dev_space.get_clean_pointcloud import show_pointcloud
 
 
 DYNAMIC_CLASSES = ('vehicle',)  # 'human'
