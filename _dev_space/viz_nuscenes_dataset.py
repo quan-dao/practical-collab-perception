@@ -41,7 +41,6 @@ cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
 cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip',
                                        'random_world_rotation', 'random_world_scaling']
 cfg.VERSION = 'v1.0-mini'
-cfg.USE_CLEAN_MERGE_POINTCLOUD = True
 cfg.DEBUG = True
 
 
