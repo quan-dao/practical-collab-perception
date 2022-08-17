@@ -150,6 +150,9 @@ def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_siz
             window = np.vstack([window, cur_group])
 
         # TODO: decide whether to keep corrected cluster based on std dev of velocity
+        if not velos:
+            # empty velos ???
+            continue
         velo_var = np.mean(np.square(np.array(velos) - np.mean(velos)))
         if np.sqrt(velo_var) > threshold_velo_std_dev:
             # too large -> not keep corrected cluster
