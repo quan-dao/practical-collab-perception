@@ -45,7 +45,7 @@ cfg.DEBUG = True
 
 
 nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
-data_dict = nuscenes_dataset[100]  # 400, 200, 100
+data_dict = nuscenes_dataset[20]  # 400, 200, 100, 5, 10
 
 
 for k, v in data_dict.items():

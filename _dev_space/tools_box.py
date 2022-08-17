@@ -5,7 +5,7 @@ from nuscenes.utils.geometry_utils import view_points
 from _dev_space.get_clean_pointcloud import show_pointcloud
 
 
-DYNAMIC_CLASSES = ('vehicle',)  # 'human'
+DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
 CENTER_RADIUS = 1.
 
 

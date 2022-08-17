@@ -7,7 +7,7 @@ from _dev_space.tools_box import get_nuscenes_pointcloud_in_target_frame, get_sw
 
 def get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int, correct_dyna_pts=False, use_gt_fgr=False,
                center_radius=2., pc_range=None, bev_pix_size=None, dist_xy_near_threshold=None,
-               dbscann_eps=(2.0, 7.0), dbscann_min_samples=(5, 5),
+               dbscann_eps=(2.0, 7.0), dbscann_min_samples=(5, 5), threshold_velo_std_dev=4.50,  # 4.5
                debug=False) -> List:
     """
     Accumulate n_sweeps to make a NuScenes pointcloud. By default, these sweeps are propagated to the timestamp of
@@ -61,27 +61,18 @@ def get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int, correct_dyna_pt
         _emc_sweeps, _emc_mask_fgr = np.copy(sweeps), np.copy(mask_fgr)
 
     # Note: why set min_samples high (e.g., 5 pixels)? not moving obj -> less points -> treat them like static
-    dbscanners = [DBSCAN(eps=eps, min_samples=min_samples) for eps, min_samples in zip(dbscann_eps, dbscann_min_samples)]
+    dbscanner = DBSCAN(eps=7, min_samples=5)
 
     # split sweeps into foreground & background
     background, foreground = sweeps[~mask_fgr], sweeps[mask_fgr]
 
-    # split foreground to near & far to be clustered by different dbscanners
-    fgr_dist_xy = np.linalg.norm(foreground[:, :2], axis=1)  # (N_fgr,)
-    mask_near = fgr_dist_xy < dist_xy_near_threshold
-    fgr_near, fgr_far = foreground[mask_near], foreground[~mask_near]
-
     # correct foreground
-    corrected_fgr, new_bgr = [], []
-    for fgr_pts, scanner in zip([fgr_near, fgr_far], dbscanners):
-        crt_pts, not_crt_pts = correct_points(fgr_pts, scanner, pc_range, bev_pix_size)
-        if crt_pts.shape[0] > 0:
-            corrected_fgr.append(crt_pts)
-        if not_crt_pts.shape[0] > 0:
-            new_bgr.append(not_crt_pts)
+    crt_fgr, not_crt = correct_points(foreground, dbscanner, pc_range, bev_pix_size, threshold_velo_std_dev)
+    if not_crt.size > 0:
+        background = np.vstack([background, not_crt])
 
-    background = np.vstack([background, *new_bgr])
-    corrected_sweeps = np.vstack([background, *corrected_fgr])
+    corrected_sweeps = np.vstack([background, crt_fgr]) if crt_fgr.size > 0 else background
+
     mask_corrected_sweeps_fgr = np.zeros(corrected_sweeps.shape[0], dtype=bool)
     mask_corrected_sweeps_fgr[background.shape[0]:] = True
     out = [corrected_sweeps, mask_corrected_sweeps_fgr]
@@ -90,7 +81,8 @@ def get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int, correct_dyna_pt
     return out
 
 
-def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_size: float) -> Tuple:
+def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_size: float,
+                   threshold_velo_std_dev: float) -> Tuple:
     """
     Points are clustered across space, then each cluster is splitted into groups based on timestamp.
     Older groups will be moved so that their centroids are coincide with the centroid of the most recent group.
@@ -130,26 +122,42 @@ def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_siz
         max_xy = np.amax(occ_in_cluster, axis=0)
         # find pts whose pixel coords fall inside the smallest bounding rectangle
         mask_pts_in_cluster = np.all((pts_pixel_coord >= min_xy) & (pts_pixel_coord <= max_xy), axis=1)
-        mask_corrected_pts = mask_corrected_pts | mask_pts_in_cluster
 
+        # TODO: decide whether to correct cluster based on area
+        cluster_area = (max_xy[0] - min_xy[0]) * (max_xy[1] - min_xy[1]) * (bev_pix_size ** 2)
+        if cluster_area > 120:
+            # too large -> contains more than 1 obj -> wrong cluster -> not correct this cluster
+            continue
+
+        # correct this cluster in a sequential manner
         pts_in_cluster = pts[mask_pts_in_cluster]  # (N_p, 3+C)
-
-        # ---
-        # split pts_in_cluster into groups & correct
-        # ---
         pts_timestamp = pts_in_cluster[:, 4]
         unq_ts = np.unique(pts_timestamp).tolist()
         unq_ts.reverse()  # to keep the most recent timestamp at the last position
-        final_center = np.mean(pts_in_cluster[pts_timestamp == unq_ts[-1], :2], axis=0)
-        # correct each group using the offset from its center toward the final center
-        for ts in unq_ts[:-1]:
-            mask_group = pts_timestamp == ts
-            curr_center = np.mean(pts_in_cluster[mask_group, :2], axis=0)
-            offset = final_center - curr_center
-            pts_in_cluster[mask_group, :2] += offset
+        window, velos = np.array([]), []
+        for ts_idx in range(len(unq_ts)):
+            cur_group = np.copy(pts_in_cluster[pts_timestamp == unq_ts[ts_idx]])
+            if window.size == 0:
+                window = cur_group
+                continue
+            # calculate vector going from window's center toward cur_group's center
+            win_to_cur = np.mean(cur_group[:, :2], axis=0) - np.mean(window[:, :2], axis=0)
+            # calculate window's velocity
+            delta_t = -unq_ts[ts_idx] + unq_ts[ts_idx - 1]
+            velos.append(np.linalg.norm(win_to_cur) / delta_t)
+            # correct window & merge with cur_group
+            window[:, :2] += win_to_cur
+            window = np.vstack([window, cur_group])
 
-        # store the corrected pts_in_cluster
-        clusters.append(pts_in_cluster)
+        # TODO: decide whether to keep corrected cluster based on std dev of velocity
+        velo_var = np.mean(np.square(np.array(velos) - np.mean(velos)))
+        if np.sqrt(velo_var) > threshold_velo_std_dev:
+            # too large -> not keep corrected cluster
+            continue
+        else:
+            # keep corrected cluster
+            mask_corrected_pts = mask_corrected_pts | mask_pts_in_cluster
+            clusters.append(window)
 
     # format output
     clusters = np.vstack(clusters) if clusters else np.array([])
