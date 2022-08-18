@@ -6,7 +6,7 @@ from _dev_space.get_clean_pointcloud import show_pointcloud
 
 
 DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
-CENTER_RADIUS = 1.
+CENTER_RADIUS = 2.
 
 
 def tf(translation, rotation):
@@ -294,10 +294,15 @@ def get_nuscenes_pointcloud_partitioned_by_instances(nusc: NuScenes, curr_sd_tok
         )
         mask_foreground = mask_foreground | mask_inside_box
 
-        # map box's pts to target frame
-        box_pts = pc[mask_inside_box]
-        box_pts[:, :3] = apply_tf(target_from_glob, box_pts[:, :3])
-        instances[anno_rec['instance_token']] = box_pts
+        # map box_pts currently in global frame to target frame
+        box_pts_target = apply_tf(target_from_glob, pc[mask_inside_box, :3])
+
+        # box_pts in box's local frame
+        box_pts_local = pts_wrt_box[mask_inside_box]
+
+        instances[anno_rec['instance_token']] = {
+            'xyz_in_target': box_pts_target, 'xyz_in_local': box_pts_local, 'feat': pc[mask_inside_box, 3:]
+        }
 
     # background points
     background = pc[~mask_foreground]
@@ -344,3 +349,75 @@ def compute_bev_coord(pts: np.ndarray, pc_range: np.ndarray, bev_pix_size: float
 
     occ_2d = np.stack((occ_1d % bev_size[0], occ_1d // bev_size[0]), axis=1)  # (N_occ, 2)
     return occ_2d, pix_feat
+
+
+def pad_points_with_scalar(points: np.ndarray, scalar: float) -> np.ndarray:
+    padded_val = np.tile([[scalar]], (points.shape[0], 1))
+    return np.concatenate([points, padded_val], axis=1)
+
+
+def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: str, n_sweeps: int) -> np.ndarray:
+    """
+    Args:
+        nusc:
+        sample_token:
+        n_sweeps
+    Return:
+        (N_tot, 3+C+1): X, Y, Z, features (# = C), ID (-1: background, >=0: instance id)
+        num_intances
+    """
+    sample_rec = nusc.get('sample', sample_token)
+    ref_sd_token = sample_rec['data']['LIDAR_TOP']
+    sd_tokens_times = get_sweeps_token(nusc, ref_sd_token, n_sweeps, return_time_lag=True)
+
+    background, instances = [], dict()
+    for sd_token, sd_time in sd_tokens_times:
+        curr_bgr, curr_instances = get_nuscenes_pointcloud_partitioned_by_instances(nusc, sd_token, ref_sd_token,
+                                                                                    sd_time)
+        background.append(curr_bgr)
+        for inst_token, info in curr_instances.items():
+            if inst_token not in instances:
+                instances[inst_token] = {
+                    'xyz_in_target': [info['xyz_in_target']],
+                    'xyz_in_local': [info['xyz_in_local']],
+                    'feat': [info['feat']]
+                }
+            else:
+                for k, v in info.items():
+                    instances[inst_token][k].append(v)
+
+    # stack points inside each instance
+    for inst_token in instances.keys():
+        for k in ['xyz_in_target', 'xyz_in_local', 'feat']:
+            instances[inst_token][k] = np.vstack(instances[inst_token][k])
+    # stack background points
+    background = pad_points_with_scalar(np.vstack(background), -1)
+
+    # format 2 kind of foreground
+    fgr_emc, fgr_acc_by_instances = [], []
+    boxes = nusc.get_boxes(ref_sd_token)  # in global
+    ref_from_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(nusc, ref_sd_token))
+    for bidx, box in enumerate(boxes):
+        anno_rec = nusc.get('sample_annotation', box.token)
+        if anno_rec['instance_token'] not in instances:
+            continue
+        info = instances[anno_rec['instance_token']]
+
+        inst_fgr_emc = np.concatenate([info['xyz_in_target'], info['feat']], axis=1)
+        fgr_emc.append(inst_fgr_emc)
+
+        glob_from_box = tf(box.center, box.orientation)
+        ref_from_box = ref_from_glob @ glob_from_box
+        inst_fgr_abi = np.concatenate([apply_tf(ref_from_box, info['xyz_in_local']), info['feat']], axis=1)
+        fgr_acc_by_instances.append(inst_fgr_abi)
+
+    sweeps = background
+    if fgr_emc:
+        fgr_emc = pad_points_with_scalar(np.vstack(fgr_emc), 0)
+        sweeps = np.vstack([sweeps, fgr_emc])
+
+    if fgr_acc_by_instances:
+        fgr_acc_by_instances = pad_points_with_scalar(np.vstack(fgr_acc_by_instances), 1)
+        sweeps = np.vstack([sweeps, fgr_acc_by_instances])
+
+    return sweeps

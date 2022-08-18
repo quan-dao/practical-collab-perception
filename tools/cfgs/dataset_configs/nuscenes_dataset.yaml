@@ -4,6 +4,8 @@ DATA_PATH: '../data/nuscenes'
 VERSION: 'v1.0-trainval'
 
 USE_MINI_TRAINVAL: False
+USE_POINTS_OFFSET: True
+
 MAX_SWEEPS: 10
 PRED_VELOCITY: False
 SET_NAN_VELOCITY_TO_ZEROS: True
@@ -40,6 +42,8 @@ DATA_AUGMENTOR:
               'car:2','truck:3', 'construction_vehicle:7', 'bus:4', 'trailer:6',
               'barrier:2', 'motorcycle:6', 'bicycle:6', 'pedestrian:2', 'traffic_cone:2'
           ]
+          ADD_POINT_OFFSET_XY: True
+          ADD_POINT_TYPE_INDICATOR: True
 
           NUM_POINT_FEATURES: 5
           DATABASE_WITH_FAKELIDAR: False
@@ -58,8 +62,8 @@ DATA_AUGMENTOR:
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y'],
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'point_indicator'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'point_indicator'],
 }
 
 

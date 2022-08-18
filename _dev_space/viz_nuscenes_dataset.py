@@ -38,8 +38,8 @@ logger = common_utils.create_logger('./dummy_log.txt')
 
 cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                    'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
-cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip',
-                                       'random_world_rotation', 'random_world_scaling']
+cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['random_world_flip', 'random_world_rotation', 'random_world_scaling',
+                                       'gt_sampling']
 cfg.VERSION = 'v1.0-mini'
 cfg.DEBUG = True
 cfg.USE_POINTS_OFFSET = True
@@ -71,17 +71,27 @@ nuscenes_dataset.nusc.render_sample_data(sample_rec['data']['CAM_FRONT'])
 plt.show()
 
 pc = data_dict['points']
-pc_fgr_mask = data_dict['dataset_debug_points_mask_fgr']
-
-emc_only_pc = data_dict['dataset_debug_emc_sweeps']
-emc_only_pc_mask_fgr = data_dict['dataset_debug_emc_mask_fgr']
-show_pointcloud(emc_only_pc[:, :3], get_boxes_4viz(nuscenes_dataset.nusc, sample_rec['data']['LIDAR_TOP']),
-                fgr_mask=emc_only_pc_mask_fgr)
-
-# print('whatt?: ', pc_fgr_mask.astype(int).sum())
 gt_boxes = data_dict['gt_boxes']
 print(gt_boxes[:10, -1])
 _boxes = viz_boxes(gt_boxes)
-show_pointcloud(pc[:, :3], _boxes, fgr_mask=pc_fgr_mask, fgr_offset=pc[pc_fgr_mask, -2:])
+
+indicator = pc[:, -1].astype(int)
+student_pc = []
+for point_type in [-1, 0, -2, 2]:  # background, corrected fgr, not corrected fgr, sampled points
+    pts = pc[indicator == point_type]
+    if pts.size > 0:
+        student_pc.append(pts)
+student_pc = np.vstack(student_pc)
+
+teacher_pc = []
+for point_type in [-1, 1, 2]:  # background, foreground accumulated by instances, sampled points
+    pts = pc[indicator == point_type]
+    if pts.size > 0:
+        teacher_pc.append(pts)
+teacher_pc = np.vstack(teacher_pc)
+
+show_pointcloud(student_pc[:, :3], _boxes, fgr_mask=student_pc[:, -1].astype(int) >= 0)
+
+show_pointcloud(teacher_pc[:, :3], _boxes, fgr_mask=teacher_pc[:, -1].astype(int) > 0)
 
 
