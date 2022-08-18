@@ -97,7 +97,7 @@ def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_siz
     """
     if pts.shape[0] == 0:
         # empty foreground
-        return np.array([]), np.array([])
+        return np.array([]), np.array([]), np.array([])
 
     # get points' occupancy in BEV to save time doing clustering
     pts_pixel_coord = np.floor((pts[:, :2] - pc_range[:2]) / bev_pix_size).astype(int)
