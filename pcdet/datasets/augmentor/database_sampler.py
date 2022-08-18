@@ -404,7 +404,9 @@ class DataBaseSampler(object):
         if self.sampler_cfg.get('ADD_POINT_TYPE_INDICATOR', False):
             obj_points_type = np.tile(np.array([[3]]), (obj_points.shape[0], 1))
             obj_points = np.concatenate([obj_points, obj_points_type], axis=1)
-        if self.sampler_cfg.get('USE_POINTS_OFFSET_XY', False):
+
+        if points.shape[1] == 7:
+            # points are padded with their offset (calculated by CAM) -> do the same for obj_points
             obj_points = np.concatenate([obj_points, np.zeros((obj_points.shape[0], 2))], axis=1)
 
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])

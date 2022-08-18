@@ -45,7 +45,6 @@ DATA_AUGMENTOR:
           DATABASE_WITH_FAKELIDAR: False
           REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
           LIMIT_WHOLE_SCENE: True
-          USE_POINTS_OFFSET_XY: True
 
         - NAME: random_world_flip
           ALONG_AXIS_LIST: ['x', 'y']
