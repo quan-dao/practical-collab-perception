@@ -42,10 +42,14 @@ cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip',
                                        'random_world_rotation', 'random_world_scaling']
 cfg.VERSION = 'v1.0-mini'
 cfg.DEBUG = True
-
+cfg.USE_POINTS_OFFSET = True
+for proc_idx, proc in enumerate(cfg.DATA_PROCESSOR):
+    if proc['NAME'] == 'shuffle_points':
+        break
+cfg.DATA_PROCESSOR.pop(proc_idx)
 
 nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
-data_dict = nuscenes_dataset[20]  # 400, 200, 100, 5, 10
+data_dict = nuscenes_dataset[400]  # 400, 200, 100, 5, 10
 
 
 for k, v in data_dict.items():
@@ -78,6 +82,6 @@ show_pointcloud(emc_only_pc[:, :3], get_boxes_4viz(nuscenes_dataset.nusc, sample
 gt_boxes = data_dict['gt_boxes']
 print(gt_boxes[:10, -1])
 _boxes = viz_boxes(gt_boxes)
-show_pointcloud(pc[:, :3], _boxes, fgr_mask=None)
+show_pointcloud(pc[:, :3], _boxes, fgr_mask=pc_fgr_mask, fgr_offset=pc[pc_fgr_mask, -2:])
 
 

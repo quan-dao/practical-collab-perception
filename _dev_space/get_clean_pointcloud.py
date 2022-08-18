@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import open3d as o3d
 
 
-def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None):
+def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None, fgr_offset=None):
     """
     Visualize pointcloud & annotations
     Args:
@@ -39,13 +39,30 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None):
         pc_colors = np.zeros((xyz.shape[0], 3))
         pc_colors[fgr_mask, 0] = 1
 
+    offset_lines = []
+    if fgr_offset is not None:
+        assert fgr_mask is not None
+        if fgr_offset.shape[1] == 2:
+            fgr_offset = np.concatenate((fgr_offset, np.zeros((fgr_offset.shape[0], 1))), axis=1)
+        fgr = xyz[fgr_mask]
+        dest = fgr + fgr_offset
+        for fidx in range(fgr.shape[0]):
+            ln = o3d.geometry.LineSet(
+                points=o3d.utility.Vector3dVector(np.vstack([fgr[[fidx]], dest[[fidx]]])),
+                lines=o3d.utility.Vector2iVector([[0, 1]])
+            )
+            ln.colors = o3d.utility.Vector3dVector(np.array([[0, 0, 1]]))
+            offset_lines.append(ln)
+
+        offset_lines = offset_lines[::8]
+
     if pc_colors is not None:
         pcd.colors = o3d.utility.Vector3dVector(pc_colors)
     if boxes is not None:
         o3d_cubes = [create_cube(box) for box in boxes]
-        o3d.visualization.draw_geometries([pcd, *o3d_cubes])
+        o3d.visualization.draw_geometries([pcd, *o3d_cubes, *offset_lines])
     else:
-        o3d.visualization.draw_geometries([pcd])
+        o3d.visualization.draw_geometries([pcd, *offset_lines])
 
 
 def get_lidar_and_sweeps_tokens(nusc: NuScenes, sample_token: str, max_sweeps=10) -> List[str]:
