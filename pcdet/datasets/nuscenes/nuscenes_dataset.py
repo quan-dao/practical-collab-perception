@@ -154,7 +154,8 @@ class NuScenesDataset(DatasetTemplate):
         points = np.vstack(points)
         if self.dataset_cfg.get('USE_POINTS_OFFSET', False):
             offset = np.zeros((points.shape[0], 2))
-            offset[points[:, -1].astype(int) == 0] = _out['corrected_fgr_offset']
+            if _out['corrected_fgr_offset'].size > 0:
+                offset[points[:, -1].astype(int) == 0] = _out['corrected_fgr_offset']
             points = np.concatenate((points[:, :-1], offset, points[:, [-1]]), axis=1)  # to make indicator at last
 
         input_dict = {
