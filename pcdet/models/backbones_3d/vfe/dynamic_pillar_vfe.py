@@ -91,7 +91,7 @@ class DynamicPillarVFE(VFETemplate):
         # points = batch_dict['points'] # (batch_idx, x, y, z, i, e)
         point_types = [-1, 0, -2, 2] if self.model_cfg.get('IS_STUDENT', True) else [-1, 1, 2]
         indicator = batch_dict['points'][:, -1].int()
-        pts_mask = batch_dict['points'].new_zeros(batch_dict['points'], dtype=torch.bool)
+        pts_mask = batch_dict['points'].new_zeros(batch_dict['points'].shape[0], dtype=torch.bool)
         for ptype in point_types:
             pts_mask = torch.logical_or(pts_mask, indicator == ptype)
         points = batch_dict['points'][pts_mask, :-1]  # (batch_idx, x, y, z, i, e, [offset])
