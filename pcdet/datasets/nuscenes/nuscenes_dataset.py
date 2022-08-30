@@ -10,7 +10,7 @@ from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
 from _dev_space.get_clean_pointcloud import get_merge_pointcloud
-from _dev_space.get_sweeps import get_sweeps, get_sweeps_for_distillation
+from _dev_space.get_sweeps import get_sweeps, get_sweeps_for_distillation, get_sweeps_for_foreground_seg
 from nuscenes.nuscenes import NuScenes
 
 
@@ -129,39 +129,14 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
 
         info = copy.deepcopy(self.infos[index])
-        # points = get_merge_pointcloud(self.nusc, info['token'], num_samples=self.num_samples_in_sequence,
-        #                               clean_using_annos=self.use_clean_merge_pointcloud)
 
-        # _out = get_sweeps(self.nusc, info['token'], n_sweeps=self.dataset_cfg.MAX_SWEEPS,
-        #                   correct_dyna_pts=self.dataset_cfg.get('CORRECT_DYNA_PTS', True),
-        #                   use_gt_fgr=self.dataset_cfg.get('USE_GT_FGR', True),
-        #                   pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], bev_pix_size=0.2,
-        #                   return_points_offset=self.dataset_cfg.get('USE_POINTS_OFFSET', False),
-        #                   debug=self.dataset_cfg.get('DEBUG', False))
-        # points = _out[0]
-        # if self.dataset_cfg.get('DEBUG', False):
-        #     input_dict['dataset_debug_points_mask_fgr'] = _out[1]
-        #     input_dict['dataset_debug_emc_sweeps'] = _out[2]
-        #     input_dict['dataset_debug_emc_mask_fgr'] = _out[3]
-
-        _out = get_sweeps_for_distillation(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS,
-                                           pc_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], bev_pix_size=0.2,
-                                           return_points_offset=self.dataset_cfg.get('USE_POINTS_OFFSET', False))
-        points = []
-        for point_type in ('background', 'corrected_fgr', 'not_corrected_fgr', 'gt_corrected_fgr'):
-            if _out[point_type].size > 0:
-                points.append(_out[point_type])
-        points = np.vstack(points)
-        if self.dataset_cfg.get('USE_POINTS_OFFSET', False):
-            offset = np.zeros((points.shape[0], 2))
-            if _out['corrected_fgr_offset'].size > 0:
-                offset[points[:, -1].astype(int) == 0] = _out['corrected_fgr_offset']
-            points = np.concatenate((points[:, :-1], offset, points[:, [-1]]), axis=1)  # to make indicator at last
+        _out = get_sweeps_for_foreground_seg(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
+        points = _out['points']
 
         input_dict = {
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
-            'metadata': {'token': info['token']}
+            'metadata': {'token': info['token'], 'n_original_instances': _out['n_original_instances']}
         }
 
         if 'gt_boxes' in info:

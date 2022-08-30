@@ -10,6 +10,7 @@ from .voxel_rcnn import VoxelRCNN
 from .centerpoint import CenterPoint
 from .pv_rcnn_plusplus import PVRCNNPlusPlus
 from .distill_bev_centerpoint import DistillBEVCenterPoint
+from .bev_segementation import BEVSegmentation
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -23,7 +24,8 @@ __all__ = {
     'VoxelRCNN': VoxelRCNN,
     'CenterPoint': CenterPoint,
     'PVRCNNPlusPlus': PVRCNNPlusPlus,
-    'DistillBEVCenterPoint': DistillBEVCenterPoint
+    'DistillBEVCenterPoint': DistillBEVCenterPoint,
+    'BEVSegmentation': BEVSegmentation
 }
 
 

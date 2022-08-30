@@ -1,5 +1,7 @@
 from pyquaternion import Quaternion
 import numpy as np
+import torch
+from torch_scatter import scatter_mean
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
 from _dev_space.get_clean_pointcloud import show_pointcloud
@@ -356,7 +358,8 @@ def pad_points_with_scalar(points: np.ndarray, scalar: float) -> np.ndarray:
     return np.concatenate([points, padded_val], axis=1)
 
 
-def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: str, n_sweeps: int) -> np.ndarray:
+def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: str, n_sweeps: int,
+                                                 is_distill: bool, is_foreground_seg: bool) -> np.ndarray:
     """
     Args:
         nusc:
@@ -364,8 +367,10 @@ def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: s
         n_sweeps
     Return:
         (N_tot, 3+C+1): X, Y, Z, features (# = C), ID (-1: background, >=0: instance id)
-        num_intances
     """
+    if is_distill or is_foreground_seg:
+        assert not is_distill and is_foreground_seg, "Choose one out of 2 modes"
+
     sample_rec = nusc.get('sample', sample_token)
     ref_sd_token = sample_rec['data']['LIDAR_TOP']
     sd_tokens_times = get_sweeps_token(nusc, ref_sd_token, n_sweeps, return_time_lag=True)
@@ -387,9 +392,14 @@ def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: s
                     instances[inst_token][k].append(v)
 
     # stack points inside each instance
+    inst_idx = 0
+    inst_token2idx = dict()
     for inst_token in instances.keys():
+        inst_token2idx[inst_token] = inst_idx
+        inst_idx += 1
         for k in ['xyz_in_target', 'xyz_in_local', 'feat']:
             instances[inst_token][k] = np.vstack(instances[inst_token][k])
+
     # stack background points
     background = pad_points_with_scalar(np.vstack(background), -1)
 
@@ -403,17 +413,22 @@ def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: s
             continue
         info = instances[anno_rec['instance_token']]
 
-        inst_fgr_emc = np.concatenate([info['xyz_in_target'], info['feat']], axis=1)
+        inst_fgr_emc = pad_points_with_scalar(np.concatenate([info['xyz_in_target'], info['feat']], axis=1),
+                                              inst_token2idx[anno_rec['instance_token']])
         fgr_emc.append(inst_fgr_emc)
-
-        glob_from_box = tf(box.center, box.orientation)
-        ref_from_box = ref_from_glob @ glob_from_box
-        inst_fgr_abi = np.concatenate([apply_tf(ref_from_box, info['xyz_in_local']), info['feat']], axis=1)
-        fgr_acc_by_instances.append(inst_fgr_abi)
+        if is_distill:
+            glob_from_box = tf(box.center, box.orientation)
+            ref_from_box = ref_from_glob @ glob_from_box
+            inst_fgr_abi = np.concatenate([apply_tf(ref_from_box, info['xyz_in_local']), info['feat']], axis=1)
+            fgr_acc_by_instances.append(inst_fgr_abi)
 
     sweeps = background
     if fgr_emc:
-        fgr_emc = pad_points_with_scalar(np.vstack(fgr_emc), 0)
+        fgr_emc = np.vstack(fgr_emc)
+        if not is_foreground_seg:
+            # replace the instance index column by a column of 0 (to merely indicate foreground)
+            fgr_emc = pad_points_with_scalar(fgr_emc[:, :-1], 0)
+
         sweeps = np.vstack([sweeps, fgr_emc])
 
     if fgr_acc_by_instances:
@@ -421,3 +436,36 @@ def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: s
         sweeps = np.vstack([sweeps, fgr_acc_by_instances])
 
     return sweeps
+
+
+def compute_bev_coord_torch(points: torch.Tensor, pc_range: torch.Tensor, pix_size: float, pts_feat=None):
+    """
+    Args:
+        points: (N, 1 + 3 + C) - batch_idx, X, Y, Z, C features
+        pc_range: (6) - [x_min, y_min, z_min, x_max, y_max, z_max]
+        pix_size:
+        pts_feat: (N, f)
+    """
+    mask_in_range = torch.all((points[:, 1: 4] >= pc_range[:3]) & (points[:, 1: 4] < (pc_range[3:] - 1e-3)), dim=1)
+    bev_size = torch.floor((pc_range[3: 5] - pc_range[0: 2]) / pix_size).int()  # (s_x, s_y) (i.e. width, height)
+    pts_pix_coord = torch.floor((points[:, 1: 3] - pc_range[:2]) / pix_size).int()  # (N, 2)- pix_x, pix_y
+    # convert to 1D coord
+    pts_1d = points[mask_in_range, 0] * (bev_size[0] * bev_size[1]) + \
+             pts_pix_coord[mask_in_range, 1] * bev_size[0] + \
+             pts_pix_coord[mask_in_range, 0]
+    unq_pts_1d, inv_indices = torch.unique(pts_1d, return_inverse=True, sorted=False)
+
+    # convert 1D coord back to 2D coord
+    unq_pts_2d = torch.stack([
+        unq_pts_1d // (bev_size[0] * bev_size[1]),  # batch_idx
+        unq_pts_1d % bev_size[0],  # pix_x
+        (unq_pts_1d % (bev_size[0] * bev_size[1])) // bev_size[0]  # pix_y
+    ], dim=1).long()
+
+    # compute feat of unq_pts_2d (if applicable)
+    if pts_feat is not None:
+        assert len(pts_feat.shape) == 2
+        feat_unq_pts_2d = scatter_mean(pts_feat[mask_in_range], inv_indices, dim=0)
+    else:
+        feat_unq_pts_2d = None
+    return unq_pts_2d, feat_unq_pts_2d

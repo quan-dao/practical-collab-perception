@@ -56,8 +56,6 @@ class DynamicPillarVFE(VFETemplate):
         num_point_features += 6 if self.use_absolute_xyz else 3
         if self.with_distance:
             num_point_features += 1
-        if not self.model_cfg.get('IS_STUDENT', False):
-            num_point_features -= 2
 
         self.num_filters = self.model_cfg.NUM_FILTERS
         assert len(self.num_filters) > 0
@@ -91,14 +89,7 @@ class DynamicPillarVFE(VFETemplate):
 
     def forward(self, batch_dict, **kwargs):
         # points = batch_dict['points'] # (batch_idx, x, y, z, i, e)
-        point_types = [-1, 0, -2, 2] if self.model_cfg.get('IS_STUDENT', True) else [-1, 1, 2]
-        indicator = batch_dict['points'][:, -1].int()
-        pts_mask = batch_dict['points'].new_zeros(batch_dict['points'].shape[0], dtype=torch.bool)
-        for ptype in point_types:
-            pts_mask = torch.logical_or(pts_mask, indicator == ptype)
-        points = batch_dict['points'][pts_mask, :-1]  # (batch_idx, x, y, z, i, e, [offset])
-        if not self.model_cfg.get('IS_STUDENT', False) and points.shape[1] > 6:
-            points = points[:, :-2]  # exclude offset
+        points = batch_dict['points'][:, :-1]  # (batch_idx, x, y, z, i, e)
 
         points_coords = torch.floor((points[:, [1,2]] - self.point_cloud_range[[0,1]]) / self.voxel_size[[0,1]]).int()
         mask = ((points_coords >= 0) & (points_coords < self.grid_size[[0,1]])).all(dim=1)

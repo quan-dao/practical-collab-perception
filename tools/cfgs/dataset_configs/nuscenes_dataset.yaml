@@ -42,8 +42,9 @@ DATA_AUGMENTOR:
               'car:2','truck:3', 'construction_vehicle:7', 'bus:4', 'trailer:6',
               'barrier:2', 'motorcycle:6', 'bicycle:6', 'pedestrian:2', 'traffic_cone:2'
           ]
-          ADD_POINT_OFFSET_XY: True
-          ADD_POINT_TYPE_INDICATOR: True
+          ADD_POINT_OFFSET_XY: False
+          ADD_POINT_TYPE_INDICATOR: False
+          ADD_POINT_INSTANCE_INDICATOR: True
 
           NUM_POINT_FEATURES: 5
           DATABASE_WITH_FAKELIDAR: False

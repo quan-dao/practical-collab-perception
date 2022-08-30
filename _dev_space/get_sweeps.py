@@ -185,7 +185,8 @@ def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_siz
 def get_sweeps_for_distillation(nusc: NuScenes, sample_token: str, n_sweeps: int, pc_range=None,
                                 bev_pix_size=None, dbscann_eps=7.0, dbscann_min_samples=5,
                                 threshold_velo_std_dev=4.50, return_points_offset=False) -> dict:
-    sweeps = get_nuscenes_sweeps_partitioned_by_instances(nusc, sample_token, n_sweeps)
+    sweeps = get_nuscenes_sweeps_partitioned_by_instances(nusc, sample_token, n_sweeps, is_distill=True,
+                                                          is_foreground_seg=False)
     # get points in pc_range
     pc_range = check_list_to_numpy(pc_range)
     mask_in_range = np.all((sweeps[:, :3] >= pc_range[:3]) & (sweeps[:, :3] < (pc_range[3:] - 1e-3)), axis=1)
@@ -209,3 +210,10 @@ def get_sweeps_for_distillation(nusc: NuScenes, sample_token: str, n_sweeps: int
     if return_points_offset:
         out['corrected_fgr_offset'] = crt_fgr_offset
     return out
+
+
+def get_sweeps_for_foreground_seg(nusc: NuScenes, sample_token: str, n_sweeps: int) -> dict:
+    sweeps = get_nuscenes_sweeps_partitioned_by_instances(nusc, sample_token, n_sweeps, is_distill=False,
+                                                          is_foreground_seg=True)
+    n_original_instances = int(np.max(sweeps[:, -1])) + 1
+    return {'points': sweeps, 'n_original_instances': n_original_instances}

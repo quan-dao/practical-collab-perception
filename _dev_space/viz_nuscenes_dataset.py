@@ -4,7 +4,7 @@ from pcdet.utils import common_utils
 from pcdet.datasets import NuScenesDataset
 from get_clean_pointcloud import show_pointcloud, apply_transform_to_points
 import matplotlib.pyplot as plt
-from tools_box import get_boxes_4viz
+from tools_box import compute_bev_coord
 
 
 def viz_boxes(boxes: np.ndarray):
@@ -38,15 +38,20 @@ logger = common_utils.create_logger('./dummy_log.txt')
 
 cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                    'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
-cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['random_world_flip', 'random_world_rotation', 'random_world_scaling',
-                                       'gt_sampling']
+
+cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
+    'placeholder',
+    # 'random_world_flip', 'random_world_rotation', 'random_world_scaling',
+    # 'gt_sampling',
+]
+
 cfg.VERSION = 'v1.0-mini'
-cfg.DEBUG = True
-cfg.USE_POINTS_OFFSET = True
-for proc_idx, proc in enumerate(cfg.DATA_PROCESSOR):
-    if proc['NAME'] == 'shuffle_points':
-        break
-cfg.DATA_PROCESSOR.pop(proc_idx)
+
+# shut down shuffle_points
+# for proc_idx, proc in enumerate(cfg.DATA_PROCESSOR):
+#     if proc['NAME'] == 'shuffle_points':
+#         break
+# cfg.DATA_PROCESSOR.pop(proc_idx)
 
 nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
 data_dict = nuscenes_dataset[400]  # 400, 200, 100, 5, 10
@@ -76,22 +81,35 @@ print(gt_boxes[:10, -1])
 _boxes = viz_boxes(gt_boxes)
 
 indicator = pc[:, -1].astype(int)
-student_pc = []
-for point_type in [-1, 0, -2, 2]:  # background, corrected fgr, not corrected fgr, sampled points
-    pts = pc[indicator == point_type]
-    if pts.size > 0:
-        student_pc.append(pts)
-student_pc = np.vstack(student_pc)
 
-teacher_pc = []
-for point_type in [-1, 1, 2]:  # background, foreground accumulated by instances, sampled points
-    pts = pc[indicator == point_type]
-    if pts.size > 0:
-        teacher_pc.append(pts)
-teacher_pc = np.vstack(teacher_pc)
+show_pointcloud(pc[:, :3], _boxes, fgr_mask=indicator >= 0)
 
-show_pointcloud(student_pc[:, :3], _boxes, fgr_mask=student_pc[:, -1].astype(int) >= 0)
+# show target bev
+pc_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
+voxel_size = 0.2
+bev_size = np.round((pc_range[3: 5] - pc_range[:2]) / voxel_size).astype(int)
 
-show_pointcloud(teacher_pc[:, :3], _boxes, fgr_mask=teacher_pc[:, -1].astype(int) > 0)
+bev_bgr_coord, _ = compute_bev_coord(pc[indicator == -1], pc_range, voxel_size)
 
+# foreground offset to cluster center
+unq_ind, inv_indices, counts = np.unique(indicator, return_inverse=True, return_counts=True)
+cluster_xy_means = np.zeros((unq_ind.shape[0], 2))
+np.add.at(cluster_xy_means, inv_indices, pc[:, :2])
+cluster_xy_means /= counts[:, None]
+offset_to_means = (cluster_xy_means[inv_indices] - pc[:, :2]) / voxel_size  # cvt to pixel
 
+bev_fgr_coord, bev_fgr_o2m = compute_bev_coord(pc[indicator >= 0], pc_range, voxel_size,
+                                               pts_feat=offset_to_means[indicator >= 0])
+
+bev_img = np.zeros((bev_size[1], bev_size[0], 3))
+bev_img[bev_bgr_coord[:, 1], bev_bgr_coord[:, 0], :] = 0.5
+bev_img[bev_fgr_coord[:, 1], bev_fgr_coord[:, 0], 0] = 1.0
+
+fig, ax = plt.subplots()
+ax.imshow(bev_img, cmap='gray')
+
+for fidx in range(bev_fgr_coord.shape[0]):
+        ax.arrow(bev_fgr_coord[fidx, 0], bev_fgr_coord[fidx, 1], bev_fgr_o2m[fidx, 0], bev_fgr_o2m[fidx, 1],
+                 color='g', width=0.01)
+
+plt.show()
