@@ -425,7 +425,7 @@ def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: s
     sweeps = background
     if fgr_emc:
         fgr_emc = np.vstack(fgr_emc)
-        if not is_foreground_seg:
+        if is_foreground_seg:
             # replace the instance index column by a column of 0 (to merely indicate foreground)
             fgr_emc = pad_points_with_scalar(fgr_emc[:, :-1], 0)
 

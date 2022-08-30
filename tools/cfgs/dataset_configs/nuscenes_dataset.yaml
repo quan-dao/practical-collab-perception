@@ -4,7 +4,7 @@ DATA_PATH: '../data/nuscenes'
 VERSION: 'v1.0-trainval'
 
 USE_MINI_TRAINVAL: False
-USE_POINTS_OFFSET: True
+USE_POINTS_OFFSET: False
 
 MAX_SWEEPS: 10
 PRED_VELOCITY: False
@@ -63,8 +63,8 @@ DATA_AUGMENTOR:
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'point_indicator'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'point_indicator'],
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'point_indicator'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'point_indicator'],
 }
 
 
