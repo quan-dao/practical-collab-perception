@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from _dev_space.tools_box import apply_tf
+import matplotlib.pyplot as plt
 
 
 def viz_boxes(boxes: np.ndarray):
@@ -40,4 +41,27 @@ def print_dict(d: dict):
         elif isinstance(v, torch.Tensor):
             out += f"{v.shape}"
         print(out)
+
+
+def viz_clusters2d(xy, labels, ax, marker='o', prefix=''):
+    assert len(xy.shape) == 2 and len(labels.shape) == 1
+    assert xy.shape[0] == labels.shape[0]
+    unq_labels, indices, counts = np.unique(labels, return_inverse=True, return_counts=True)
+
+    # centroid for annotation only
+    centroid = np.zeros((unq_labels.shape[0], 2))
+    np.add.at(centroid, indices, xy)
+    centroid = centroid / counts.reshape(-1, 1)
+
+    colors_palette = np.array([plt.cm.Spectral(each)[:3] for each in np.linspace(0, 1, unq_labels.shape[0])])
+    xy_colors = colors_palette[indices]
+    xy_colors[labels == -1] = np.zeros(3)  # black for noise
+
+    ax.scatter(xy[:, 0], xy[:, 1], c=xy_colors, marker=marker)
+    for cl_idx in range(unq_labels.shape[0]):
+        if unq_labels[cl_idx] == -1:
+            # noise cluster
+            continue
+        ax.annotate(f"{prefix}{unq_labels[cl_idx]}", tuple(centroid[cl_idx].tolist()), color='r')
+
 
