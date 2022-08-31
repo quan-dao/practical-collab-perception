@@ -223,8 +223,8 @@ class PointCloudCorrector(nn.Module):
             keep_mask = torch.logical_not(pred_bgr_mask & past_mask)
             batch_crt_points = batch_crt_points[keep_mask]
 
-        batch_dict['points'] = torch.cat([batch_crt_points, sampled_points], dim=0) if sampled_points.shape[0] > 0 \
-            else batch_crt_points
+        batch_dict['points'] = torch.cat([batch_crt_points, sampled_points], dim=0).float() if sampled_points.shape[0] > 0 \
+            else batch_crt_points.float()
 
         if not self.output_format.RETURN_FOREGROUND_PROB:
             # remove foreground prob from batch_dict['points']
