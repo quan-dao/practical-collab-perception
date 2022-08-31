@@ -111,7 +111,7 @@ class PointCloudCorrector(nn.Module):
                                                               return_counts=True)
             unq_prob = torch.clamp(counts.float() / counts.max(), min=0.3, max=0.8)
             sampled_points_fgr_prob = unq_prob[inv_indices]
-            sampled_points = torch.cat((sampled_points[:, -1], sampled_points_fgr_prob.reshape(-1, 1),
+            sampled_points = torch.cat((sampled_points[:, :-1], sampled_points_fgr_prob.reshape(-1, 1),
                                         sampled_points[:, [-1]]), dim=1).contiguous()
         # =========================================
         # sampled_points: (N, 8)
