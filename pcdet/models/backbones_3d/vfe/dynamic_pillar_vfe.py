@@ -56,21 +56,19 @@ class DynamicPillarVFE(VFETemplate):
                 crt_cfg.BEV_SEG_CKPT, crt_cfg.RETURN_OFFSET, crt_cfg.RETURN_FOREGROUND_PROB,
                 crt_cfg.USE_PAST_FOREGROUND_ONLY, crt_cfg.FOREGROUND_SEGMENTATION_ONLY
             )
+            # overwrite num raw point features with feat produced by corrector
+            num_point_features = self.corrector.num_point_features
         else:
             self.corrector = None
         self.use_norm = self.model_cfg.USE_NORM
         self.with_distance = self.model_cfg.WITH_DISTANCE
         self.use_absolute_xyz = self.model_cfg.USE_ABSLOTE_XYZ
+        num_point_features += 6 if self.use_absolute_xyz else 3
+        if self.with_distance:
+            num_point_features += 1
+
         self.num_filters = self.model_cfg.NUM_FILTERS
         assert len(self.num_filters) > 0
-
-        if self.corrector is not None:
-            num_point_features = self.corrector.num_point_features
-        else:
-            num_point_features += 6 if self.use_absolute_xyz else 3
-            if self.with_distance:
-                num_point_features += 1
-
         num_filters = [num_point_features] + list(self.num_filters)
 
         pfn_layers = []
