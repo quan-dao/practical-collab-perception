@@ -35,7 +35,7 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None, fgr_offset=N
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
 
-    if fgr_mask is not None:
+    if fgr_mask is not None and pc_colors is None:
         pc_colors = np.zeros((xyz.shape[0], 3))
         pc_colors[fgr_mask, 0] = 1
 
@@ -44,11 +44,11 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None, fgr_offset=N
         assert fgr_mask is not None
         if fgr_offset.shape[1] == 2:
             fgr_offset = np.concatenate((fgr_offset, np.zeros((fgr_offset.shape[0], 1))), axis=1)
-        fgr = xyz[fgr_mask]
-        dest = fgr + fgr_offset
-        for fidx in range(fgr.shape[0]):
+        final = xyz[fgr_mask]
+        initial = final - fgr_offset[fgr_mask]
+        for fidx in range(final.shape[0]):
             ln = o3d.geometry.LineSet(
-                points=o3d.utility.Vector3dVector(np.vstack([fgr[[fidx]], dest[[fidx]]])),
+                points=o3d.utility.Vector3dVector(np.vstack([initial[[fidx]], final[[fidx]]])),
                 lines=o3d.utility.Vector2iVector([[0, 1]])
             )
             ln.colors = o3d.utility.Vector3dVector(np.array([[0, 0, 1]]))
