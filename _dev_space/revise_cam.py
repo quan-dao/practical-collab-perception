@@ -213,7 +213,7 @@ class PointCloudCorrector(nn.Module):
             # pad sampled_points with offset
             if sampled_points.shape[0] > 0:
                 sampled_points_offset = sampled_points.new_zeros(sampled_points.shape[0], 2)
-                sampled_points = torch.cat((sampled_points[:, -1], sampled_points_offset, sampled_points[:, [-1]]),
+                sampled_points = torch.cat((sampled_points[:, :-1], sampled_points_offset, sampled_points[:, [-1]]),
                                            dim=1).contiguous()
 
         if self.output_format.USE_PAST_FOREGROUND_ONLY:
