@@ -401,6 +401,9 @@ class DataBaseSampler(object):
             # ---
             # for foreground segementation
             # ---
+            if self.sampler_cfg.get('SET_POINT_TIMESTAMP_TO_ZERO', False):
+                obj_points[:, 4] = 0
+
             if self.sampler_cfg.get('ADD_POINT_INSTANCE_INDICATOR', False):
                 assert not self.sampler_cfg.get('ADD_POINT_TYPE_INDICATOR', False)
                 obj_points = np.concatenate([

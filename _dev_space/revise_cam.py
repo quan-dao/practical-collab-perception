@@ -10,6 +10,11 @@ from _dev_space.bev_segmentation_utils import sigmoid
 
 class PointCloudCorrector(Detector3DTemplate):
     def __init__(self):
+        self.output_format = edict({
+            'RETURN_OFFSET': True,
+            'RETURN_FOREGROUND_PROB': False,  # if True, TODO: some heuristic for assigning fgr prob for sampled points
+            'USE_PAST_FOREGROUND_ONLY': False,
+        })
         self.ckpt = './from_idris/ckpt/bev_seg_focal_fullnusc_ep5.pth'
         self.point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
         self.voxel_size = np.array([0.2, 0.2, 8.0])
@@ -56,10 +61,16 @@ class PointCloudCorrector(Detector3DTemplate):
         # Cluster-and-move
         # ---
         self.scanner = DBSCAN(eps=1.0, min_samples=3)
-        bev_img_size = self.dataset.grid_size[:2] / self.model_cfg.BACKBONE_2D.BEV_IMG_STRIDE  # size_x, size_y
-        self.xx, self.yy = np.meshgrid(np.arange(bev_img_size[0]), np.arange(bev_img_size[1]))
+        self.bev_img_size = (self.dataset.grid_size[:2] / self.model_cfg.BACKBONE_2D.BEV_IMG_STRIDE).astype(int)  # size_x, size_y
+        self.xx, self.yy = np.meshgrid(np.arange(self.bev_img_size[0]), np.arange(self.bev_img_size[1]))
         self.fgr_prob_threshold = 0.5
         self.velo_std_dev_threshold = 4.5
+
+        self.num_point_features = 5
+        if self.output_format.RETURN_FOREGROUND_PROB:
+            self.num_point_features += 1
+        if self.output_format.RETURN_OFFSET:
+            self.num_point_features += 2
 
     def load_weights(self):
         checkpoint = torch.load(self.ckpt, map_location=torch.device('cpu'))
@@ -81,10 +92,23 @@ class PointCloudCorrector(Detector3DTemplate):
         # hold out points sampled from database
         points = batch_dict['points']  # (N_tot, 7) - batch_idx, xyz, intensity, time, indicator
         # indicator: -1=original bgr | 0=original fgr | >=1 = sampled (from database) fgr
-        print(f'DEBUGGING | num original points: {points.shape[0]}')
 
         mask_sampled_points = points[:, -1].int() > 0
-        sampled_points = points[mask_sampled_points]  # (N_sampled, 7)
+
+        sampled_points = points[mask_sampled_points]  # (N_sampled, 7) - batch_idx, xyz, intensity, time, indicator
+        # pad sampled_points with heuristically generated fgr prob
+        if sampled_points.shape[0] > 0:
+            unq_indicator, inv_indices, counts = torch.unique(sampled_points[:, -1].int(), return_inverse=True,
+                                                              return_counts=True)
+            unq_prob = torch.clamp(counts.float() / counts.max(), min=0.3, max=0.8)
+            sampled_points_fgr_prob = unq_prob[inv_indices]
+            sampled_points = torch.cat((sampled_points[:, -1], sampled_points_fgr_prob.reshape(-1, 1),
+                                        sampled_points[:, [-1]]), dim=1).contiguous()
+        # =========================================
+        # sampled_points: (N, 8)
+        # batch_idx, xyz, intensity, time, FGR_PROB, indicator
+        # =========================================
+
         points = points[torch.logical_not(mask_sampled_points)]  # (N, 7)
         # overwrite batch_dict's 'points' with original 'points' only
         batch_dict['points'] = points
@@ -103,20 +127,45 @@ class PointCloudCorrector(Detector3DTemplate):
         pred_reg = pred_dict['bev_reg_pred'].contiguous()  # (B, 2, 256, 256)
 
         # move to cpu
-        pred_cls = pred_cls.cpu().numpy()
-        pred_reg = pred_reg.cpu().numpy()
+        pred_cls = pred_cls.cpu().numpy()  # (B, 1, 256, 256)
+        pred_reg = pred_reg.cpu().numpy()  # (B, 2, 256, 256)
         points = points.cpu().numpy()  # (N, 7) - batch_idx, xyz, intensity, time, indicator
         points_batch_idx = points[:, 0].astype(int)
 
         # ---
         # clustering & correcting
         # ---
-        pred_cls = pred_cls > self.fgr_prob_threshold  # bool - (B, 1, 256, 256)
-        batch_crt_points = []
+        batch_crt_points, batch_crt_pts_offset = [], []
         for b_idx in range(batch_dict['batch_size']):
             cur_points = points[points_batch_idx == b_idx, 1:]  # xyz, intensity, time, indicator
 
-            mask_pred_fgr = pred_cls[b_idx, 0] & (np.linalg.norm(pred_reg[b_idx, :], axis=0) < 10)  # (256, 256)
+            # ---
+            # pad cur_points with fogreground prob extracted from pred_cls (i.e., segemented BEV image)
+            # ---
+            # compute cur_points 's pixel coord, and use this pixel coord to index into segmented bev image
+            bev_pix_size = self.voxel_size[0] * self.model_cfg.BACKBONE_2D.BEV_IMG_STRIDE
+            cur_pts_pix = np.floor((cur_points[:, :2] - self.point_cloud_range[:2]) / bev_pix_size).astype(int)
+            # find non-repeating pixels
+            cur_pts_pix1d = cur_pts_pix[:, 1] * self.bev_img_size[0] + cur_pts_pix[:, 0]  # y * width + x
+            print(f'DEBUGGING | cur_pts_pix1d: {cur_pts_pix1d.dtype}')
+            print(f'DEBUGGING | bev_img_size: {type(self.bev_img_size[0])}')
+            unq_pix1d, inv_indices = np.unique(cur_pts_pix1d, return_inverse=True)
+            unq_pix2d = np.stack([
+                unq_pix1d % self.bev_img_size[0],  # pixel_x
+                unq_pix1d // self.bev_img_size[0],  # pixel_y
+            ], axis=1)  # (N_unq, 2)
+            # extract fgr prob from pred_cls
+            unq_pix_fgr_prob = pred_cls[b_idx, 0, unq_pix2d[:, 1], unq_pix2d[:, 0]]  # (N_unq,)
+            cur_pts_fgr_prob = unq_pix_fgr_prob[inv_indices]  # (N_cur_pts,)
+            cur_points = np.concatenate((cur_points[:, :-1], cur_pts_fgr_prob[:, np.newaxis], cur_points[:, [-1]]),
+                                        axis=1)  # xyz, intensity, time, FGR_PROB, indicator
+            # =========================================
+            # cur_points: (N, 7)
+            # xyz, intensity, time, FGR_PROB, indicator
+            # =========================================
+
+            mask_pred_fgr = (pred_cls[b_idx, 0] > self.fgr_prob_threshold) & \
+                            (np.linalg.norm(pred_reg[b_idx, :], axis=0) < 10)  # (256, 256)
             if not np.any(mask_pred_fgr):
                 batch_crt_points.append(np.pad(cur_points, [(0, 0), (1, 0)], mode='constant', constant_values=b_idx))
                 continue
@@ -124,10 +173,6 @@ class PointCloudCorrector(Detector3DTemplate):
             # clustering
             fgr_xy = np.stack([self.xx[mask_pred_fgr], self.yy[mask_pred_fgr]], axis=1)  # (N_fgr, 2)
             vector_fgr2centroid = pred_reg[b_idx, :, mask_pred_fgr]  # (2, N_fgr)
-            # print(f'DEBUGGING | pred_reg: {pred_reg.shape}')
-            # print(f'DEBUGGING | mask_pred_fgr: {mask_pred_fgr.shape}')
-            # print(f'DEBUGGING | fgr_xy: {fgr_xy.shape}')
-            # print(f'DEBUGGING | vector_fgr2centroid: {vector_fgr2centroid.shape}')
             moved_fgr = fgr_xy + vector_fgr2centroid  # (N_fgr, 2)
             self.scanner.fit(moved_fgr)
 
@@ -139,20 +184,46 @@ class PointCloudCorrector(Detector3DTemplate):
                 threshold_velo_std_dev=self.velo_std_dev_threshold
             )
 
+            # pad corrected current points with batch_idx
             batch_crt_points.append(np.pad(crt_cur_points, [(0, 0), (1, 0)], mode='constant', constant_values=b_idx))
+            if self.output_format.RETURN_OFFSET:
+                batch_crt_pts_offset.append(offset_cur_points)
 
         # organize output:
         # put sampled_points back to batch_dict after correction
         batch_crt_points = torch.from_numpy(np.vstack(batch_crt_points)).cuda()
+
+        if self.output_format.RETURN_OFFSET:
+            batch_crt_pts_offset = torch.from_numpy(np.vstack(batch_crt_pts_offset)).cuda()
+            batch_crt_points = torch.cat((batch_crt_points[:, :-1], batch_crt_pts_offset, batch_crt_points[:, [-1]]),
+                                         dim=1).contiguous()
+
+            # pad sampled_points with offset
+            if sampled_points.shape[0] > 0:
+                sampled_points_offset = sampled_points.new_zeros(sampled_points.shape[0], 2)
+                sampled_points = torch.cat((sampled_points[:, -1], sampled_points_offset, sampled_points[:, [-1]]),
+                                           dim=1).contiguous()
+
+        if self.output_format.USE_PAST_FOREGROUND_ONLY:
+            # point feat: batch_idx, xyz, intensity, time, FGR_PROB, [offset_xy], indicator
+            pred_bgr_mask = batch_crt_points[:, 6] < self.fgr_prob_threshold
+            past_mask = batch_crt_points[:, 5] > 0.0
+            keep_mask = torch.logical_not(pred_bgr_mask & past_mask)
+            batch_crt_points = batch_crt_points[keep_mask]
+
         batch_dict['points'] = torch.cat([batch_crt_points, sampled_points], dim=0) if sampled_points.shape[0] > 0 \
             else batch_crt_points
-        print(f"DEBUGGING | num points after correction: {batch_dict['points'].shape[0]}")
+
+        if not self.output_format.RETURN_FOREGROUND_PROB:
+            # remove foreground prob from batch_dict['points']
+            batch_dict['points'] = torch.cat([batch_dict['points'][:, :6], batch_dict['points'][:, 7:]], dim=1)
+
         return batch_dict
 
     @staticmethod
     def correct_points3d(points3d: np.ndarray, bev_fgr_labels: np.ndarray, bev_fgr_xy: np.ndarray,
                          pc_range: np.ndarray, bev_pix_size: float, threshold_velo_std_dev: float):
-        assert points3d.shape[1] == 6, f'current shape {points3d.shape}, remember of exclude batch_idx'
+        # assert points3d.shape[1] == 6, f'current shape {points3d.shape}, remember of exclude batch_idx'
         assert len(bev_fgr_labels.shape) == 1, bev_fgr_labels.shape[0] == bev_fgr_xy.shape[0]
         assert len(bev_fgr_xy.shape) == 2 and bev_fgr_xy.shape[1] == 2
 

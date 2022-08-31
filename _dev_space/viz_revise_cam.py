@@ -101,7 +101,7 @@ def show_bev_seg(batch_idx=0, threshold=0.5):
         ax[2].arrow(fgr_x[fidx], fgr_y[fidx], vector_fgr2centroid[0, fidx], vector_fgr2centroid[1, fidx],
                     color='g', width=0.01)
 
-    # TODO: DBSCAN on pred_cls | handle resolution diff (stride of pred_cls == 2)
+    # DBSCAN on pred_cls
     ax[3].set_title('clustering result')
     ax[3].imshow(pred_cls.numpy() > threshold, cmap='gray')
     fgr_xy = np.stack((fgr_x, fgr_y), axis=1)
@@ -110,20 +110,20 @@ def show_bev_seg(batch_idx=0, threshold=0.5):
     scanner.fit(moved_fgr)
     viz_clusters2d(fgr_xy, scanner.labels_, ax[3], prefix='cl_')
 
-    mask_targeted_cl = scanner.labels_ == 1
-    vector_fgr2centroid = vector_fgr2centroid.numpy().T
-    cl_fgr2centroid = vector_fgr2centroid[mask_targeted_cl]
-    fig2, ax2 = plt.subplots()
-    counts, bins, _ = ax2.hist(np.linalg.norm(cl_fgr2centroid, axis=1))
-    print('counts: ', counts)
-    print('bins: ', bins)
+    # mask_targeted_cl = scanner.labels_ == 1
+    # vector_fgr2centroid = vector_fgr2centroid.numpy().T
+    # cl_fgr2centroid = vector_fgr2centroid[mask_targeted_cl]
+    # fig2, ax2 = plt.subplots()
+    # counts, bins, _ = ax2.hist(np.linalg.norm(cl_fgr2centroid, axis=1))
+    # print('counts: ', counts)
+    # print('bins: ', bins)
 
     plt.show()
 
 
 if __name__ == '__main__':
     chosen_batch_idx = 0
-    main(data_batch_idx=2, viz_batch_idx=chosen_batch_idx)
-    show_corrected_pointcloud(chosen_batch_idx)
+    # main(data_batch_idx=2, viz_batch_idx=chosen_batch_idx)
+    # show_corrected_pointcloud(chosen_batch_idx)
 
-    # show_bev_seg(chosen_batch_idx)
+    show_bev_seg(chosen_batch_idx)
