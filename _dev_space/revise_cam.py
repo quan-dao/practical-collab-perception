@@ -2,13 +2,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 from easydict import EasyDict as edict
-from pcdet.models.detectors.detector3d_template import Detector3DTemplate
+from pcdet.models.backbones_3d import vfe
+from pcdet.models.backbones_2d import map_to_bev
+from pcdet.models import backbones_2d
 
 from sklearn.cluster import DBSCAN
 from _dev_space.bev_segmentation_utils import sigmoid
 
 
-class PointCloudCorrector(Detector3DTemplate):
+class PointCloudCorrector(nn.Module):
     def __init__(self, bev_seg_net_ckpt=None, return_offset=True, return_fgr_prob=True, use_past_fgr_only=False,
                  fgr_seg_only=False):
         self.output_format = edict({
@@ -56,7 +58,8 @@ class PointCloudCorrector(Detector3DTemplate):
             'point_feature_encoder': {'num_point_features': 5}
         })
         self.dataset.grid_size = np.round((self.point_cloud_range[3:] - self.point_cloud_range[:3]) / self.voxel_size).astype(int)
-        super().__init__(self.model_cfg, len(cls_names), self.dataset)
+        super().__init__()
+        self.module_topology = ['vfe', 'map_to_bev_module', 'backbone_2d']
         self.module_list = self.build_networks()
         self.eval()
         self.load_weights()
@@ -305,3 +308,60 @@ class PointCloudCorrector(Detector3DTemplate):
         out_offset_xy = np.vstack((*clusters_offset_xy, np.zeros((n_not_corrected_pts, 2))))
 
         return out_pts3d, out_offset_xy
+
+    def build_networks(self):
+        model_info_dict = {
+            'module_list': [],
+            'num_rawpoint_features': self.dataset.point_feature_encoder.num_point_features,
+            'num_point_features': self.dataset.point_feature_encoder.num_point_features,
+            'grid_size': self.dataset.grid_size,
+            'point_cloud_range': self.dataset.point_cloud_range,
+            'voxel_size': self.dataset.voxel_size,
+            'depth_downsample_factor': self.dataset.depth_downsample_factor
+        }
+        for module_name in self.module_topology:
+            module, model_info_dict = getattr(self, 'build_%s' % module_name)(
+                model_info_dict=model_info_dict
+            )
+            self.add_module(module_name, module)
+        return model_info_dict['module_list']
+
+    def build_vfe(self, model_info_dict):
+        if self.model_cfg.get('VFE', None) is None:
+            return None, model_info_dict
+
+        vfe_module = vfe.__all__[self.model_cfg.VFE.NAME](
+            model_cfg=self.model_cfg.VFE,
+            num_point_features=model_info_dict['num_rawpoint_features'],
+            point_cloud_range=model_info_dict['point_cloud_range'],
+            voxel_size=model_info_dict['voxel_size'],
+            grid_size=model_info_dict['grid_size'],
+            depth_downsample_factor=model_info_dict['depth_downsample_factor']
+        )
+        model_info_dict['num_point_features'] = vfe_module.get_output_feature_dim()
+        model_info_dict['module_list'].append(vfe_module)
+        return vfe_module, model_info_dict
+
+    def build_map_to_bev_module(self, model_info_dict):
+        if self.model_cfg.get('MAP_TO_BEV', None) is None:
+            return None, model_info_dict
+
+        map_to_bev_module = map_to_bev.__all__[self.model_cfg.MAP_TO_BEV.NAME](
+            model_cfg=self.model_cfg.MAP_TO_BEV,
+            grid_size=model_info_dict['grid_size']
+        )
+        model_info_dict['module_list'].append(map_to_bev_module)
+        model_info_dict['num_bev_features'] = map_to_bev_module.num_bev_features
+        return map_to_bev_module, model_info_dict
+
+    def build_backbone_2d(self, model_info_dict):
+        if self.model_cfg.get('BACKBONE_2D', None) is None:
+            return None, model_info_dict
+
+        backbone_2d_module = backbones_2d.__all__[self.model_cfg.BACKBONE_2D.NAME](
+            model_cfg=self.model_cfg.BACKBONE_2D,
+            input_channels=model_info_dict['num_bev_features']
+        )
+        model_info_dict['module_list'].append(backbone_2d_module)
+        model_info_dict['num_bev_features'] = backbone_2d_module.num_bev_features
+        return backbone_2d_module, model_info_dict
