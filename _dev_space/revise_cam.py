@@ -12,9 +12,13 @@ class PointCloudCorrector(Detector3DTemplate):
     def __init__(self):
         self.output_format = edict({
             'RETURN_OFFSET': True,
-            'RETURN_FOREGROUND_PROB': False,  # if True, TODO: some heuristic for assigning fgr prob for sampled points
+            'RETURN_FOREGROUND_PROB': True,  # if True, -> some heuristic for assigning fgr prob for sampled points
             'USE_PAST_FOREGROUND_ONLY': False,
+            'FOREGROUND_SEGMENTATION_ONLY': False,  # if True, no correction
         })
+        if self.output_format.FOREGROUND_SEGMENTATION_ONLY:
+            assert not self.output_format.RETURN_OFFSET, "no correction -> no offset"
+
         self.ckpt = './from_idris/ckpt/bev_seg_focal_fullnusc_ep5.pth'
         self.point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
         self.voxel_size = np.array([0.2, 0.2, 8.0])
@@ -147,8 +151,6 @@ class PointCloudCorrector(Detector3DTemplate):
             cur_pts_pix = np.floor((cur_points[:, :2] - self.point_cloud_range[:2]) / bev_pix_size).astype(int)
             # find non-repeating pixels
             cur_pts_pix1d = cur_pts_pix[:, 1] * self.bev_img_size[0] + cur_pts_pix[:, 0]  # y * width + x
-            print(f'DEBUGGING | cur_pts_pix1d: {cur_pts_pix1d.dtype}')
-            print(f'DEBUGGING | bev_img_size: {type(self.bev_img_size[0])}')
             unq_pix1d, inv_indices = np.unique(cur_pts_pix1d, return_inverse=True)
             unq_pix2d = np.stack([
                 unq_pix1d % self.bev_img_size[0],  # pixel_x
@@ -163,6 +165,11 @@ class PointCloudCorrector(Detector3DTemplate):
             # cur_points: (N, 7)
             # xyz, intensity, time, FGR_PROB, indicator
             # =========================================
+
+            if self.output_format.FOREGROUND_SEGMENTATION_ONLY:
+                # skip correction
+                batch_crt_points.append(np.pad(cur_points, [(0, 0), (1, 0)], mode='constant', constant_values=b_idx))
+                continue
 
             mask_pred_fgr = (pred_cls[b_idx, 0] > self.fgr_prob_threshold) & \
                             (np.linalg.norm(pred_reg[b_idx, :], axis=0) < 10)  # (256, 256)
