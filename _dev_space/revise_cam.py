@@ -9,17 +9,18 @@ from _dev_space.bev_segmentation_utils import sigmoid
 
 
 class PointCloudCorrector(Detector3DTemplate):
-    def __init__(self):
+    def __init__(self, bev_seg_net_ckpt=None, return_offset=True, return_fgr_prob=True, use_past_fgr_only=False,
+                 fgr_seg_only=False):
         self.output_format = edict({
-            'RETURN_OFFSET': True,
-            'RETURN_FOREGROUND_PROB': True,  # if True, -> some heuristic for assigning fgr prob for sampled points
-            'USE_PAST_FOREGROUND_ONLY': False,
-            'FOREGROUND_SEGMENTATION_ONLY': False,  # if True, no correction
+            'RETURN_OFFSET': return_offset,
+            'RETURN_FOREGROUND_PROB': return_fgr_prob,  # if True, -> some heuristic for assigning fgr prob for sampled points
+            'USE_PAST_FOREGROUND_ONLY': use_past_fgr_only,
+            'FOREGROUND_SEGMENTATION_ONLY': fgr_seg_only,  # if True, no correction
         })
         if self.output_format.FOREGROUND_SEGMENTATION_ONLY:
             assert not self.output_format.RETURN_OFFSET, "no correction -> no offset"
 
-        self.ckpt = './from_idris/ckpt/bev_seg_focal_fullnusc_ep5.pth'
+        self.ckpt = './from_idris/ckpt/bev_seg_focal_fullnusc_ep5.pth' if bev_seg_net_ckpt is None else bev_seg_net_ckpt
         self.point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
         self.voxel_size = np.array([0.2, 0.2, 8.0])
         cls_names = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle', 'bicycle',

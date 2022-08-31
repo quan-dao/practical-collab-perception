@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from _dev_space.revise_cam import PointCloudCorrector
 
 try:
     import torch_scatter
@@ -49,14 +50,22 @@ class PFNLayerV2(nn.Module):
 class DynamicPillarVFE(VFETemplate):
     def __init__(self, model_cfg, num_point_features, voxel_size, grid_size, point_cloud_range, **kwargs):
         super().__init__(model_cfg=model_cfg)
+        if self.model_cfg.get('USE_POINTCLOUD_CORRECTOR', False):
+            crt_cfg = self.model_cfg.PC_CORRECTOR
+            self.corrector = PointCloudCorrector(
+                crt_cfg.BEV_SEG_CKPT, crt_cfg.RETURN_OFFSET, crt_cfg.RETURN_FOREGROUND_PROB,
+                crt_cfg.USE_PAST_FOREGROUND_ONLY, crt_cfg.FOREGROUND_SEGMENTATION_ONLY
+            )
+            num_point_features = self.corrector.num_point_features
+        else:
+            self.corrector = None
+            num_point_features += 6 if self.use_absolute_xyz else 3
+            if self.with_distance:
+                num_point_features += 1
 
         self.use_norm = self.model_cfg.USE_NORM
         self.with_distance = self.model_cfg.WITH_DISTANCE
         self.use_absolute_xyz = self.model_cfg.USE_ABSLOTE_XYZ
-        num_point_features += 6 if self.use_absolute_xyz else 3
-        if self.with_distance:
-            num_point_features += 1
-
         self.num_filters = self.model_cfg.NUM_FILTERS
         assert len(self.num_filters) > 0
         num_filters = [num_point_features] + list(self.num_filters)
@@ -89,6 +98,10 @@ class DynamicPillarVFE(VFETemplate):
 
     def forward(self, batch_dict, **kwargs):
         # points = batch_dict['points'] # (batch_idx, x, y, z, i, e)
+
+        if self.corrector is not None:
+            batch_dict = self.corrector(batch_dict)
+
         points = batch_dict['points'][:, :-1]  # (batch_idx, x, y, z, i, e)
 
         points_coords = torch.floor((points[:, [1,2]] - self.point_cloud_range[[0,1]]) / self.voxel_size[[0,1]]).int()

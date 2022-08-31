@@ -4,7 +4,6 @@ CLASS_NAMES: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
     USE_MINI_TRAINVAL: True
-    USE_POINTS_OFFSET: True
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
@@ -28,7 +27,13 @@ MODEL:
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
         NUM_FILTERS: [ 64, 64 ]
-        USE_UNCLEANED_PC: True
+        USE_POINTCLOUD_CORRECTOR: True
+        PC_CORRECTOR:
+            BEV_SEG_CKPT: temp_ckpt/bev_seg_focal_fullnusc_ep5.pth
+            RETURN_OFFSET: True
+            RETURN_FOREGROUND_PROB: True
+            USE_PAST_FOREGROUND_ONLY: False
+            FOREGROUND_SEGMENTATION_ONLY: False
 
     MAP_TO_BEV:
         NAME: PointPillarScatter
