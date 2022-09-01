@@ -180,6 +180,8 @@ class PointCloudCorrector(nn.Module):
                             (np.linalg.norm(pred_reg[b_idx, :], axis=0) < 10)  # (256, 256)
             if not np.any(mask_pred_fgr):
                 batch_crt_points.append(np.pad(cur_points, [(0, 0), (1, 0)], mode='constant', constant_values=b_idx))
+                if self.output_format.RETURN_OFFSET:
+                    batch_crt_pts_offset.append(np.zeros((cur_points.shape[0], 2)))
                 continue
 
             # clustering
@@ -207,6 +209,12 @@ class PointCloudCorrector(nn.Module):
 
         if self.output_format.RETURN_OFFSET:
             batch_crt_pts_offset = torch.from_numpy(np.vstack(batch_crt_pts_offset)).cuda()
+            if batch_crt_pts_offset.shape[0] < batch_crt_points.shape[0]:
+                print("!!!!!\nbatch_crt_pts_offset.shape[0] < batch_crt_points.shape[0]\n!!!!!!")
+                batch_crt_pts_offset = torch.cat([
+                    batch_crt_pts_offset,
+                    batch_crt_pts_offset.new_zeros(batch_crt_points.shape[0] - batch_crt_pts_offset.shape[0], 2)
+                ], dim=0)
             batch_crt_points = torch.cat((batch_crt_points[:, :-1], batch_crt_pts_offset, batch_crt_points[:, [-1]]),
                                          dim=1).contiguous()
 
