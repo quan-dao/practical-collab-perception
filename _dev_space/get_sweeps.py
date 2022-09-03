@@ -5,6 +5,9 @@ from typing import Tuple, List
 from _dev_space.tools_box import get_nuscenes_pointcloud_in_target_frame, get_sweeps_token, check_list_to_numpy, \
     get_nuscenes_sweeps_partitioned_by_instances
 
+from _dev_space.tools_box import apply_tf, get_nuscenes_sensor_pose_in_global, tf
+import numpy.linalg as LA
+
 
 def get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int, correct_dyna_pts=False, use_gt_fgr=False,
                center_radius=2., pc_range=None, bev_pix_size=None, dbscann_eps=7.0, dbscann_min_samples=5,
@@ -217,3 +220,112 @@ def get_sweeps_for_foreground_seg(nusc: NuScenes, sample_token: str, n_sweeps: i
                                                           is_foreground_seg=True)
     n_original_instances = int(np.max(sweeps[:, -1])) + 1
     return {'points': sweeps, 'n_original_instances': n_original_instances}
+
+
+def e2e_crt_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int) -> dict:
+    """
+    Returns:
+        {
+            'points': (N, 8) - xyz, intensity, time, target_offset_xy, indicator
+            'num_original_instances': (int)
+        }
+    """
+    sample_rec = nusc.get('sample', sample_token)
+    ref_sd_token = sample_rec['data']['LIDAR_TOP']
+    sd_tokens_times = get_sweeps_token(nusc, ref_sd_token, n_sweeps, return_time_lag=True)
+
+    # build {'instance_token': pose @ curr ego} to map foreground points to target frame in an oracle way
+    ref_from_glob = LA.inv(get_nuscenes_sensor_pose_in_global(nusc, ref_sd_token))
+    inst_token_to_pose = dict()
+    for sd_token, _ in sd_tokens_times[::-1]:
+        # iterate sd_token_times backward to populate inst_token_to_pose
+        # -> value of inst_token_to_pose the most recent pose in target frame of any intances
+        boxes = nusc.get_boxes(sd_token)
+        for box in boxes:
+            if box.name.split('.')[0] not in ('human', 'vehicle'):
+                continue
+            anno_rec = nusc.get('sample_annotation', box.token)
+            if anno_rec['instance_token'] not in inst_token_to_pose:
+                glob_from_box = tf(box.center, box.orientation)
+                inst_token_to_pose[anno_rec['instance_token']] = ref_from_glob @ glob_from_box
+
+    # to compute label for offset toward cluster center
+    # -> keep track of which foreground points belong to same cluster
+    inst_token_to_index = dict(zip(inst_token_to_pose.keys(), range(len(inst_token_to_pose))))
+
+    # process sweeps to get points
+    points = [e2e_crt_process_1sweep(nusc, sd_token, ref_sd_token, timelag, inst_token_to_pose, inst_token_to_index)
+              for sd_token, timelag in sd_tokens_times]
+    points = np.vstack(points)
+    return {'points': points, 'num_original_instances': len(inst_token_to_pose)}
+
+
+def e2e_crt_process_1sweep(nusc: NuScenes, curr_sd_token: str, target_sd_token: str, sweep_timelag: float,
+                           inst_token_to_pose: dict, inst_token_to_index: dict,
+                           box_tol=1e-2, center_radius=2.) -> np.ndarray:
+    """
+    Returns:
+        points: (N, 8) - xyz, intensity, time, target_offset_xy, indicator (-1: background, >= 0 foreground)
+    """
+    # read pointcloud from file
+    pcfile = nusc.get_sample_data_path(curr_sd_token)
+    pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (N, 4) - (x, y, z, intensity)
+    pc = np.pad(pc, pad_width=[(0, 0), (0, 1)], mode='constant',
+                constant_values=sweep_timelag)  # (N, 5) - (xyz, intensity, time)
+
+    # remove ego points
+    dist_to_sensor = LA.norm(pc[:, :2], axis=1)
+    pc = pc[dist_to_sensor > center_radius]
+
+    # map pc to global frame
+    glob_from_curr = get_nuscenes_sensor_pose_in_global(nusc, curr_sd_token)
+    pc[:, :3] = apply_tf(glob_from_curr, pc[:, :3])
+
+    # map pc to target frame
+    target_from_glob = LA.inv(get_nuscenes_sensor_pose_in_global(nusc, target_sd_token))
+    xyz_wrt_target = apply_tf(target_from_glob, pc[:, :3])
+
+    # ---
+    # split pc to background & foreground
+    # compute offset from foreground transmitted by EMC & "properly aligned" foreground
+    # ---
+    boxes = nusc.get_boxes(curr_sd_token)
+    indicator = -np.ones(pc.shape[0])
+    emc2oracle = np.zeros((pc.shape[0], 2))
+
+    for bidx, box in enumerate(boxes):
+        if box.name.split('.')[0] not in ('human', 'vehicle'):
+            continue
+        anno_rec = nusc.get('sample_annotation', box.token)
+        if anno_rec['num_lidar_pts'] == 0:
+            continue
+
+        # transform pc to box local frame
+        box_from_glob = LA.inv(tf(box.center, box.orientation))
+        xyz_wrt_box = apply_tf(box_from_glob, pc[:, :3])
+
+        # find pts inside box
+        mask_inside_box = np.all(
+            np.abs(xyz_wrt_box / np.array([box.wlh[1], box.wlh[0], box.wlh[2]])) < (0.5 + box_tol),
+            axis=1
+        )
+        # update indicator of points inside this box
+        indicator[mask_inside_box] = inst_token_to_index[anno_rec['instance_token']]
+
+        # transmit fgr to target frame using pose of box in target frame
+        box_pts_emc = xyz_wrt_target[mask_inside_box]  # (N_bpts, 3)
+        box_pts_oracle = apply_tf(inst_token_to_pose[anno_rec['instance_token']], xyz_wrt_box[mask_inside_box])  # (N_bpts, 3)
+        emc2oracle[mask_inside_box] = box_pts_oracle[:, :2] - box_pts_emc[:, :2]
+
+    # format output
+    sweep = np.concatenate([
+        xyz_wrt_target,
+        pc[:, 3:],  # 2d vector: intensity, time
+        emc2oracle,  # 2d vector: offset along X,Y- axis of target frame
+        indicator[:, np.newaxis],  # -1 for background, >= 0 for foreground
+    ], axis=1)  # (N, 8)
+    return sweep
+
+
+
+

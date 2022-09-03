@@ -9,8 +9,7 @@ from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
-from _dev_space.get_clean_pointcloud import get_merge_pointcloud
-from _dev_space.get_sweeps import get_sweeps, get_sweeps_for_distillation, get_sweeps_for_foreground_seg
+from _dev_space.get_sweeps import e2e_crt_get_sweeps
 from nuscenes.nuscenes import NuScenes
 
 
@@ -130,13 +129,13 @@ class NuScenesDataset(DatasetTemplate):
 
         info = copy.deepcopy(self.infos[index])
 
-        _out = get_sweeps_for_foreground_seg(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
+        _out = e2e_crt_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
         points = _out['points']
 
         input_dict = {
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
-            'metadata': {'token': info['token'], 'n_original_instances': _out['n_original_instances']}
+            'metadata': {'token': info['token'], 'n_original_instances': _out['num_original_instances']}
         }
 
         if 'gt_boxes' in info:

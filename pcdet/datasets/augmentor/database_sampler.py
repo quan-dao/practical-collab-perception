@@ -399,30 +399,15 @@ class DataBaseSampler(object):
                 )
 
             # ---
-            # for foreground segementation
+            # for foreground segementation & compute of correction vector
             # ---
-            if self.sampler_cfg.get('SET_POINT_TIMESTAMP_TO_ZERO', False):
-                obj_points[:, 4] = 0
-
-            if self.sampler_cfg.get('ADD_POINT_INSTANCE_INDICATOR', False):
-                assert not self.sampler_cfg.get('ADD_POINT_TYPE_INDICATOR', False)
-                obj_points = np.concatenate([
-                    obj_points,
-                    np.tile(np.array([[data_dict['metadata']['n_original_instances'] + idx]]), (obj_points.shape[0], 1))
-                ], axis=1)
+            if self.sampler_cfg.get('PAD_WITH_OFFSET_INDICATOR', False):
+                obj_points = np.pad(obj_points, [(0, 0), (0, 3)], constant_values=0)
+                obj_points[:, -1] = data_dict['metadata']['n_original_instances'] + idx
 
             obj_points_list.append(obj_points)
 
         obj_points = np.concatenate(obj_points_list, axis=0)
-
-        if self.sampler_cfg.get('ADD_POINT_OFFSET_XY', False):
-            assert not self.sampler_cfg.get('ADD_POINT_INSTANCE_INDICATOR', False)
-            # points are padded with their offset (calculated by CAM) -> do the same for obj_points
-            obj_points = np.concatenate([obj_points, np.zeros((obj_points.shape[0], 2))], axis=1)
-        if self.sampler_cfg.get('ADD_POINT_TYPE_INDICATOR', False):
-            assert not self.sampler_cfg.get('ADD_POINT_INSTANCE_INDICATOR', False)
-            obj_points_type = np.tile(np.array([[2]]), (obj_points.shape[0], 1))
-            obj_points = np.concatenate([obj_points, obj_points_type], axis=1)
 
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
 
