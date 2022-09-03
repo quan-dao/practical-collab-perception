@@ -19,10 +19,12 @@ cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
 
 cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
     'placeholder',
-    'random_world_flip', 'random_world_rotation', 'random_world_scaling',  # TODO: adapt these aug ops for offset_x, offset_y
-    # 'gt_sampling',
+    'random_world_flip', 'random_world_scaling',  # TODO: adapt these aug ops for offset_x, offset_y
+    'gt_sampling',
+    # 'random_world_rotation',
 ]
-cfg.DATA_AUGMENTOR.AUG_CONFIG_LIST[0].PAD_WITH_OFFSET_INDICATOR = True
+# cfg.DATA_AUGMENTOR.AUG_CONFIG_LIST[0].PAD_WITH_OFFSET_INDICATOR = True
+cfg.DATA_AUGMENTOR.AUG_CONFIG_LIST[0].POINT_FEAT_TO_TRANSFORM = [5, 6]
 
 cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'indicator']
 cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'indicator']

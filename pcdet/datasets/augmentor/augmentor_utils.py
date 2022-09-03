@@ -45,16 +45,26 @@ def random_flip_along_y(gt_boxes, points, return_flip=False):
     return gt_boxes, points
 
 
-def global_rotation(gt_boxes, points, rot_range, return_rot=False):
+def global_rotation(gt_boxes, points, rot_range, return_rot=False, points_feat_to_transform=None):
     """
     Args:
         gt_boxes: (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
         points: (M, 3 + C),
         rot_range: [min, max]
+        points_feat_to_transform (list): index of point feat to be transformed by this augmentation operation
     Returns:
     """
     noise_rotation = np.random.uniform(rot_range[0], rot_range[1])
     points = common_utils.rotate_points_along_z(points[np.newaxis, :, :], np.array([noise_rotation]))[0]
+
+    if points_feat_to_transform is not None:
+        feat = points[:, points_feat_to_transform]
+        if feat.shape[1] < 3:
+            feat = np.pad(feat, [(0, 0), (0, 3 - feat.shape[1])], constant_values=0)
+        feat = common_utils.rotate_points_along_z(feat[np.newaxis, ...], np.array([noise_rotation]))[0]
+        # overwrite point feat
+        points[:, points_feat_to_transform] = feat[:, :len(points_feat_to_transform)]
+
     gt_boxes[:, 0:3] = common_utils.rotate_points_along_z(gt_boxes[np.newaxis, :, 0:3], np.array([noise_rotation]))[0]
     gt_boxes[:, 6] += noise_rotation
     if gt_boxes.shape[1] > 7:

@@ -62,7 +62,8 @@ class DataAugmentor(object):
         if not isinstance(rot_range, list):
             rot_range = [-rot_range, rot_range]
         gt_boxes, points, noise_rot = augmentor_utils.global_rotation(
-            data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range, return_rot=True
+            data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range, return_rot=True,
+            points_feat_to_transform=config['POINT_FEAT_TO_TRANSFORM']
         )
 
         data_dict['gt_boxes'] = gt_boxes
