@@ -1,7 +1,7 @@
 from pyquaternion import Quaternion
 import numpy as np
 import torch
-from torch_scatter import scatter_mean
+from torch_scatter import scatter_mean, scatter_max
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
 from _dev_space.get_clean_pointcloud import show_pointcloud

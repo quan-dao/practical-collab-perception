@@ -25,15 +25,17 @@ def assign_target_foreground_seg(data_dict, input_stride) -> dict:
     # compute offset from each fgr point to its cluster's mean
     fgr_to_cluster_mean = (clusters_mean[inv_indices] - points[mask_fgr, 1: 3]) / pix_size  # (N_fgr, 2)
 
-    fgr_pix_coord, fgr_to_mean = compute_bev_coord_torch(points[mask_fgr], pc_range, pix_size, fgr_to_cluster_mean)
+    fgr_reg_target = torch.cat((fgr_to_cluster_mean, points[mask_fgr, 6: 8]), dim=1)
+    fgr_pix_coord, fgr_to_mean = compute_bev_coord_torch(points[mask_fgr], pc_range, pix_size, fgr_reg_target)
 
     # format output
     bev_cls_label = points.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
     # bev_cls_label[bgr_pix_coord[:, 0], bgr_pix_coord[:, 2], bgr_pix_coord[:, 1]] = 0
     bev_cls_label[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = 1
 
-    bev_reg_label = points.new_zeros(2, data_dict['batch_size'], bev_size[1], bev_size[0])
-    for idx_offset in range(2):
+    bev_reg_label = points.new_zeros(4, data_dict['batch_size'], bev_size[1], bev_size[0])
+    # ATTENTION: bev_reg_label is (C, B, H, W), not (B, C, H, W)
+    for idx_offset in range(4):
         bev_reg_label[idx_offset, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
             fgr_to_mean[:, idx_offset]
 
