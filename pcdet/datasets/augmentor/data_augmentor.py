@@ -47,7 +47,8 @@ class DataAugmentor(object):
         for cur_axis in config['ALONG_AXIS_LIST']:
             assert cur_axis in ['x', 'y']
             gt_boxes, points, enable = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
-                gt_boxes, points, return_flip=True
+                gt_boxes, points, return_flip=True,
+                points_feat_to_transform=config['POINT_FEAT_TO_TRANSFORM']
             )
             data_dict['flip_%s'%cur_axis] = enable
 
@@ -75,7 +76,8 @@ class DataAugmentor(object):
         if data_dict is None:
             return partial(self.random_world_scaling, config=config)
         gt_boxes, points, noise_scale = augmentor_utils.global_scaling(
-            data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'], return_scale=True
+            data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'], return_scale=True,
+            points_feat_to_transform=config['POINT_FEAT_TO_TRANSFORM']
         )
 
         data_dict['gt_boxes'] = gt_boxes

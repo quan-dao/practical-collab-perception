@@ -5,7 +5,7 @@ from ...utils import common_utils
 from ...utils import box_utils
 
 
-def random_flip_along_x(gt_boxes, points, return_flip=False):
+def random_flip_along_x(gt_boxes, points, return_flip=False, points_feat_to_transform=None):
     """
     Args:
         gt_boxes: (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
@@ -20,12 +20,16 @@ def random_flip_along_x(gt_boxes, points, return_flip=False):
         
         if gt_boxes.shape[1] > 7:
             gt_boxes[:, 8] = -gt_boxes[:, 8]
+
+        if points_feat_to_transform is not None:
+            points[:, points_feat_to_transform[1]] *= -1
+
     if return_flip:
         return gt_boxes, points, enable
     return gt_boxes, points
 
 
-def random_flip_along_y(gt_boxes, points, return_flip=False):
+def random_flip_along_y(gt_boxes, points, return_flip=False, points_feat_to_transform=None):
     """
     Args:
         gt_boxes: (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
@@ -40,6 +44,10 @@ def random_flip_along_y(gt_boxes, points, return_flip=False):
 
         if gt_boxes.shape[1] > 7:
             gt_boxes[:, 7] = -gt_boxes[:, 7]
+
+        if points_feat_to_transform is not None:
+            points[:, points_feat_to_transform[0]] *= -1
+
     if return_flip:
         return gt_boxes, points, enable
     return gt_boxes, points
@@ -78,7 +86,7 @@ def global_rotation(gt_boxes, points, rot_range, return_rot=False, points_feat_t
     return gt_boxes, points
 
 
-def global_scaling(gt_boxes, points, scale_range, return_scale=False):
+def global_scaling(gt_boxes, points, scale_range, return_scale=False, points_feat_to_transform=None):
     """
     Args:
         gt_boxes: (N, 7), [x, y, z, dx, dy, dz, heading]
@@ -90,6 +98,10 @@ def global_scaling(gt_boxes, points, scale_range, return_scale=False):
         return gt_boxes, points
     noise_scale = np.random.uniform(scale_range[0], scale_range[1])
     points[:, :3] *= noise_scale
+
+    if points_feat_to_transform is not None:
+        points[:, points_feat_to_transform] *= noise_scale
+
     gt_boxes[:, :6] *= noise_scale
     if return_scale:
         return gt_boxes, points, noise_scale
