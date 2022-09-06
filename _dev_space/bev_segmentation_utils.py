@@ -25,7 +25,7 @@ def assign_target_foreground_seg(data_dict, input_stride) -> dict:
     # compute offset from each fgr point to its cluster's mean
     fgr_to_cluster_mean = (clusters_mean[inv_indices] - points[mask_fgr, 1: 3])  # (N_fgr, 2)
 
-    fgr_reg_target = torch.cat((fgr_to_cluster_mean, points[mask_fgr, 6: 8]), dim=1)
+    fgr_reg_target = torch.cat((fgr_to_cluster_mean, points[mask_fgr, 6: 8]), dim=1) / pix_size
     fgr_pix_coord, fgr_to_mean = compute_bev_coord_torch(points[mask_fgr], pc_range, pix_size, fgr_reg_target)
 
     # format output
