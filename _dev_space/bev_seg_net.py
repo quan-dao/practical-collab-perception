@@ -107,7 +107,7 @@ class PoseResNet(nn.Module):
         # ---
         self.deconv_layers = self._make_deconv_layer(
             num_layers=3,  # up samples 3 times
-            num_filters=n_downsample_filters[::-1],
+            num_filters=model_cfg.NUM_UP_FILTERS,
             kernels_size=[4, 4, 4],
         )
 

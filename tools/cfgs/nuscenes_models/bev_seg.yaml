@@ -81,6 +81,7 @@ MODEL:
         NUM_FILTERS: [64, 128, 256]
         LAYERS_SIZE: [2, 2, 2]
         HEAD_CONV: 64
+        NUM_UP_FILTERS: [128, 64, 64]
         BEV_IMG_STRIDE: 2
         FOREGROUND_SEG_LOSS_WEIGHTS: [1.0, 0.1, 1.0]
 
