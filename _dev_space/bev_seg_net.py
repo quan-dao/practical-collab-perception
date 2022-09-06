@@ -79,7 +79,7 @@ class PoseResNet(nn.Module):
         self.inplanes = n_downsample_filters[0]
         self.heads = {
             'head_cls': 1,  # binary classification: foreground prob
-            'head_reg': 2,  # 2 regression targets: offset_to_center_x, offset_to_center_y
+            'head_reg': 4,  # 4 regression targets: to_cluster_center_x, to_cluster_center_y, crt_x, crt_y (in metric coord)
         }
         self.deconv_with_bias = False
 
@@ -172,8 +172,9 @@ class PoseResNet(nn.Module):
         assert num_layers == len(num_filters), 'ERROR: num_deconv_layers is different len(num_deconv_filters)'
         assert num_layers == len(kernels_size), 'ERROR: num_deconv_layers is different len(kernels_size)'
 
-        layers = []
+        layers = nn.ModuleList()
         for i in range(num_layers):
+            up_layer = []
             kernel, padding, output_padding = \
                 self._get_deconv_cfg(kernels_size[i])
 
@@ -189,63 +190,59 @@ class PoseResNet(nn.Module):
                 bias=self.deconv_with_bias)
             fill_up_weights(up)
 
-            layers.append(fc)
-            layers.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
-            layers.append(nn.ReLU(inplace=True))
-            layers.append(up)
-            layers.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
-            layers.append(nn.ReLU(inplace=True))
+            up_layer.append(fc)
+            up_layer.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
+            up_layer.append(nn.ReLU(inplace=True))
+            up_layer.append(up)
+            up_layer.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
+            up_layer.append(nn.ReLU(inplace=True))
             self.inplanes = planes
+            layers.append(nn.Sequential(*up_layer))
 
-        return nn.Sequential(*layers)
+        return layers
 
     def forward(self, data_dict):
         x = data_dict['spatial_features']
-        x = self.conv1(x)
+        x = self.conv1(x)  # stride 2
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
+        x = self.maxpool(x)  # stride 4
 
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        # x = self.layer4(x)
+        x_stride_4 = self.layer1(x)
+        x_stride_8 = self.layer2(x_stride_4)
+        x_stride_16 = self.layer3(x_stride_8)
 
-        x = self.deconv_layers(x)
-        data_dict['spatial_features_2d'] = x
+        x_up_stride_8 = self.deconv_layers[0](x_stride_16) + x_stride_8
+        x_up_stride_4 = self.deconv_layers[1](x_up_stride_8) + x_stride_4
+        x_up_stride_2 = self.deconv_layers[2](x_up_stride_4)
+
+        data_dict['spatial_features_2d'] = x_up_stride_2
 
         pred_dict = {}
         for head in self.heads:
-            pred_dict[f"bev_{head.split('_')[1]}_pred"] = self.__getattr__(head)(x)
+            pred_dict[f"bev_{head.split('_')[1]}_pred"] = self.__getattr__(head)(x_up_stride_2)
         self.forward_ret_dict['pred_dict'] = pred_dict
 
-        # if self.training:
         target_dict = assign_target_foreground_seg(data_dict, input_stride=self.model_cfg.BEV_IMG_STRIDE)
         self.forward_ret_dict['target_dict'] = target_dict
-        # else:
-            # for viz bev_cls & bev_reg result
+
         data_dict['bev_pred_dict'] = self.forward_ret_dict['pred_dict']
         data_dict['bev_target_dict'] = target_dict
 
         return data_dict
 
     def get_loss(self, tb_dict=None):
+        if tb_dict is None:
+            tb_dict = dict()
         target_dict = self.forward_ret_dict['target_dict']
         pred_dict = self.forward_ret_dict['pred_dict']
 
-        target_cls = target_dict['bev_cls_label'].unsqueeze(1).contiguous()  # (B, 1, H, W)
-        target_reg = target_dict['bev_reg_label']  # (2, B, H, W) - 2 for offset_to_mean (x & y)
-
-        pred_cls = sigmoid(pred_dict['bev_cls_pred'])  # (B, 1, H, W)
-        pred_reg = pred_dict['bev_reg_pred']  # (B, 2, H, W)
-
+        # ---
         # classification loss - for both bgr & fgr
+        # ---
+        target_cls = target_dict['bev_cls_label'].unsqueeze(1).contiguous()  # (B, 1, H, W)
+        pred_cls = sigmoid(pred_dict['bev_cls_pred'])  # (B, 1, H, W)
         loss_fgr_seg = self.loss_cls(pred_cls, target_cls) * self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[0]
-        # mask_observed = target_cls > -1  # (B, H, W) - True for background & foreground
-        # loss_fgr_seg = nn.functional.binary_cross_entropy_with_logits(pred_cls[mask_observed], target_cls[mask_observed]) * \
-        #                self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[0]
-        if tb_dict is None:
-            tb_dict = dict()
         tb_dict['bev_loss_fgr_cls'] = loss_fgr_seg.item()
 
         # compute segmentation statistic
@@ -254,18 +251,32 @@ class PoseResNet(nn.Module):
             for k, v in stats.items():
                 tb_dict[f'seg_{k}_{threshold}'] = v
 
+        # ---
         # regression loss - for fgr only
+        # ---
         mask_fgr = target_cls > 0  # (B, 1, H, W)
-        target_reg = target_reg.permute(1, 0, 2, 3).contiguous()
+        target_reg = target_dict['bev_reg_label']  # (4, B, H, W) - 4 for offset_to_mean (x & y) and correction_(x & y)
+        target_reg = target_reg.permute(1, 0, 2, 3).contiguous()  # (B, 4, H, W)
+        target_reg2mean = target_reg[:, :2].contiguous()  # (B, 2, H, W)
+        target_reg2crt = target_reg[:, 2:].contiguous()  # (B, 2, H, W)
+
+        pred_reg = pred_dict['bev_reg_pred']  # (B, 4, H, W)
+        pred_reg2mean = pred_reg[:, :2].contiguous()  # (B, 2, H, W)
+        pred_reg2crt = pred_reg[:, 2:].contiguous()  # (B, 2, H, W)
+
         if torch.any(mask_fgr) > 0:
             mask_fgr = mask_fgr.repeat(1, 2, 1, 1)
-            loss_reg = self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[1] * \
-                       nn.functional.l1_loss(pred_reg[mask_fgr], target_reg[mask_fgr], reduction='mean')
-            tb_dict['bev_loss_fgr_reg'] = loss_reg.item()
-        else:
-            loss_reg = 0
-            tb_dict['bev_loss_fgr_reg'] = 0
+            loss_reg2mean = self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[1] * \
+                            nn.functional.l1_loss(pred_reg2mean[mask_fgr], target_reg2mean[mask_fgr], reduction='mean')
+            tb_dict['bev_loss_reg2mean'] = loss_reg2mean.item()
 
-        bev_loss = loss_fgr_seg + loss_reg
+            loss_reg2crt = self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[2] * \
+                           nn.functional.l1_loss(pred_reg2crt[mask_fgr], target_reg2crt[mask_fgr], reduction='mean')
+            tb_dict['bev_loss_reg2crt'] = loss_reg2crt.item()
+        else:
+            loss_reg2mean, loss_reg2crt = 0, 0
+            tb_dict['bev_loss_reg2mean'], tb_dict['bev_loss_reg2crt'] = 0., 0.
+
+        bev_loss = loss_fgr_seg + loss_reg2mean + loss_reg2crt
         tb_dict['bev_loss'] = bev_loss.item()
         return bev_loss, tb_dict

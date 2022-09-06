@@ -63,7 +63,7 @@ show_pointcloud(pc[:, 1: 4], boxes, fgr_mask=fgr_mask)
 
 
 bev_cls_label = target_dict['bev_cls_label'].int().numpy()  # (B, H, W)
-bev_reg_label = target_dict['bev_reg_label'].numpy()
+bev_reg_label = target_dict['bev_reg_label'].numpy()  # (4, B, H, W)
 
 bev_fgr_mask = bev_cls_label[batch_idx] > 0  # (H, W)
 
@@ -86,3 +86,13 @@ for fidx in range(fgr_to_crt.shape[1]):
     ax[2].arrow(fgr_x[fidx], fgr_y[fidx], fgr_to_crt[0, fidx], fgr_to_crt[1, fidx], color='g', width=0.01)
 
 plt.show()
+
+
+# test validity of correction label by inferring from bev crt image
+pc_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
+pix_size = 0.4
+bev_crt_label = bev_reg_label[2:, batch_idx]  # (2, H, W)
+pc_pix_coords = np.floor((pc[:, 1: 3] - pc_range[:2]) / pix_size).astype(int)
+pc_crt = bev_crt_label[:, pc_pix_coords[:, 1], pc_pix_coords[:, 0]]
+pc[:, 1: 3] += pc_crt.T
+show_pointcloud(pc[:, 1: 4], boxes, fgr_mask=fgr_mask)
