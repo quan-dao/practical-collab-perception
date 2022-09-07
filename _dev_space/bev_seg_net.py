@@ -293,8 +293,11 @@ class PoseResNet(nn.Module):
         if has_fgr:
             target_crt_dir = target_dict['target_crt_dir'].permute(1, 0, 2, 3).contiguous()  # (B, 2, H, W)
             pred_crt_dir = pred_dict['pred_crt_dir']  # (B, 2, H, W)
+            bev_crt_mag = target_dict['_bev_crt_mag']  # (B, H, W)
+            mask_regress_dir = __mask_fgr & (bev_crt_mag > 1e-3).unsqueeze(1)
             loss_crt_dir = self.model_cfg.LOSS_WEIGHTS[3] * \
-                            nn.functional.l1_loss(pred_crt_dir[__mask_fgr], target_crt_dir[__mask_fgr], reduction='mean')
+                           nn.functional.l1_loss(pred_crt_dir[mask_regress_dir], target_crt_dir[mask_regress_dir],
+                                                 reduction='mean')
             tb_dict['bev_loss_crt_dir'] = loss_crt_dir.item()
         else:
             loss_crt_dir = 0

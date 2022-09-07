@@ -34,7 +34,6 @@ def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_n
 
     # format output
     bev_cls_label = points.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
-    # bev_cls_label[bgr_pix_coord[:, 0], bgr_pix_coord[:, 2], bgr_pix_coord[:, 1]] = 0
     bev_cls_label[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = 1
 
     bev_reg2mean_label = points.new_zeros(2, data_dict['batch_size'], bev_size[1], bev_size[0])
@@ -52,14 +51,18 @@ def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_n
     bev_crt_class = crt_class.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])  # (B, H, W) - contain cls index
     bev_crt_class[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_class.squeeze(1)
 
-    crt_dir = fgr_reg_label[:, 2:] / crt_mag  # (N_fgr, 2)
+    crt_dir = fgr_reg_label[:, 2:] / torch.clamp(crt_mag, min=1e-4)  # (N_fgr, 2)
     bev_crt_dir = crt_mag.new_zeros(2, data_dict['batch_size'], bev_size[1], bev_size[0])
     for idx_dir in range(2):
         bev_crt_dir[idx_dir, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
             crt_dir[:, idx_dir]
+    # to exclude reg crt_dir for null crt_mag
+    bev_crt_mag = points.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
+    bev_crt_mag[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_mag[:, 0]
 
     target_dict = {'target_cls': bev_cls_label, 'target_to_mean': bev_reg2mean_label,
-                   'target_crt_cls': bev_crt_class, 'target_crt_dir': bev_crt_dir}
+                   'target_crt_cls': bev_crt_class, 'target_crt_dir': bev_crt_dir,
+                   '_bev_crt_mag': bev_crt_mag}
     return target_dict
 
 
