@@ -34,7 +34,7 @@ def inference(cfg_file, pretrained_model):
     cfg.DATA_CONFIG.VERSION = 'v1.0-mini'
     cfg.DATA_CONFIG.USE_MINI_TRAINVAL = False
     print(cfg)
-    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=1,
+    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=2,
                                               dist=False, logger=logger, training=False, total_epochs=1, seed=666,
                                               workers=1)
     iter_dataloader = iter(dataloader)
@@ -50,7 +50,7 @@ def inference(cfg_file, pretrained_model):
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=dataset)
     print(model)
     model.cuda()
-    model.load_params_from_file(filename=pretrained_model, to_cpu=False, logger=logger)
+    # model.load_params_from_file(filename=pretrained_model, to_cpu=False, logger=logger)
 
     # ---
     # inference
@@ -59,7 +59,7 @@ def inference(cfg_file, pretrained_model):
     for cur_module in model.module_list:
         data_dict = cur_module(data_dict)
 
-    torch.save(data_dict, './_output/inference_result.pth')
+    # torch.save(data_dict, './_output/inference_result.pth')
     bev_loss, tb_dict = model.backbone_2d.get_loss()
     print_dict(tb_dict)
     print(f'---\nbev_loss: {bev_loss}',)
@@ -165,6 +165,6 @@ def eval_model(cfg_file, pretrained_model):
 if __name__ == '__main__':
     cfg_file = './from_idris/_cbgs_dyn_pp_centerpoint.yaml'
     pretrained_model = './from_idris/ckpt/bev_seg_focal_fullnusc_ep5.pth'
-    # inference(cfg_file, pretrained_model)
-    viz_inference_result()
+    inference(cfg_file, pretrained_model)
+    # viz_inference_result()
     # eval_model(cfg_file, pretrained_model)

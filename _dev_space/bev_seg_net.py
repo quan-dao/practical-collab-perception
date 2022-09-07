@@ -266,9 +266,9 @@ class PoseResNet(nn.Module):
             target_to_mean = target_dict['target_to_mean']  # (2, B, H, W) - offset_to_mean (x & y)
             target_to_mean = target_to_mean.permute(1, 0, 2, 3).contiguous()  # (B, 2, H, W)
             pred_to_mean = pred_dict['pred_to_mean']  # (B, 2, H, W)
-            mask_fgr = mask_fgr.repeat(1, 2, 1, 1)
+            __mask_fgr = mask_fgr.repeat(1, 2, 1, 1)
             loss_to_mean = self.model_cfg.LOSS_WEIGHTS[1] * \
-                            nn.functional.l1_loss(pred_to_mean[mask_fgr], target_to_mean[mask_fgr], reduction='mean')
+                            nn.functional.l1_loss(pred_to_mean[__mask_fgr], target_to_mean[__mask_fgr], reduction='mean')
             tb_dict['bev_loss_to_mean'] = loss_to_mean.item()
         else:
             loss_to_mean = 0
@@ -294,7 +294,7 @@ class PoseResNet(nn.Module):
             target_crt_dir = target_dict['target_crt_dir'].permute(1, 0, 2, 3).contiguous()  # (B, 2, H, W)
             pred_crt_dir = pred_dict['pred_crt_dir']  # (B, 2, H, W)
             loss_crt_dir = self.model_cfg.LOSS_WEIGHTS[3] * \
-                            nn.functional.l1_loss(pred_crt_dir[mask_fgr], target_crt_dir[mask_fgr], reduction='mean')
+                            nn.functional.l1_loss(pred_crt_dir[__mask_fgr], target_crt_dir[__mask_fgr], reduction='mean')
             tb_dict['bev_loss_crt_dir'] = loss_crt_dir.item()
         else:
             loss_crt_dir = 0
