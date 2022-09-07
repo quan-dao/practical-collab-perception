@@ -83,8 +83,9 @@ MODEL:
         HEAD_CONV: 64
         NUM_UP_FILTERS: [128, 64, 64]
         BEV_IMG_STRIDE: 2
-        LOSS_WEIGHTS: [1.0, 1.0, 1.0, 1.0]
+        LOSS_WEIGHTS: [1.0, 1.0, 1.0, 1.0, 1.0]
         CRT_NUM_BINS: 40
+        CRT_DIR_NUM_BINS: 80
         CRT_MAX_MAGNITUDE: 15.0
 
     POST_PROCESSING:
