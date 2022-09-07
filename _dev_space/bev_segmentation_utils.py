@@ -2,12 +2,12 @@ import torch
 import numpy as np
 from torch_scatter import scatter_mean
 from tqdm import tqdm
-
+from pcdet.utils.transform_utils import bin_depths
 from _dev_space.tools_box import compute_bev_coord_torch
 
 
 @torch.no_grad()
-def assign_target_foreground_seg(data_dict, input_stride) -> dict:
+def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_num_bins=40) -> dict:
     points = data_dict['points']  # (N, 1+3+C+1) - batch_idx, XYZ, C feats, indicator (-1 bgr, >=0 inst idx)
     indicator = points[:, -1].int()
     pc_range = torch.tensor([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], dtype=torch.float, device=indicator.device)
@@ -23,23 +23,43 @@ def assign_target_foreground_seg(data_dict, input_stride) -> dict:
     unq_merge, inv_indices = torch.unique(merge_batch_and_inst_idx, return_inverse=True)  # (N_unq)
     clusters_mean = scatter_mean(points[mask_fgr, 1: 3], inv_indices, dim=0)  # (N_unq, 2)
     # compute offset from each fgr point to its cluster's mean
-    fgr_to_cluster_mean = (clusters_mean[inv_indices] - points[mask_fgr, 1: 3])  # (N_fgr, 2)
+    fgr_to_cluster_mean = (clusters_mean[inv_indices] - points[mask_fgr, 1: 3]) / pix_size  # (N_fgr, 2)
 
-    fgr_reg_target = torch.cat((fgr_to_cluster_mean, points[mask_fgr, 6: 8]), dim=1) / pix_size
-    fgr_pix_coord, fgr_to_mean = compute_bev_coord_torch(points[mask_fgr], pc_range, pix_size, fgr_reg_target)
+    # scatter regression target to pixels
+    fgr_reg_target = torch.cat((fgr_to_cluster_mean,  # measured in pixels
+                                points[mask_fgr, 6: 8]),  # measured in meters
+                               dim=1)
+    fgr_pix_coord, fgr_reg_label = compute_bev_coord_torch(points[mask_fgr], pc_range, pix_size, fgr_reg_target)
+    # fgr_reg_label: (N_fgr, 4)
 
     # format output
     bev_cls_label = points.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
     # bev_cls_label[bgr_pix_coord[:, 0], bgr_pix_coord[:, 2], bgr_pix_coord[:, 1]] = 0
     bev_cls_label[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = 1
 
-    bev_reg_label = points.new_zeros(4, data_dict['batch_size'], bev_size[1], bev_size[0])
+    bev_reg2mean_label = points.new_zeros(2, data_dict['batch_size'], bev_size[1], bev_size[0])
     # ATTENTION: bev_reg_label is (C, B, H, W), not (B, C, H, W)
-    for idx_offset in range(4):
-        bev_reg_label[idx_offset, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
-            fgr_to_mean[:, idx_offset]
+    for idx_offset in range(2):
+        bev_reg2mean_label[idx_offset, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
+            fgr_reg_label[:, idx_offset]
 
-    target_dict = {'bev_cls_label': bev_cls_label, 'bev_reg_label': bev_reg_label}
+    # ---
+    # label for regression to crt
+    # ---
+    crt_mag = torch.linalg.norm(fgr_reg_label[:, 2:], dim=1, keepdim=True)  # (N_fgr, 1)
+    crt_class = bin_depths(crt_mag, mode='LID', depth_min=0., depth_max=crt_mag_max, num_bins=crt_num_bins,
+                           target=True)  # (N_fgr, 1)
+    bev_crt_class = crt_class.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])  # (B, H, W) - contain cls index
+    bev_crt_class[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_class.squeeze(1)
+
+    crt_dir = fgr_reg_label[:, 2:] / crt_mag  # (N_fgr, 2)
+    bev_crt_dir = crt_mag.new_zeros(2, data_dict['batch_size'], bev_size[1], bev_size[0])
+    for idx_dir in range(2):
+        bev_crt_dir[idx_dir, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
+            crt_dir[:, idx_dir]
+
+    target_dict = {'bev_cls_label': bev_cls_label, 'bev_reg2mean_label': bev_reg2mean_label,
+                   'bev_crt_class': bev_crt_class, 'bev_crt_dir': bev_crt_dir}
     return target_dict
 
 

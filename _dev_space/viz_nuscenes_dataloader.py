@@ -27,7 +27,8 @@ cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'time
 dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg, class_names=cfg.CLASS_NAMES, batch_size=2, dist=False,
                                           logger=logger, training=False, total_epochs=1, seed=666)
 iter_dataloader = iter(dataloader)
-data_dict = next(iter_dataloader)
+for _ in range(5):
+    data_dict = next(iter_dataloader)
 # load_data_to_gpu(data_dict)
 for k, v in data_dict.items():
     if k in ['frame_id', 'metadata']:
@@ -62,10 +63,12 @@ boxes = viz_boxes(data_dict['gt_boxes'][batch_idx].numpy())
 show_pointcloud(pc[:, 1: 4], boxes, fgr_mask=fgr_mask)
 
 
-bev_cls_label = target_dict['bev_cls_label'].int().numpy()  # (B, H, W)
-bev_reg_label = target_dict['bev_reg_label'].numpy()  # (4, B, H, W)
+bev_cls = target_dict['bev_cls_label'].int().numpy()  # (B, H, W)
+bev_reg2mean = target_dict['bev_reg2mean_label'].numpy()  # (2, B, H, W)
+bev_crt_cls = target_dict['bev_crt_class'].numpy().astype(float)  # (B, H, W)
+bev_crt_dir = target_dict['bev_crt_dir'].numpy()  # (2, B, H, W)
 
-bev_fgr_mask = bev_cls_label[batch_idx] > 0  # (H, W)
+bev_fgr_mask = bev_cls[batch_idx] > 0  # (H, W)
 
 fig, ax = plt.subplots(1, 3)
 ax[0].set_title('gt class')
@@ -75,15 +78,12 @@ ax[1].set_title('gt reg to cluster')
 ax[1].imshow(bev_fgr_mask, cmap='gray')
 xx, yy = np.meshgrid(np.arange(bev_fgr_mask.shape[0]), np.arange(bev_fgr_mask.shape[1]))
 fgr_x, fgr_y = xx[bev_fgr_mask], yy[bev_fgr_mask]
-fgr_to_mean = bev_reg_label[:2, batch_idx, bev_fgr_mask]  # (2, N_fgr)
-for fidx in range(fgr_to_mean.shape[1]):
+fgr_to_mean = bev_reg2mean[:, batch_idx, bev_fgr_mask]  # (2, N_fgr)
+for fidx in range(fgr_x.shape[0]):
     ax[1].arrow(fgr_x[fidx], fgr_y[fidx], fgr_to_mean[0, fidx], fgr_to_mean[1, fidx], color='g', width=0.01)
 
-ax[2].set_title('gt reg to correction')
-ax[2].imshow(bev_fgr_mask, cmap='gray')
-fgr_to_crt = bev_reg_label[2:, batch_idx, bev_fgr_mask]  # (2, N_fgr)
-for fidx in range(fgr_to_crt.shape[1]):
-    ax[2].arrow(fgr_x[fidx], fgr_y[fidx], fgr_to_crt[0, fidx], fgr_to_crt[1, fidx], color='g', width=0.01)
+ax[2].set_title('gt crt mag class')
+ax[2].imshow(bev_crt_cls[batch_idx], cmap='gray')
 
 plt.show()
 
@@ -91,8 +91,21 @@ plt.show()
 # test validity of correction label by inferring from bev crt image
 pc_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
 pix_size = 0.4
-bev_crt_label = bev_reg_label[2:, batch_idx]  # (2, H, W)
-pc_pix_coords = np.floor((pc[:, 1: 3] - pc_range[:2]) / pix_size).astype(int)
-pc_crt = bev_crt_label[:, pc_pix_coords[:, 1], pc_pix_coords[:, 0]]
+num_bins = 40
+pc_pix_coords = np.floor((pc[:, 1: 3] - pc_range[:2]) / pix_size).astype(int)  # (N, 2)
+
+# mag
+pc_crt_cls = bev_crt_cls[batch_idx, pc_pix_coords[:, 1], pc_pix_coords[:, 0]]  # (N)
+mask_invalid_crt_cls = pc_crt_cls == num_bins
+pc_crt_mag = (15. / (40 * 41)) * (pc_crt_cls * (pc_crt_cls + 1))
+pc_crt_mag[mask_invalid_crt_cls] = 0
+
+# dir
+pc_crt_dir = bev_crt_dir[:, batch_idx, pc_pix_coords[:, 1], pc_pix_coords[:, 0]]  # (2, N)
+
+# correction
+pc_crt = pc_crt_mag * pc_crt_dir
+
+
 pc[:, 1: 3] += pc_crt.T
 show_pointcloud(pc[:, 1: 4], boxes, fgr_mask=fgr_mask)
