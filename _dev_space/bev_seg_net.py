@@ -317,6 +317,6 @@ class PoseResNet(nn.Module):
             loss_crt_dir_res = 0
             tb_dict['bev_loss_crt_dir_res'] = 0.
 
-        bev_loss = loss_fgr_seg + loss_to_mean + loss_crt_dir_cls + loss_crt_dir_res
+        bev_loss = loss_fgr_seg + loss_to_mean + loss_crt_cls + loss_crt_dir_cls + loss_crt_dir_res
         tb_dict['bev_loss'] = bev_loss.item()
         return bev_loss, tb_dict
