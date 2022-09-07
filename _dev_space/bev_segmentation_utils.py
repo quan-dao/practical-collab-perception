@@ -58,8 +58,8 @@ def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_n
         bev_crt_dir[idx_dir, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
             crt_dir[:, idx_dir]
 
-    target_dict = {'bev_cls_label': bev_cls_label, 'bev_reg2mean_label': bev_reg2mean_label,
-                   'bev_crt_class': bev_crt_class, 'bev_crt_dir': bev_crt_dir}
+    target_dict = {'target_cls': bev_cls_label, 'target_to_mean': bev_reg2mean_label,
+                   'target_crt_cls': bev_crt_class, 'target_crt_dir': bev_crt_dir}
     return target_dict
 
 

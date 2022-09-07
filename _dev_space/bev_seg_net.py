@@ -3,6 +3,7 @@ import torch.nn as nn
 import math
 
 from pcdet.utils.loss_utils import FocalLossCenterNet
+from kornia.losses.focal import FocalLoss  # for multiclass focal loss
 from _dev_space.bev_segmentation_utils import assign_target_foreground_seg, compute_cls_stats, sigmoid
 
 
@@ -78,8 +79,10 @@ class PoseResNet(nn.Module):
         head_conv = model_cfg.HEAD_CONV
         self.inplanes = n_downsample_filters[0]
         self.heads = {
-            'head_cls': 1,  # binary classification: foreground prob
-            'head_reg': 4,  # 4 regression targets: to_cluster_center_x, to_cluster_center_y, crt_x, crt_y (in metric coord)
+            'cls': 1,  # binary classification: foreground prob
+            'to_mean': 2,  # to_cluster_center_x, to_cluster_center_y
+            'crt_dir': 2,  # cos, sin of correction vector
+            'crt_cls': model_cfg.CRT_NUM_BINS + 1,  # 1 extra class for outlier
         }
         self.deconv_with_bias = False
 
@@ -132,9 +135,10 @@ class PoseResNet(nn.Module):
                     fc.bias.data.fill_(-2.19)
                 else:
                     fill_fc_weights(fc)
-            self.__setattr__(head, fc)
+            self.__setattr__(f"head_{head}", fc)
 
         self.loss_cls = FocalLossCenterNet()
+        self.loss_crt_cls = FocalLoss(alpha=0.25, gamma=2.0, reduction="none")
 
     def _make_layer(self, block_type, planes, num_blocks, stride=1):
         downsample = None
@@ -220,10 +224,12 @@ class PoseResNet(nn.Module):
 
         pred_dict = {}
         for head in self.heads:
-            pred_dict[f"bev_{head.split('_')[1]}_pred"] = self.__getattr__(head)(x_up_stride_2)
+            pred_dict[f"pred_{head}"] = self.__getattr__(f"head_{head}")(x_up_stride_2)
         self.forward_ret_dict['pred_dict'] = pred_dict
 
-        target_dict = assign_target_foreground_seg(data_dict, input_stride=self.model_cfg.BEV_IMG_STRIDE)
+        target_dict = assign_target_foreground_seg(data_dict, input_stride=self.model_cfg.BEV_IMG_STRIDE,
+                                                   crt_mag_max=self.model_cfg.CRT_MAX_MAGNITUDE,
+                                                   crt_num_bins=self.model_cfg.CRT_NUM_BINS)
         self.forward_ret_dict['target_dict'] = target_dict
 
         data_dict['bev_pred_dict'] = self.forward_ret_dict['pred_dict']
@@ -238,12 +244,12 @@ class PoseResNet(nn.Module):
         pred_dict = self.forward_ret_dict['pred_dict']
 
         # ---
-        # classification loss - for both bgr & fgr
+        # loss: classification - for both bgr & fgr
         # ---
-        target_cls = target_dict['bev_cls_label'].unsqueeze(1).contiguous()  # (B, 1, H, W)
-        pred_cls = sigmoid(pred_dict['bev_cls_pred'])  # (B, 1, H, W)
-        loss_fgr_seg = self.loss_cls(pred_cls, target_cls) * self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[0]
-        tb_dict['bev_loss_fgr_cls'] = loss_fgr_seg.item()
+        target_cls = target_dict['target_cls'].unsqueeze(1).contiguous()  # (B, 1, H, W)
+        pred_cls = sigmoid(pred_dict['pred_cls'])  # (B, 1, H, W)
+        loss_fgr_seg = self.loss_cls(pred_cls, target_cls) * self.model_cfg.LOSS_WEIGHTS[0]
+        tb_dict['bev_loss_cls'] = loss_fgr_seg.item()
 
         # compute segmentation statistic
         for threshold in [0.3, 0.5, 0.7]:
@@ -252,31 +258,48 @@ class PoseResNet(nn.Module):
                 tb_dict[f'seg_{k}_{threshold}'] = v
 
         # ---
-        # regression loss - for fgr only
+        # loss: regression to mean - for fgr only
         # ---
         mask_fgr = target_cls > 0  # (B, 1, H, W)
-        target_reg = target_dict['bev_reg_label']  # (4, B, H, W) - 4 for offset_to_mean (x & y) and correction_(x & y)
-        target_reg = target_reg.permute(1, 0, 2, 3).contiguous()  # (B, 4, H, W)
-        target_reg2mean = target_reg[:, :2].contiguous()  # (B, 2, H, W)
-        target_reg2crt = target_reg[:, 2:].contiguous()  # (B, 2, H, W)
-
-        pred_reg = pred_dict['bev_reg_pred']  # (B, 4, H, W)
-        pred_reg2mean = pred_reg[:, :2].contiguous()  # (B, 2, H, W)
-        pred_reg2crt = pred_reg[:, 2:].contiguous()  # (B, 2, H, W)
-
-        if torch.any(mask_fgr) > 0:
+        has_fgr = torch.any(mask_fgr)
+        if has_fgr:
+            target_to_mean = target_dict['target_to_mean']  # (2, B, H, W) - offset_to_mean (x & y)
+            target_to_mean = target_to_mean.permute(1, 0, 2, 3).contiguous()  # (B, 2, H, W)
+            pred_to_mean = pred_dict['pred_to_mean']  # (B, 2, H, W)
             mask_fgr = mask_fgr.repeat(1, 2, 1, 1)
-            loss_reg2mean = self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[1] * \
-                            nn.functional.l1_loss(pred_reg2mean[mask_fgr], target_reg2mean[mask_fgr], reduction='mean')
-            tb_dict['bev_loss_reg2mean'] = loss_reg2mean.item()
-
-            loss_reg2crt = self.model_cfg.FOREGROUND_SEG_LOSS_WEIGHTS[2] * \
-                           nn.functional.l1_loss(pred_reg2crt[mask_fgr], target_reg2crt[mask_fgr], reduction='mean')
-            tb_dict['bev_loss_reg2crt'] = loss_reg2crt.item()
+            loss_to_mean = self.model_cfg.LOSS_WEIGHTS[1] * \
+                            nn.functional.l1_loss(pred_to_mean[mask_fgr], target_to_mean[mask_fgr], reduction='mean')
+            tb_dict['bev_loss_to_mean'] = loss_to_mean.item()
         else:
-            loss_reg2mean, loss_reg2crt = 0, 0
-            tb_dict['bev_loss_reg2mean'], tb_dict['bev_loss_reg2crt'] = 0., 0.
+            loss_to_mean = 0
+            tb_dict['bev_loss_to_mean'] = 0.
 
-        bev_loss = loss_fgr_seg + loss_reg2mean + loss_reg2crt
+        # ---
+        # loss: correction - for fgr only
+        # ---
+        if has_fgr:
+            target_crt_cls = target_dict['target_crt_cls']  # (B, H, W)
+            pred_crt_cls = pred_dict['pred_crt_cls']  # (B, D+1, H, W)
+            loss_crt_cls = self.loss_crt_cls(pred_crt_cls, target_crt_cls)  # (B, H, W)
+            # apply foreground mask
+            loss_crt_cls = loss_crt_cls * mask_fgr.squeeze(1)
+            # normalize
+            loss_crt_cls = self.model_cfg.LOSS_WEIGHTS[2] * torch.sum(loss_crt_cls) / torch.sum(mask_fgr.int())
+            tb_dict['bev_loss_crt_cls'] = loss_crt_cls.item()
+        else:
+            loss_crt_cls = 0
+            tb_dict['bev_loss_crt_cls'] = 0.
+
+        if has_fgr:
+            target_crt_dir = target_dict['target_crt_dir'].permute(1, 0, 2, 3).contiguous()  # (B, 2, H, W)
+            pred_crt_dir = pred_dict['pred_crt_dir']  # (B, 2, H, W)
+            loss_crt_dir = self.model_cfg.LOSS_WEIGHTS[3] * \
+                            nn.functional.l1_loss(pred_crt_dir[mask_fgr], target_crt_dir[mask_fgr], reduction='mean')
+            tb_dict['bev_loss_crt_dir'] = loss_crt_dir.item()
+        else:
+            loss_crt_dir = 0
+            tb_dict['bev_loss_crt_dir'] = 0.
+
+        bev_loss = loss_fgr_seg + loss_to_mean + loss_crt_cls + loss_crt_dir
         tb_dict['bev_loss'] = bev_loss.item()
         return bev_loss, tb_dict
