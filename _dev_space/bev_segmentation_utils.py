@@ -7,7 +7,7 @@ from _dev_space.tools_box import compute_bev_coord_torch
 
 
 @torch.no_grad()
-def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_num_bins=40) -> dict:
+def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_num_bins=40, crt_dir_num_bins=80) -> dict:
     points = data_dict['points']  # (N, 1+3+C+1) - batch_idx, XYZ, C feats, indicator (-1 bgr, >=0 inst idx)
     indicator = points[:, -1].int()
     pc_range = torch.tensor([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0], dtype=torch.float, device=indicator.device)
@@ -51,18 +51,20 @@ def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_n
     bev_crt_class = crt_class.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])  # (B, H, W) - contain cls index
     bev_crt_class[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_class.squeeze(1)
 
-    crt_dir = fgr_reg_label[:, 2:] / torch.clamp(crt_mag, min=1e-4)  # (N_fgr, 2)
-    bev_crt_dir = crt_mag.new_zeros(2, data_dict['batch_size'], bev_size[1], bev_size[0])
-    for idx_dir in range(2):
-        bev_crt_dir[idx_dir, fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = \
-            crt_dir[:, idx_dir]
-    # to exclude reg crt_dir for null crt_mag
-    bev_crt_mag = points.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
-    bev_crt_mag[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_mag[:, 0]
+    crt_angle = torch.atan2(fgr_reg_label[:, 3], fgr_reg_label[:, 2]).unsqueeze(1)  # (N_fgr, 1)
+    crt_dir_class = bin_depths(crt_angle, mode='UD', depth_min=-np.pi, depth_max=np.pi - 1e-3,
+                               num_bins=crt_dir_num_bins, target=True)  # (N_fgr, 1)
+
+    bev_crt_dir_cls = crt_dir_class.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
+    bev_crt_dir_cls[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_dir_class.squeeze(1)
+
+    crt_dir_residue = crt_angle - (2 * np.pi - 1e-3) * crt_dir_class / crt_dir_num_bins
+    bev_crt_dir_res = crt_dir_residue.new_zeros(data_dict['batch_size'], bev_size[1], bev_size[0])
+    bev_crt_dir_res[fgr_pix_coord[:, 0], fgr_pix_coord[:, 2], fgr_pix_coord[:, 1]] = crt_dir_residue.squeeze(1)
 
     target_dict = {'target_cls': bev_cls_label, 'target_to_mean': bev_reg2mean_label,
-                   'target_crt_cls': bev_crt_class, 'target_crt_dir': bev_crt_dir,
-                   '_bev_crt_mag': bev_crt_mag}
+                   'target_crt_cls': bev_crt_class,
+                   'target_crt_dir_cls': bev_crt_dir_cls, 'target_crt_dir_res': bev_crt_dir_res}
     return target_dict
 
 
