@@ -4,6 +4,7 @@ from torch_scatter import scatter_mean
 from tqdm import tqdm
 from pcdet.utils.transform_utils import bin_depths
 from _dev_space.tools_box import compute_bev_coord_torch
+from _dev_space.viz_tools import print_dict
 
 
 @torch.no_grad()
@@ -69,7 +70,7 @@ def assign_target_foreground_seg(data_dict, input_stride, crt_mag_max=15., crt_n
 
 
 @torch.no_grad()
-def compute_cls_stats(pred: torch.Tensor, label: torch.Tensor, threshold: float):
+def compute_cls_stats(pred: torch.Tensor, label: torch.Tensor, threshold: float, return_counts=False):
     # https://www.researchgate.net/figure/Calculation-of-Precision-Recall-and-Accuracy-in-the-confusion-matrix_fig3_336402347
     assert len(pred.shape) == 1 and len(label.shape) == 1 and pred.shape[0] == label.shape[0]
     # pred's shape: (N_obs,)
@@ -77,6 +78,7 @@ def compute_cls_stats(pred: torch.Tensor, label: torch.Tensor, threshold: float)
     # partition label into True & False
     label_pos = label > 0  # (N_obs,)
     label_neg = ~label_pos
+    # print('---\n', f'num gt positive: {label_pos.int().sum()}')
 
     # partition prediction into Pos & Neg
     pred_pos = pred > threshold
@@ -84,11 +86,13 @@ def compute_cls_stats(pred: torch.Tensor, label: torch.Tensor, threshold: float)
 
     # stats
     true_positive = (label_pos & pred_pos).int().sum().item()
-    false_postive = (label_neg & pred_pos).int().sum().item()
+    false_positive = (label_neg & pred_pos).int().sum().item()
     false_negative = (label_pos & pred_neg).int().sum().item()  # TODO: something not right here
+    if return_counts:
+        return {'true_positive': true_positive, 'false_positive': false_positive, 'false_negative': false_negative}
 
-    if true_positive + false_postive > 0:
-        precision = float(true_positive) / float(true_positive + false_postive)
+    if true_positive + false_positive > 0:
+        precision = float(true_positive) / float(true_positive + false_positive)
     else:
         precision = 0.
 
@@ -113,13 +117,13 @@ def sigmoid(x):
 def eval_segmentation(model, dataloader, threshold_list=None):
     model.eval()
 
-    stats_dict = dict()
+    counts_dict = dict()
     if threshold_list is None:
         threshold_list = [0.3, 0.5, 0.7]
 
     for threshold in threshold_list:
-        for stat in ['precision', 'recall', 'f1_score']:
-            stats_dict[f"{stat}_{threshold}"] = 0.
+        for cnt_type in ['true_positive', 'false_positive', 'false_negative']:
+            counts_dict[f"{cnt_type}_{threshold}"] = 0
 
     for data_dict in tqdm(dataloader, total=len(dataloader), dynamic_ncols=True):
         load_data_to_gpu(data_dict)
@@ -129,18 +133,31 @@ def eval_segmentation(model, dataloader, threshold_list=None):
 
         # generate target
         target_dict = data_dict['bev_target_dict']
-        target_cls = target_dict['bev_cls_label']  # (B, H, W)
+        target_cls = target_dict['target_cls']  # (B, H, W)
 
         # compute stats
         pred_dict = data_dict['bev_pred_dict']
-        pred_cls = sigmoid(pred_dict['bev_cls_pred'].squeeze(1).contiguous())  # (B, H, W)
+        pred_cls = sigmoid(pred_dict['pred_cls'].squeeze(1).contiguous())  # (B, H, W)
         for threshold in threshold_list:
-            stats = compute_cls_stats(pred_cls.reshape(-1), target_cls.reshape(-1), threshold)
-            for stat, v in stats.items():
-                stats_dict[f"{stat}_{threshold}"] += v
+            cnt_dict = compute_cls_stats(pred_cls.reshape(-1), target_cls.reshape(-1), threshold, return_counts=True)
 
-    for stat, v in stats_dict.items():
-        stats_dict[stat] = v / len(dataloader)
+            for cnt_type, cnt in cnt_dict.items():
+                counts_dict[f"{cnt_type}_{threshold}"] += cnt
+
+    stats_dict = dict()
+    for threshold in threshold_list:
+        tp = counts_dict[f"true_positive_{threshold}"]
+        fp = counts_dict[f"false_positive_{threshold}"]
+        fn = counts_dict[f"false_negative_{threshold}"]
+
+        precision = float(tp) / float(tp + fp) if tp + fp > 0 else 0.
+        recall = float(tp) / float(tp + fn) if tp + fn > 0 else 0.
+        f1_score = 2.0 * precision * recall / (precision + recall) if precision + recall > 0 else 0.
+
+        # log stats
+        stats_dict[f"precision_{threshold}"] = precision
+        stats_dict[f"recall_{threshold}"] = recall
+        stats_dict[f"f1_score_{threshold}"] = f1_score
 
     return stats_dict
 

@@ -34,7 +34,7 @@ def print_dict(d: dict):
             out += v
         elif isinstance(v, np.ndarray):
             out += f"{v.shape}"
-        elif isinstance(v, float):
+        elif isinstance(v, float) or isinstance(v, int):
             out += f"{v}"
         elif isinstance(v, np.bool_):
             out += f"{v.item()}"

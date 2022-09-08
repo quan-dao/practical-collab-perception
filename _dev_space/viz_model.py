@@ -50,7 +50,7 @@ def inference(cfg_file, pretrained_model):
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=dataset)
     print(model)
     model.cuda()
-    # model.load_params_from_file(filename=pretrained_model, to_cpu=False, logger=logger)
+    model.load_params_from_file(filename=pretrained_model, to_cpu=False, logger=logger)
 
     # ---
     # inference
@@ -59,14 +59,14 @@ def inference(cfg_file, pretrained_model):
     for cur_module in model.module_list:
         data_dict = cur_module(data_dict)
 
-    # torch.save(data_dict, './_output/inference_result.pth')
-    bev_loss, tb_dict = model.backbone_2d.get_loss()
-    print_dict(tb_dict)
-    print(f'---\nbev_loss: {bev_loss}',)
+    torch.save(data_dict, './_output/inference_result.pth')
+    # bev_loss, tb_dict = model.backbone_2d.get_loss()
+    # print_dict(tb_dict)
+    # print(f'---\nbev_loss: {bev_loss}',)
 
 
 def viz_inference_result():
-    # NOTE: batch_size always = 1
+    batch_idx = 1
     data_dict = torch.load('./_output/inference_result.pth', map_location=torch.device('cpu'))
     print_dict(data_dict)
     print_dict(data_dict['bev_pred_dict'])
@@ -75,17 +75,24 @@ def viz_inference_result():
     # viz 3D
     # ---
     points = data_dict['points']  # (N, 7) - batch_idx, XYZ, C feats, indicator | torch.Tensor
-    indicator = points[:, -1].int()
-    pc = points.numpy()
-    fgr_mask = (indicator > -1).numpy()
-    boxes = viz_boxes(data_dict['gt_boxes'][0].numpy())
-    show_pointcloud(pc[:, 1: 4], boxes, fgr_mask=fgr_mask)
 
-    bev_cls_pred = sigmoid(data_dict['bev_pred_dict']['bev_cls_pred'])[0].detach()  # (1, 512, 512)
-    bev_reg_pred = data_dict['bev_pred_dict']['bev_reg_pred'][0].detach()  # (2, 512, 512)
+    pc = points.numpy()
+    batch_mask = pc[:, 0].astype(int) == batch_idx
+    indicator = pc[:, -1].astype(int)
+    fgr_mask = indicator > -1
+    boxes = viz_boxes(data_dict['gt_boxes'][batch_idx].numpy())
+
+    print('showing EMC accumulated pointcloud')
+    show_pointcloud(pc[batch_mask, 1: 4], boxes, fgr_mask=fgr_mask[batch_mask])
+
+    bev_cls_pred = sigmoid(data_dict['bev_pred_dict']['pred_cls'])[batch_idx].detach()  # (1, 256, 256)
+    bev_reg_pred = data_dict['bev_pred_dict']['pred_to_mean'][batch_idx].detach()  # (2, 256, 256)
+    bev_crt_cls = data_dict['bev_pred_dict']['pred_crt_cls'][batch_idx].detach().numpy()  # (D+1, 256, 256)
+    bev_crt_dir_cls = data_dict['bev_pred_dict']['pred_crt_dir_cls'][batch_idx].detach().numpy()  # (D'+1, 256, 256)
+    bev_crt_dir_res = data_dict['bev_pred_dict']['pred_crt_dir_res'][batch_idx].detach().numpy()  # (1, 256, 256)
 
     target_dict = data_dict['bev_target_dict']
-    target_cls = target_dict['bev_cls_label'][0]  # (H, W)
+    target_cls = target_dict['target_cls'][batch_idx]  # (H, W)
 
     fig, ax = plt.subplots(1, 3)
     ax[0].imshow(bev_cls_pred[0].numpy(), cmap='gray')
@@ -108,15 +115,51 @@ def viz_inference_result():
     ax[2].imshow(bev_cls_pred[0].numpy() > threshold, cmap='gray')
     ax[2].set_title('predicted fgr')
 
+    fig.tight_layout()
     plt.show()
 
-    mask_observed = target_cls > -1
-    for threshold in [0.3, 0.5, 0.7]:
-        print('---')
-        print(f'threshold: {threshold}')
-        stats_dict = compute_cls_stats(bev_cls_pred[0][mask_observed], target_cls[mask_observed], threshold)
-        print_dict(stats_dict)
-        print('---\n')
+    print('showing oracle accumulated pointcloud')
+    oracle_pc = np.copy(pc)
+    oracle_pc[:, 1: 3] += oracle_pc[:, 6: 8]
+    show_pointcloud(oracle_pc[batch_mask, 1: 4], boxes, fgr_mask=fgr_mask[batch_mask])
+
+    print('showing corrected pointcloud')
+
+    pc_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
+    pix_size = 0.4
+    num_bins = 40
+    crt_dir_num_bins = 80
+    pc_pix_coords = np.floor((pc[batch_mask, 1: 3] - pc_range[:2]) / pix_size).astype(int)  # (N, 2)
+
+    pred_fgr_img = bev_cls_pred[0].numpy()  # (256, 256)
+    pc_fgr_prob = pred_fgr_img[pc_pix_coords[:, 1], pc_pix_coords[:, 0]]
+    pc_fgr_mask = pc_fgr_prob > threshold  # batch_mask >> pc_fgr_mask
+
+    # mag
+    pc_crt_cls_prob = bev_crt_cls[:, pc_pix_coords[pc_fgr_mask, 1], pc_pix_coords[pc_fgr_mask, 0]].T  # (N, D+1)
+    pc_crt_cls = np.argmax(pc_crt_cls_prob, axis=1)
+    mask_invalid_crt_cls = pc_crt_cls == num_bins
+    pc_crt_mag = (15. / (40 * 41)) * (pc_crt_cls * (pc_crt_cls + 1))
+    pc_crt_mag[mask_invalid_crt_cls] = 0
+
+    # dir
+    pc_crt_dir_cls_prob = bev_crt_dir_cls[:, pc_pix_coords[pc_fgr_mask, 1], pc_pix_coords[pc_fgr_mask, 0]] .T  # (N, D'+1)
+    pc_crt_dir_cls = np.argmax(pc_crt_dir_cls_prob, axis=1)
+
+    pc_crt_dir_res = bev_crt_dir_res[0, pc_pix_coords[pc_fgr_mask, 1], pc_pix_coords[pc_fgr_mask, 0]]  # (N)
+    pc_crt_dir = pc_crt_dir_res + (2 * np.pi - 1e-3) * pc_crt_dir_cls / crt_dir_num_bins
+
+    # correct fgr
+    curr_pc = pc[batch_mask, 1: 4]
+    bgr = curr_pc[np.logical_not(pc_fgr_mask)]
+
+    fgr = curr_pc[pc_fgr_mask]
+    crt_fgr = np.copy(fgr)
+    crt_fgr[:, :2] = fgr[:, :2] + pc_crt_mag[:, None] * np.stack([np.cos(pc_crt_dir), np.sin(pc_crt_dir)], axis=1)
+
+    _fgr_mask = np.zeros(curr_pc.shape[0], dtype=bool)
+    _fgr_mask[bgr.shape[0]:] = True
+    show_pointcloud(np.concatenate([bgr, crt_fgr], axis=0), boxes, fgr_mask=_fgr_mask)
 
 
 def eval_model(cfg_file, pretrained_model):
@@ -138,7 +181,7 @@ def eval_model(cfg_file, pretrained_model):
                                               workers=1)
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=dataset)
-    print(model)
+    # print(model)
     model.cuda()
     model.load_params_from_file(filename=pretrained_model, to_cpu=False, logger=logger)
 
@@ -159,12 +202,14 @@ def eval_model(cfg_file, pretrained_model):
         ax[idx_ax].set_xlabel('threshold')
         ax[idx_ax].set_ylabel(stat_type)
         idx_ax += 1
+
+    fig.tight_layout()
     plt.show()
 
 
 if __name__ == '__main__':
     cfg_file = './from_idris/_cbgs_dyn_pp_centerpoint.yaml'
-    pretrained_model = './from_idris/ckpt/bev_seg_focal_fullnusc_ep5.pth'
-    inference(cfg_file, pretrained_model)
+    pretrained_model = './from_idris/ckpt/bev_seg_caddn_style_fullnusc_ep5.pth'
+    # inference(cfg_file, pretrained_model)
     # viz_inference_result()
-    # eval_model(cfg_file, pretrained_model)
+    eval_model(cfg_file, pretrained_model)
