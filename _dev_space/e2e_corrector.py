@@ -22,7 +22,6 @@ class PointCloudCorrectorE2E(nn.Module):
         """
         if return_cluster_encoding:
             raise NotImplementedError
-        super().__init__()
         self.ckpt = bev_seg_net_ckpt
         self.return_offset = return_offset
         self.return_cluster_encoding = return_cluster_encoding
@@ -51,6 +50,7 @@ class PointCloudCorrectorE2E(nn.Module):
                 'NUM_FILTERS': [64, 128, 256],
                 'LAYERS_SIZE': [2, 2, 2],
                 'HEAD_CONV': 64,
+                'NUM_UP_FILTERS': [128, 64, 64],
                 'BEV_IMG_STRIDE': 2,
                 'LOSS_WEIGHTS': [1.0, 1.0, 1.0, 1.0, 1.0],
                 'CRT_NUM_BINS': 40,
@@ -76,6 +76,7 @@ class PointCloudCorrectorE2E(nn.Module):
 
         # ---
         # build BEVSegmentation
+        super().__init__()
         self.module_topology = ['vfe', 'map_to_bev_module', 'backbone_2d']
         self.module_list = self.build_networks()
         self.eval()
@@ -144,7 +145,7 @@ class PointCloudCorrectorE2E(nn.Module):
         # correction magnitude
         # ---
         pts_crt_prob = bev_crt_cls[pts_batch_idx, :, pts_pix_coord[:, 1], pts_pix_coord[:, 0]]  # (D+1, N_ori)
-        pts_crt_cls = torch.argmax(pts_crt_prob, dim=0).float()  # (N_ori)
+        pts_crt_cls = torch.argmax(pts_crt_prob, dim=1).float()  # (N_ori)
         pts_crt_magnitude = self._prefix_crt_cls2mag * pts_crt_cls * (pts_crt_cls + 1)  # (N_ori)
         # zero-out invalid magnitude (i.e. cls == CRT_NUM_BINS)
         pts_crt_magnitude = pts_crt_magnitude * (pts_crt_cls < self.model_cfg.BACKBONE_2D.CRT_NUM_BINS).float()
@@ -153,7 +154,7 @@ class PointCloudCorrectorE2E(nn.Module):
         # correction direction
         # ---
         pts_crt_dir_prob = bev_crt_dir_cls[pts_batch_idx, :, pts_pix_coord[:, 1], pts_pix_coord[:, 0]]  # (D_+1, N_ori)
-        pts_crt_dir_cls = torch.argmax(pts_crt_dir_prob, dim=0).float()  # (N_ori)
+        pts_crt_dir_cls = torch.argmax(pts_crt_dir_prob, dim=1).float()  # (N_ori)
         pts_crt_angle = (2 * np.pi - 1e-3) * pts_crt_dir_cls / self.model_cfg.BACKBONE_2D.CRT_DIR_NUM_BINS
 
         pts_crt_res = bev_crt_dir_res[pts_batch_idx, 0, pts_pix_coord[:, 1], pts_pix_coord[:, 0]]  # (N_ori,)
@@ -162,14 +163,14 @@ class PointCloudCorrectorE2E(nn.Module):
         # ---
         # apply correction to fgr points only
         # ---
-        pts_crt = pts_crt_magnitude * torch.stack([torch.cos(pts_crt_angle), torch.sin(pts_crt_angle)], dim=1)  # (N_ori, 2)
+        pts_crt = pts_crt_magnitude.unsqueeze(1) * torch.stack([torch.cos(pts_crt_angle), torch.sin(pts_crt_angle)], dim=1)  # (N_ori, 2)
         # zero-out correction for background
         pts_crt = pts_crt * pts_fgr_mask.float().unsqueeze(1)  # (N_ori, 2)
 
         batch_dict['points'][:, 1: 3] = batch_dict['points'][:, 1: 3] + pts_crt
         if self.return_offset:
             batch_dict['points'] = torch.cat([
-                batch_dict['points'][:, :1 + self.n_raw_pts_feat], pts_crt, batch_dict[:, 1 + self.n_raw_pts_feat:]],
+                batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, batch_dict['points'][:, (1 + self.n_raw_pts_feat):]],
                 dim=1).contiguous()
 
         # format output

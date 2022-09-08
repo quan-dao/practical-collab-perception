@@ -6,7 +6,7 @@ from pcdet.utils import common_utils
 from pcdet.datasets import NuScenesDataset, build_dataloader
 from pcdet.models import load_data_to_gpu
 
-from _dev_space.revise_cam import PointCloudCorrector
+from _dev_space.e2e_corrector import PointCloudCorrectorE2E
 from _dev_space.viz_tools import viz_boxes, print_dict, viz_clusters2d
 from _dev_space.tools_box import show_pointcloud
 from _dev_space.bev_segmentation_utils import sigmoid
@@ -22,6 +22,8 @@ cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml'
 cfg_from_yaml_file(cfg_file, cfg)
 cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                    'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'indicator']
+cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'indicator']
 cfg.VERSION = 'v1.0-mini'
 cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
     'placeholder',
@@ -43,13 +45,13 @@ def main(data_batch_idx, viz_batch_idx=0):
     boxes = viz_boxes(data_dict['gt_boxes'][viz_batch_idx])
     points = data_dict['points'][data_dict['points'][:, 0].astype(int) == viz_batch_idx]
     # (N, 7): batch_idx, xyz, intensity, time, indicator
-    show_pointcloud(points[:, 1: 4], boxes, fgr_mask=points[:, -1].astype(int) == 0)
+    show_pointcloud(points[:, 1: 4], boxes, fgr_mask=points[:, -1].astype(int) > -1)
     print('----------------\n')
 
     load_data_to_gpu(data_dict)
 
-    corrector = PointCloudCorrector()
-    # print(corrector)
+    corrector = PointCloudCorrectorE2E('./from_idris/ckpt/bev_seg_caddn_style_fullnusc_ep5.pth', return_offset=True)
+    print(corrector)
     print('----------\n', 'invoking corrector')
     data_dict = corrector(data_dict)
     torch.save(data_dict, './_output/revise_cam_corrector_out.pth')
@@ -64,7 +66,7 @@ def show_corrected_pointcloud(chosen_batch_idx=0, show_foreground_prob=False, sh
     points = data_dict['points'][data_dict['points'][:, 0].int() == chosen_batch_idx].numpy()
     # (N, 7 [+3]): batch_idx, xyz, intensity, time, [foreground_prob, offset_xy], indicator
     if not show_foreground_prob:
-        show_pointcloud(points[:, 1: 4], boxes, fgr_mask=points[:, -1].int() == 0)
+        show_pointcloud(points[:, 1: 4], boxes, fgr_mask=points[:, -1] > -1)
     else:
         colors = np.zeros((points.shape[0], 3))
         colors[:, 0] = points[:, 6]
@@ -128,7 +130,7 @@ def show_bev_seg(batch_idx=0, threshold=0.5):
 
 if __name__ == '__main__':
     chosen_batch_idx = 0
-    main(data_batch_idx=2, viz_batch_idx=chosen_batch_idx)
-    show_corrected_pointcloud(chosen_batch_idx, show_foreground_prob=True)
+    # main(data_batch_idx=2, viz_batch_idx=chosen_batch_idx)
+    show_corrected_pointcloud(chosen_batch_idx, show_foreground_prob=False)
 
     # show_bev_seg(chosen_batch_idx)
