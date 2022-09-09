@@ -58,19 +58,15 @@ def main(data_batch_idx, viz_batch_idx=0):
     print_dict(data_dict)
 
 
-def show_corrected_pointcloud(chosen_batch_idx=0, show_foreground_prob=False, show_offset=False):
+def show_corrected_pointcloud(chosen_batch_idx=0, show_offset=False):
     data_dict = torch.load('./_output/revise_cam_corrector_out.pth', map_location=torch.device('cpu'))
     print('----------------\n')
     print('showing corrected pointcloud & boxes')
     boxes = viz_boxes(data_dict['gt_boxes'][chosen_batch_idx])
     points = data_dict['points'][data_dict['points'][:, 0].int() == chosen_batch_idx].numpy()
     # (N, 7 [+3]): batch_idx, xyz, intensity, time, [foreground_prob, offset_xy], indicator
-    if not show_foreground_prob:
-        show_pointcloud(points[:, 1: 4], boxes, fgr_mask=points[:, -1] > -1)
-    else:
-        colors = np.zeros((points.shape[0], 3))
-        colors[:, 0] = points[:, 6]
-        show_pointcloud(points[:, 1: 4], boxes, pc_colors=colors, fgr_mask=points[:, 6] > 0.5, fgr_offset=points[:, 7: 9])
+    show_pointcloud(points[:, 1: 4], boxes, fgr_mask=points[:, -1] > -1,
+                    fgr_offset=points[:, 6: 8] if show_offset else None)
 
 
 def show_bev_seg(batch_idx=0, threshold=0.5):
@@ -131,6 +127,6 @@ def show_bev_seg(batch_idx=0, threshold=0.5):
 if __name__ == '__main__':
     chosen_batch_idx = 0
     # main(data_batch_idx=2, viz_batch_idx=chosen_batch_idx)
-    show_corrected_pointcloud(chosen_batch_idx, show_foreground_prob=False)
+    show_corrected_pointcloud(chosen_batch_idx, show_offset=True)
 
     # show_bev_seg(chosen_batch_idx)

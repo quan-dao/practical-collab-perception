@@ -58,7 +58,14 @@ class PointCloudCorrectorE2E(nn.Module):
                 'CRT_MAX_MAGNITUDE': 15.0,
             }
         })
+        # num point feature before correction
         self.n_raw_pts_feat = self.model_cfg.VFE.NUM_RAW_POINT_FEATURES
+
+        # num point features after correction
+        self.num_point_features = self.n_raw_pts_feat
+        if self.return_offset:
+            self.num_point_features += 2
+
         self.bev_img_pix_size = self.voxel_size[0] * self.model_cfg.BACKBONE_2D.BEV_IMG_STRIDE
         self._prefix_crt_cls2mag = \
             self.model_cfg.BACKBONE_2D.CRT_MAX_MAGNITUDE / \
