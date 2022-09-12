@@ -107,6 +107,11 @@ class PointCloudCorrectorE2E(nn.Module):
     def forward(self, batch_dict):
         self.eval()
         # separate original points and points sampled from database
+        mask_inside = (batch_dict['points'][:, 1: 3] > self.point_cloud_range[0]) & \
+                      (batch_dict['points'][:, 1: 3] < self.point_cloud_range[3] - 1e-3)
+        mask_inside = torch.all(mask_inside, dim=1)
+        batch_dict['points'] = batch_dict['points'][mask_inside]
+
         pts_indicator = batch_dict['points'][:, -1].int()  # (N_tot,)
         pts_batch_idx = batch_dict['points'][:, 0].long()  # (N_tot,)
         mask_added_pts = pts_indicator.new_zeros(pts_indicator.shape[0]).bool()  # (N_tot,)
