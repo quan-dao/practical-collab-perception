@@ -181,8 +181,13 @@ class PointCloudCorrectorE2E(nn.Module):
                 dim=1).contiguous()
 
         # format output
-        if torch.any(mask_added_pts):
-            batch_dict['points'] = torch.cat([batch_dict['points'], pts_added], dim=0).contiguous()
+        try:
+            if torch.any(mask_added_pts):
+                batch_dict['points'] = torch.cat([batch_dict['points'], pts_added], dim=0).contiguous()
+        except:
+            print('-----------------')
+            print('mask_added_pts: ', mask_added_pts.shape)
+            print('-----------------')
 
         return batch_dict
 
