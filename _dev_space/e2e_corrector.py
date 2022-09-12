@@ -115,7 +115,7 @@ class PointCloudCorrectorE2E(nn.Module):
             mask_added_pts[mask_batch] = pts_indicator[mask_batch] > batch_dict['metadata'][b_i]['n_original_instances']
 
         pts_added = batch_dict['points'][mask_added_pts]  # (N_added, C)
-        if self.return_offset:
+        if torch.any(mask_added_pts) and self.return_offset:
             pts_added = torch.cat([
                 pts_added[:, :1 + self.n_raw_pts_feat], pts_added.new_zeros(pts_added.shape[0], 2),
                 pts_added[:, 1 + self.n_raw_pts_feat:]
