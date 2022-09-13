@@ -15,3 +15,7 @@ venv/
 *.bin
 output
 version.py
+
+_dev_space
+--cfg_file
+--version
