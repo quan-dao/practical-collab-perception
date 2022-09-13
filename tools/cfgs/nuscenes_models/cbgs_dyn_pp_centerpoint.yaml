@@ -64,17 +64,17 @@ DATA_CONFIG:
 MODEL:
     NAME: CenterPoint
 
+    PC_CORRECTOR:
+        BEV_SEG_CKPT: temp_ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
+        RETURN_OFFSET: True
+        RETURN_CLUSTER_ENCODING: False
+
     VFE:
         NAME: DynPillarVFE
         WITH_DISTANCE: False
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
         NUM_FILTERS: [ 64, 64 ]
-        USE_POINTCLOUD_CORRECTOR: True
-        PC_CORRECTOR:
-            BEV_SEG_CKPT: temp_ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
-            RETURN_OFFSET: True
-            RETURN_CLUSTER_ENCODING: False
 
     MAP_TO_BEV:
         NAME: PointPillarScatter
@@ -105,13 +105,13 @@ MODEL:
         USE_BIAS_BEFORE_NORM: True
         NUM_HM_CONV: 2
         SEPARATE_HEAD_CFG:
-            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot', 'vel']
             HEAD_DICT: {
                 'center': {'out_channels': 2, 'num_conv': 2},
                 'center_z': {'out_channels': 1, 'num_conv': 2},
                 'dim': {'out_channels': 3, 'num_conv': 2},
                 'rot': {'out_channels': 2, 'num_conv': 2},
-                #'vel': {'out_channels': 2, 'num_conv': 2},
+                'vel': {'out_channels': 2, 'num_conv': 2},
             }
 
         TARGET_ASSIGNER_CONFIG:
@@ -124,7 +124,7 @@ MODEL:
             LOSS_WEIGHTS: {
                 'cls_weight': 1.0,
                 'loc_weight': 0.25,
-                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2]
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 1.0, 1.0]
             }
 
         POST_PROCESSING:

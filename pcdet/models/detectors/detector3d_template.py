@@ -9,6 +9,7 @@ from .. import backbones_2d, backbones_3d, dense_heads, roi_heads
 from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
 from ..model_utils import model_nms_utils
+from _dev_space.e2e_corrector import PointCloudCorrectorE2E
 
 
 class Detector3DTemplate(nn.Module):
@@ -21,7 +22,7 @@ class Detector3DTemplate(nn.Module):
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
 
         self.module_topology = [
-            'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
+            'pc_corrector', 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
             'backbone_2d', 'dense_head',  'point_head', 'roi_head'
         ]
 
@@ -49,13 +50,23 @@ class Detector3DTemplate(nn.Module):
             self.add_module(module_name, module)
         return model_info_dict['module_list']
 
+    def build_pc_corrector(self, model_info_dict):
+        if self.model_cfg.get('PC_CORRECTOR', None) is None:
+            return None, model_info_dict
+        _cfg = self.model_cfg.PC_CORRECTOR
+        corrector_module = PointCloudCorrectorE2E(_cfg.BEV_SEG_CKPT, _cfg.RETURN_OFFSET, _cfg.RETURN_CLUSTER_ENCODING)
+        model_info_dict['module_list'].append(corrector_module)
+        model_info_dict['num_point_features'] = corrector_module.num_point_features
+        return corrector_module, model_info_dict
+
     def build_vfe(self, model_info_dict):
         if self.model_cfg.get('VFE', None) is None:
             return None, model_info_dict
 
         vfe_module = vfe.__all__[self.model_cfg.VFE.NAME](
             model_cfg=self.model_cfg.VFE,
-            num_point_features=model_info_dict['num_rawpoint_features'],
+            num_point_features=model_info_dict['num_rawpoint_features']
+            if self.model_cfg.get('PC_CORRECTOR', None) is None else model_info_dict['num_point_features'],
             point_cloud_range=model_info_dict['point_cloud_range'],
             voxel_size=model_info_dict['voxel_size'],
             grid_size=model_info_dict['grid_size'],
