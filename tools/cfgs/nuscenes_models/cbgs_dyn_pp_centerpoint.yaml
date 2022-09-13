@@ -66,7 +66,7 @@ MODEL:
 
     PC_CORRECTOR:
         BEV_SEG_CKPT: temp_ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
-        RETURN_OFFSET: True
+        RETURN_OFFSET: False
         RETURN_CLUSTER_ENCODING: False
 
     VFE:
@@ -93,7 +93,7 @@ MODEL:
         CLASS_AGNOSTIC: False
 
         CLASS_NAMES_EACH_HEAD: [
-            ['car'], 
+            ['car'],
             ['truck', 'construction_vehicle'],
             ['bus', 'trailer'],
             ['barrier'],
