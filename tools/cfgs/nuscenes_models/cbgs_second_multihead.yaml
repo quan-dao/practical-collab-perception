@@ -4,8 +4,7 @@ CLASS_NAMES: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
 
-    USE_MINI_TRAINVAL: False
-    VERSION: 'v1.0-mini'
+    USE_MINI_TRAINVAL: True
 
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 
@@ -61,28 +60,22 @@ DATA_CONFIG:
                 'test': True
             }
 
-        - NAME: transform_points_to_voxels
-          VOXEL_SIZE: [0.1, 0.1, 0.2]
-          MAX_POINTS_PER_VOXEL: 10
-          MAX_NUMBER_OF_VOXELS: {
-            'train': 60000,
-            'test': 60000
-          }
+        -   NAME: transform_points_to_voxels_placeholder
+            VOXEL_SIZE: [ 0.1, 0.1, 0.2 ]
 
 MODEL:
     NAME: SECONDNet
 
-#    PC_CORRECTOR:
-#        BEV_SEG_CKPT: ./from_idris/ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
-#        RETURN_OFFSET: True
-#        RETURN_CLUSTER_ENCODING: False
+    PC_CORRECTOR:
+        BEV_SEG_CKPT: ./from_idris/ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
+        RETURN_OFFSET: True
+        RETURN_CLUSTER_ENCODING: False
 
     VFE:
-        NAME: MeanVFE
+        NAME: DynMeanVFE
 
     BACKBONE_3D:
         NAME: VoxelResBackBone8x
-        NUM_POINT_FEATURES: 5
 
     MAP_TO_BEV:
         NAME: HeightCompression
