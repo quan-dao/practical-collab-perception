@@ -185,6 +185,8 @@ class VoxelResBackBone8x(nn.Module):
         super().__init__()
         self.model_cfg = model_cfg
         norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
+        if self.model_cfg.get('NUM_POINT_FEATURES', None) is not None:
+            input_channels = self.model_cfg.NUM_POINT_FEATURES
 
         self.sparse_shape = grid_size[::-1] + [1, 0, 0]
 
@@ -252,7 +254,7 @@ class VoxelResBackBone8x(nn.Module):
         voxel_features, voxel_coords = batch_dict['voxel_features'], batch_dict['voxel_coords']
         batch_size = batch_dict['batch_size']
         input_sp_tensor = spconv.SparseConvTensor(
-            features=voxel_features,
+            features=voxel_features[:, :-3].contiguous(),
             indices=voxel_coords.int(),
             spatial_shape=self.sparse_shape,
             batch_size=batch_size
