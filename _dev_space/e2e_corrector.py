@@ -8,12 +8,12 @@ from pcdet.models import backbones_2d
 from pcdet.utils.spconv_utils import find_all_spconv_keys
 
 from sklearn.cluster import DBSCAN
-from _dev_space.bev_segmentation_utils import sigmoid
+from _dev_space.bev_segmentation_utils import sigmoid, assign_target_foreground_seg
 
 
 class PointCloudCorrectorE2E(nn.Module):
     def __init__(self, bev_seg_net_ckpt, return_offset=True, return_cluster_encoding=False,
-                 return_fgr_prob=True, return_fgr_mask=False, scale_crt_by_prob=False):
+                 return_fgr_prob=True, return_fgr_mask=False, scale_crt_by_prob=False, is_freezed=False):
         """
         Args:
             bev_seg_net_ckpt: path to BEVSegmetation checkpoint
@@ -30,6 +30,7 @@ class PointCloudCorrectorE2E(nn.Module):
         self.return_fgr_prob = return_fgr_prob
         self.return_fgr_mask = return_fgr_mask
         self.scale_crt_by_prob = scale_crt_by_prob
+        self.is_freezed = is_freezed
         self.fgr_prob_threshold = 0.5
         self.point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
         self.voxel_size = np.array([0.2, 0.2, 8.0])
@@ -93,10 +94,11 @@ class PointCloudCorrectorE2E(nn.Module):
         super().__init__()
         self.module_topology = ['vfe', 'map_to_bev_module', 'backbone_2d']
         self.module_list = self.build_networks()
-        self.eval()
         self.load_weights()
-        for param in self.parameters():
-            param.requires_grad = False
+        if self.is_freezed:
+            self.eval()
+            for param in self.parameters():
+                param.requires_grad = False
         self.cuda()
 
     def load_weights(self):
@@ -112,9 +114,9 @@ class PointCloudCorrectorE2E(nn.Module):
                     print('BEVSegmentation | Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
             print('BEVSegmentation | ==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
 
-    @torch.no_grad()
     def forward(self, batch_dict):
-        self.eval()
+        if self.is_freezed:
+            self.eval()
         # separate original points and points sampled from database
         mask_inside = (batch_dict['points'][:, 1: 3] > self.point_cloud_range[0]) & \
                       (batch_dict['points'][:, 1: 3] < self.point_cloud_range[3] - 1e-3)

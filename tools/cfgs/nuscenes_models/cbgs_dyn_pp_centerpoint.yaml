@@ -71,6 +71,8 @@ MODEL:
         RETURN_FGR_PROB: True
         RETURN_FGR_MASK: False
         SCALE_CRT_BY_PROB: True
+        IS_FREEZED: False
+        IS_TRAINING: True
 
     VFE:
         NAME: DynPillarVFE
