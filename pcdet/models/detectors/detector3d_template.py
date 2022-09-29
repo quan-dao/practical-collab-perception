@@ -54,7 +54,10 @@ class Detector3DTemplate(nn.Module):
         if self.model_cfg.get('PC_CORRECTOR', None) is None:
             return None, model_info_dict
         _cfg = self.model_cfg.PC_CORRECTOR
-        corrector_module = PointCloudCorrectorE2E(_cfg.BEV_SEG_CKPT, _cfg.RETURN_OFFSET, _cfg.RETURN_CLUSTER_ENCODING)
+        corrector_module = PointCloudCorrectorE2E(
+            _cfg.BEV_SEG_CKPT, _cfg.RETURN_OFFSET, _cfg.RETURN_CLUSTER_ENCODING,
+            _cfg.RETURN_FGR_PROB, _cfg.RETURN_FGR_MASK, _cfg.SCALE_CRT_BY_PROB
+        )
         model_info_dict['module_list'].append(corrector_module)
         model_info_dict['num_point_features'] = corrector_module.num_point_features
         return corrector_module, model_info_dict

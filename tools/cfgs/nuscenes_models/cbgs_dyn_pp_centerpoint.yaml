@@ -68,6 +68,9 @@ MODEL:
         BEV_SEG_CKPT: temp_ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
         RETURN_OFFSET: False
         RETURN_CLUSTER_ENCODING: False
+        RETURN_FGR_PROB: True
+        RETURN_FGR_MASK: False
+        SCALE_CRT_BY_PROB: True
 
     VFE:
         NAME: DynPillarVFE

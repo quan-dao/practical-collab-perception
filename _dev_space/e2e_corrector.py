@@ -12,7 +12,8 @@ from _dev_space.bev_segmentation_utils import sigmoid
 
 
 class PointCloudCorrectorE2E(nn.Module):
-    def __init__(self, bev_seg_net_ckpt, return_offset=True, return_cluster_encoding=False):
+    def __init__(self, bev_seg_net_ckpt, return_offset=True, return_cluster_encoding=False,
+                 return_fgr_prob=True, return_fgr_mask=False, scale_crt_by_prob=False):
         """
         Args:
             bev_seg_net_ckpt: path to BEVSegmetation checkpoint
@@ -22,9 +23,13 @@ class PointCloudCorrectorE2E(nn.Module):
         """
         if return_cluster_encoding:
             raise NotImplementedError
+        assert not (return_fgr_prob and return_fgr_mask), 'choose 1'
         self.ckpt = bev_seg_net_ckpt
         self.return_offset = return_offset
         self.return_cluster_encoding = return_cluster_encoding
+        self.return_fgr_prob = return_fgr_prob
+        self.return_fgr_mask = return_fgr_mask
+        self.scale_crt_by_prob = scale_crt_by_prob
         self.fgr_prob_threshold = 0.5
         self.point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
         self.voxel_size = np.array([0.2, 0.2, 8.0])
@@ -65,6 +70,8 @@ class PointCloudCorrectorE2E(nn.Module):
         self.num_point_features = self.n_raw_pts_feat
         if self.return_offset:
             self.num_point_features += 2
+        if self.return_fgr_prob or self.return_fgr_mask:
+            self.num_point_features += 1
 
         self.bev_img_pix_size = self.voxel_size[0] * self.model_cfg.BACKBONE_2D.BEV_IMG_STRIDE
         self._prefix_crt_cls2mag = \
@@ -88,6 +95,8 @@ class PointCloudCorrectorE2E(nn.Module):
         self.module_list = self.build_networks()
         self.eval()
         self.load_weights()
+        for param in self.parameters():
+            param.requires_grad = False
         self.cuda()
 
     def load_weights(self):
@@ -111,6 +120,8 @@ class PointCloudCorrectorE2E(nn.Module):
                       (batch_dict['points'][:, 1: 3] < self.point_cloud_range[3] - 1e-3)
         mask_inside = torch.all(mask_inside, dim=1)
         batch_dict['points'] = batch_dict['points'][mask_inside]
+        # for debugging
+        batch_dict['_points_before'] = torch.clone(batch_dict['points'])
 
         pts_indicator = batch_dict['points'][:, -1].int()  # (N_tot,)
         pts_batch_idx = batch_dict['points'][:, 0].long()  # (N_tot,)
@@ -177,13 +188,28 @@ class PointCloudCorrectorE2E(nn.Module):
         # ---
         pts_crt = pts_crt_magnitude.unsqueeze(1) * torch.stack([torch.cos(pts_crt_angle), torch.sin(pts_crt_angle)], dim=1)  # (N_ori, 2)
         # zero-out correction for background
-        pts_crt = pts_crt * pts_fgr_mask.float().unsqueeze(1)  # (N_ori, 2)
+        if not self.scale_crt_by_prob:
+            pts_crt = pts_crt * pts_fgr_mask.float().unsqueeze(1)  # (N_ori, 2)
+        else:
+            pts_crt = pts_crt * pts_fgr_prob.unsqueeze(1)  # (N_ori, 2)
 
         batch_dict['points'][:, 1: 3] = batch_dict['points'][:, 1: 3] + pts_crt
         if self.return_offset:
-            batch_dict['points'] = torch.cat([
-                batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, batch_dict['points'][:, (1 + self.n_raw_pts_feat):]],
-                dim=1).contiguous()
+            if not (self.return_fgr_prob or self.return_fgr_mask):
+                batch_dict['points'] = torch.cat([
+                    batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt,
+                    batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
+                ], dim=1).contiguous()
+            elif self.return_fgr_prob:
+                batch_dict['points'] = torch.cat([
+                    batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, pts_fgr_prob.unsqueeze(1),
+                    batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
+                ], dim=1).contiguous()
+            else:
+                batch_dict['points'] = torch.cat([
+                    batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, pts_fgr_mask.float().unsqueeze(1),
+                    batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
+                ], dim=1).contiguous()
 
         # format output
         if torch.any(mask_added_pts):
