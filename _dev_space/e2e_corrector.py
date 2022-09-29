@@ -121,24 +121,7 @@ class PointCloudCorrectorE2E(nn.Module):
         mask_inside = torch.all(mask_inside, dim=1)
         batch_dict['points'] = batch_dict['points'][mask_inside]
         # for debugging
-        batch_dict['_points_before'] = torch.clone(batch_dict['points'])
-
-        pts_indicator = batch_dict['points'][:, -1].int()  # (N_tot,)
-        pts_batch_idx = batch_dict['points'][:, 0].long()  # (N_tot,)
-        mask_added_pts = pts_indicator.new_zeros(pts_indicator.shape[0]).bool()  # (N_tot,)
-        for b_i in range(batch_dict['batch_size']):
-            mask_batch = pts_batch_idx == b_i  # (N_tot,)
-            mask_added_pts[mask_batch] = pts_indicator[mask_batch] > batch_dict['metadata'][b_i]['n_original_instances']
-
-        pts_added = batch_dict['points'][mask_added_pts]  # (N_added, C)
-        if torch.any(mask_added_pts) and self.return_offset:
-            pts_added = torch.cat([
-                pts_added[:, :1 + self.n_raw_pts_feat], pts_added.new_zeros(pts_added.shape[0], 2),
-                pts_added[:, 1 + self.n_raw_pts_feat:]
-            ], dim=1).contiguous()
-
-        batch_dict['points'] = batch_dict['points'][torch.logical_not(mask_added_pts)]  # (N_original, C)
-        pts_batch_idx = pts_batch_idx[torch.logical_not(mask_added_pts)]  # (N_ori)
+        # batch_dict['_points_before'] = torch.clone(batch_dict['points'])
 
         # ---
         # invoke forward pass of BEVSegmentation net
@@ -161,6 +144,7 @@ class PointCloudCorrectorE2E(nn.Module):
         # ---
         # find fgr points
         # ---
+        pts_batch_idx = batch_dict['points'][:, 0].long()  # (N_tot,)
         pts_fgr_prob = bev_cls[pts_batch_idx, 0, pts_pix_coord[:, 1], pts_pix_coord[:, 0]]  # (N_ori,)
         pts_fgr_mask = pts_fgr_prob > self.fgr_prob_threshold  # (N_ori,)
 
@@ -210,10 +194,6 @@ class PointCloudCorrectorE2E(nn.Module):
                     batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, pts_fgr_mask.float().unsqueeze(1),
                     batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
                 ], dim=1).contiguous()
-
-        # format output
-        if torch.any(mask_added_pts):
-            batch_dict['points'] = torch.cat([batch_dict['points'], pts_added], dim=0).contiguous()
 
         return batch_dict
 
