@@ -7,71 +7,33 @@ from pcdet.models.backbones_2d import map_to_bev
 from pcdet.models import backbones_2d
 from pcdet.utils.spconv_utils import find_all_spconv_keys
 
-from sklearn.cluster import DBSCAN
-from _dev_space.bev_segmentation_utils import sigmoid, assign_target_foreground_seg
+from _dev_space.bev_segmentation_utils import sigmoid
 
 
 class PointCloudCorrectorE2E(nn.Module):
-    def __init__(self, bev_seg_net_ckpt, return_offset=True, return_cluster_encoding=False,
-                 return_fgr_prob=True, return_fgr_mask=False, scale_crt_by_prob=False, is_freezed=False):
-        """
-        Args:
-            bev_seg_net_ckpt: path to BEVSegmetation checkpoint
-            return_offset: return offset_x,_y predicted by BEVSegmentation
-            return_cluster_encoding: TODO: cluster points based on offset to_mean predicted by BEVSegmentation & encode
-                cluster index using sine wave (Attention is all you need-style)
-        """
-        if return_cluster_encoding:
-            raise NotImplementedError
-        assert not (return_fgr_prob and return_fgr_mask), 'choose 1'
-        self.ckpt = bev_seg_net_ckpt
-        self.return_offset = return_offset
-        self.return_cluster_encoding = return_cluster_encoding
-        self.return_fgr_prob = return_fgr_prob
-        self.return_fgr_mask = return_fgr_mask
-        self.scale_crt_by_prob = scale_crt_by_prob
-        self.is_freezed = is_freezed
+    def __init__(self, cfg, point_cloud_range, voxel_size):
+        self.cfg = cfg
+        self.return_offset = cfg.get('RETURN_OFFSET', True)
+        self.is_freezed = cfg.get('IS_FREEZED', False)
+        self.return_fgr_prob = cfg.get('RETURN_FGR_PROB', False)
         self.fgr_prob_threshold = 0.5
-        self.point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
-        self.voxel_size = np.array([0.2, 0.2, 8.0])
+        self.point_cloud_range = np.array(point_cloud_range)
+        self.voxel_size = np.array(voxel_size)
         cls_names = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle', 'bicycle',
                      'pedestrian', 'traffic_cone']
-        self.model_cfg = edict({
-            'NAME': 'BEVSegmentation',
-            'DEBUG': True,
-            'VFE': {
-                'NAME': 'DynPillarVFE',
-                'WITH_DISTANCE': False,
-                'USE_ABSLOTE_XYZ': True,
-                'USE_NORM': True,
-                'NUM_FILTERS': [64, 64],
-                'NUM_RAW_POINT_FEATURES': 5
-            },
-            'MAP_TO_BEV': {
-                'NAME': 'PointPillarScatter',
-                'NUM_BEV_FEATURES': 64
-            },
-            'BACKBONE_2D': {
-                'NAME': 'PoseResNet',
-                'NUM_FILTERS': [64, 128, 256],
-                'LAYERS_SIZE': [2, 2, 2],
-                'HEAD_CONV': 64,
-                'NUM_UP_FILTERS': [128, 64, 64],
-                'BEV_IMG_STRIDE': 2,
-                'LOSS_WEIGHTS': [1.0, 1.0, 1.0, 1.0, 1.0],
-                'CRT_NUM_BINS': 40,
-                'CRT_DIR_NUM_BINS': 80,
-                'CRT_MAX_MAGNITUDE': 15.0,
-            }
-        })
+
+        # model cfg
+        self.model_cfg = cfg.MODEL
+        self.model_cfg.VFE.NUM_RAW_POINT_FEATURES = cfg.NUM_RAW_POINT_FEATURES
+
         # num point feature before correction
-        self.n_raw_pts_feat = self.model_cfg.VFE.NUM_RAW_POINT_FEATURES
+        self.n_raw_pts_feat = cfg.NUM_RAW_POINT_FEATURES
 
         # num point features after correction
         self.num_point_features = self.n_raw_pts_feat
         if self.return_offset:
             self.num_point_features += 2
-        if self.return_fgr_prob or self.return_fgr_mask:
+        if self.return_fgr_prob and cfg.get('USE_FGR_PROB_AS_RAW_FEAT', False):
             self.num_point_features += 1
 
         self.bev_img_pix_size = self.voxel_size[0] * self.model_cfg.BACKBONE_2D.BEV_IMG_STRIDE
@@ -84,7 +46,7 @@ class PointCloudCorrectorE2E(nn.Module):
             'point_cloud_range': self.point_cloud_range,
             'voxel_size': self.voxel_size,
             'depth_downsample_factor': None,
-            'point_feature_encoder': {'num_point_features': 5}
+            'point_feature_encoder': {'num_point_features': self.n_raw_pts_feat}
         })
         self.dataset.grid_size = np.round(
             (self.point_cloud_range[3:] - self.point_cloud_range[:3]) / self.voxel_size).astype(int)
@@ -94,17 +56,20 @@ class PointCloudCorrectorE2E(nn.Module):
         super().__init__()
         self.module_topology = ['vfe', 'map_to_bev_module', 'backbone_2d']
         self.module_list = self.build_networks()
-        self.load_weights()
+
+        if self.model_cfg.get('CKPT', None) is not None:
+            self.load_weights(self.model_cfg.CKPT)
+
         if self.is_freezed:
             self.eval()
             for param in self.parameters():
                 param.requires_grad = False
         self.cuda()
 
-    def load_weights(self):
-        checkpoint = torch.load(self.ckpt, map_location=torch.device('cpu'))
+    def load_weights(self, ckpt):
+        checkpoint = torch.load(ckpt, map_location=torch.device('cpu'))
         if self.model_cfg.get('DEBUG', False):
-            print(f'BEVSegmentation | ==> Loading parameters from checkpoint {self.ckpt} to CPU')
+            print(f'BEVSegmentation | ==> Loading parameters from checkpoint {ckpt} to CPU')
         model_state_dict = checkpoint['model_state']
         state_dict, update_model_state = self._load_state_dict(model_state_dict, strict=False)
 
@@ -117,13 +82,10 @@ class PointCloudCorrectorE2E(nn.Module):
     def forward(self, batch_dict):
         if self.is_freezed:
             self.eval()
-        # separate original points and points sampled from database
         mask_inside = (batch_dict['points'][:, 1: 3] > self.point_cloud_range[0]) & \
                       (batch_dict['points'][:, 1: 3] < self.point_cloud_range[3] - 1e-3)
         mask_inside = torch.all(mask_inside, dim=1)
         batch_dict['points'] = batch_dict['points'][mask_inside]
-        # for debugging
-        # batch_dict['_points_before'] = torch.clone(batch_dict['points'])
 
         # ---
         # invoke forward pass of BEVSegmentation net
@@ -174,26 +136,18 @@ class PointCloudCorrectorE2E(nn.Module):
         # ---
         pts_crt = pts_crt_magnitude.unsqueeze(1) * torch.stack([torch.cos(pts_crt_angle), torch.sin(pts_crt_angle)], dim=1)  # (N_ori, 2)
         # zero-out correction for background
-        if not self.scale_crt_by_prob:
-            pts_crt = pts_crt * pts_fgr_mask.float().unsqueeze(1)  # (N_ori, 2)
-        else:
-            pts_crt = pts_crt * pts_fgr_prob.unsqueeze(1)  # (N_ori, 2)
+        pts_crt = pts_crt * pts_fgr_mask.float().unsqueeze(1)  # (N_ori, 2)
 
         batch_dict['points'][:, 1: 3] = batch_dict['points'][:, 1: 3] + pts_crt
         if self.return_offset:
-            if not (self.return_fgr_prob or self.return_fgr_mask):
-                batch_dict['points'] = torch.cat([
-                    batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt,
-                    batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
-                ], dim=1).contiguous()
-            elif self.return_fgr_prob:
+            if self.return_fgr_prob:
                 batch_dict['points'] = torch.cat([
                     batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, pts_fgr_prob.unsqueeze(1),
                     batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
                 ], dim=1).contiguous()
             else:
                 batch_dict['points'] = torch.cat([
-                    batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt, pts_fgr_mask.float().unsqueeze(1),
+                    batch_dict['points'][:, :(1 + self.n_raw_pts_feat)], pts_crt,
                     batch_dict['points'][:, (1 + self.n_raw_pts_feat):]
                 ], dim=1).contiguous()
 

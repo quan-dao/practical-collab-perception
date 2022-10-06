@@ -70,6 +70,7 @@ def fill_fc_weights(layers):
 
 
 class PoseResNet(nn.Module):
+    '''src: https://github.com/xingyizhou/CenterNet/blob/master/src/lib/models/networks/resnet_dcn.py'''
     def __init__(self, model_cfg, input_channels):
         super(PoseResNet, self).__init__()
         block_type = BasicBlock
@@ -228,14 +229,15 @@ class PoseResNet(nn.Module):
             pred_dict[f"pred_{head}"] = self.__getattr__(f"head_{head}")(x_up_stride_2)
         self.forward_ret_dict['pred_dict'] = pred_dict
 
-        target_dict = assign_target_foreground_seg(data_dict, input_stride=self.model_cfg.BEV_IMG_STRIDE,
-                                                   crt_mag_max=self.model_cfg.CRT_MAX_MAGNITUDE,
-                                                   crt_num_bins=self.model_cfg.CRT_NUM_BINS,
-                                                   crt_dir_num_bins=self.model_cfg.CRT_DIR_NUM_BINS)
-        self.forward_ret_dict['target_dict'] = target_dict
+        if self.training or self.model_cfg.get('GENERATE_TARGET_WHILE_TESTING', False):
+            target_dict = assign_target_foreground_seg(data_dict, input_stride=self.model_cfg.BEV_IMG_STRIDE,
+                                                       crt_mag_max=self.model_cfg.CRT_MAX_MAGNITUDE,
+                                                       crt_num_bins=self.model_cfg.CRT_NUM_BINS,
+                                                       crt_dir_num_bins=self.model_cfg.CRT_DIR_NUM_BINS)
+            self.forward_ret_dict['target_dict'] = target_dict
+            data_dict['bev_target_dict'] = target_dict
 
         data_dict['bev_pred_dict'] = self.forward_ret_dict['pred_dict']
-        data_dict['bev_target_dict'] = target_dict
 
         return data_dict
 

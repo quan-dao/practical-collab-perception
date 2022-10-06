@@ -24,8 +24,8 @@ class NuScenesDataset(DatasetTemplate):
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
 
+        self.infos.sort(key=lambda e: e['timestamp'])
         if self.dataset_cfg.get('USE_MINI_TRAINVAL', False) and training:
-            self.infos.sort(key=lambda e: e['timestamp'])
             self.infos = self.infos[::4]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)

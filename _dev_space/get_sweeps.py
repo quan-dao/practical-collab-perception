@@ -2,9 +2,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 from nuscenes.nuscenes import NuScenes
 from typing import Tuple, List
-from _dev_space.tools_box import get_nuscenes_pointcloud_in_target_frame, get_sweeps_token, check_list_to_numpy, \
-    get_nuscenes_sweeps_partitioned_by_instances
-
+from _dev_space.tools_box import get_nuscenes_pointcloud_in_target_frame, get_sweeps_token, check_list_to_numpy
 from _dev_space.tools_box import apply_tf, get_nuscenes_sensor_pose_in_global, tf
 import numpy.linalg as LA
 
@@ -183,43 +181,6 @@ def correct_points(pts: np.ndarray, dbscanner, pc_range: np.ndarray, bev_pix_siz
         return clusters, unclustered_pts, clusters_offset_xy
     else:
         return clusters, unclustered_pts, np.array([])
-
-
-def get_sweeps_for_distillation(nusc: NuScenes, sample_token: str, n_sweeps: int, pc_range=None,
-                                bev_pix_size=None, dbscann_eps=7.0, dbscann_min_samples=5,
-                                threshold_velo_std_dev=4.50, return_points_offset=False) -> dict:
-    sweeps = get_nuscenes_sweeps_partitioned_by_instances(nusc, sample_token, n_sweeps, is_distill=True,
-                                                          is_foreground_seg=False)
-    # get points in pc_range
-    pc_range = check_list_to_numpy(pc_range)
-    mask_in_range = np.all((sweeps[:, :3] >= pc_range[:3]) & (sweeps[:, :3] < (pc_range[3:] - 1e-3)), axis=1)
-    sweeps = sweeps[mask_in_range]
-    indicator = sweeps[:, -1].astype(int)
-
-    # correct foreground points that just underwent EMC
-    dbscanner = DBSCAN(eps=dbscann_eps, min_samples=dbscann_min_samples)
-    foreground = sweeps[indicator == 0]
-    crt_fgr, not_crt, crt_fgr_offset = correct_points(foreground, dbscanner, pc_range, bev_pix_size,
-                                                      threshold_velo_std_dev, return_points_offset)
-    if not_crt.size > 0:
-        not_crt[:, -1] = -2  # to indicate "kind-of" background (which will be used by student)
-
-    out = {
-        'background': sweeps[indicator == -1],
-        'corrected_fgr': crt_fgr,  # indicator == 0
-        'not_corrected_fgr': not_crt,  # indicator == -2
-        'gt_corrected_fgr': sweeps[indicator == 1]
-    }
-    if return_points_offset:
-        out['corrected_fgr_offset'] = crt_fgr_offset
-    return out
-
-
-def get_sweeps_for_foreground_seg(nusc: NuScenes, sample_token: str, n_sweeps: int) -> dict:
-    sweeps = get_nuscenes_sweeps_partitioned_by_instances(nusc, sample_token, n_sweeps, is_distill=False,
-                                                          is_foreground_seg=True)
-    n_original_instances = int(np.max(sweeps[:, -1])) + 1
-    return {'points': sweeps, 'n_original_instances': n_original_instances}
 
 
 def e2e_crt_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int) -> dict:

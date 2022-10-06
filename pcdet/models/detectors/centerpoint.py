@@ -34,7 +34,7 @@ class CenterPoint(Detector3DTemplate):
 
         if self.model_cfg.get('PC_CORRECTOR', None) is not None:
             crt_cfg = self.model_cfg.PC_CORRECTOR
-            if not crt_cfg.get('IS_FREEZED', True) and crt_cfg.get('IS_TRAINING', False):
+            if not crt_cfg.get('IS_FREEZED', True):
                 loss_crt, tb_dict = self.pc_corrector.backbone_2d.get_loss(tb_dict)
                 loss = loss + loss_crt
                 tb_dict['loss_total'] = loss.item()

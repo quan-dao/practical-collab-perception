@@ -4,7 +4,6 @@ from torch_scatter import scatter_mean
 from tqdm import tqdm
 from pcdet.utils.transform_utils import bin_depths
 from _dev_space.tools_box import compute_bev_coord_torch
-from _dev_space.viz_tools import print_dict
 
 
 @torch.no_grad()
@@ -87,7 +86,7 @@ def compute_cls_stats(pred: torch.Tensor, label: torch.Tensor, threshold: float,
     # stats
     true_positive = (label_pos & pred_pos).int().sum().item()
     false_positive = (label_neg & pred_pos).int().sum().item()
-    false_negative = (label_pos & pred_neg).int().sum().item()  # TODO: something not right here
+    false_negative = (label_pos & pred_neg).int().sum().item()
     if return_counts:
         return {'true_positive': true_positive, 'false_positive': false_positive, 'false_negative': false_negative}
 

@@ -65,14 +65,35 @@ MODEL:
     NAME: CenterPoint
 
     PC_CORRECTOR:
-        BEV_SEG_CKPT: temp_ckpt/bev_seg_caddn_style_fullnusc_ep5.pth
         RETURN_OFFSET: True
-        RETURN_CLUSTER_ENCODING: False
-        RETURN_FGR_PROB: True
-        RETURN_FGR_MASK: False
-        SCALE_CRT_BY_PROB: True
         IS_FREEZED: False
-        IS_TRAINING: True
+        RETURN_FGR_PROB: True
+        USE_FGR_PROB_AS_RAW_FEAT: False
+        NUM_RAW_POINT_FEATURES: 5
+        MODEL:
+            DEBUG: True
+            CKPT: pretrained_models/bev_seg_caddn_style_fullnusc_ep5.pth
+            VFE:
+                NAME: DynPillarVFE
+                WITH_DISTANCE: False
+                USE_ABSLOTE_XYZ: True
+                USE_NORM: True
+                NUM_FILTERS: [ 64, 64 ]
+            MAP_TO_BEV:
+                NAME: PointPillarScatter
+                NUM_BEV_FEATURES: 64
+            BACKBONE_2D:
+                NAME: PoseResNet
+                NUM_FILTERS: [ 64, 128, 256 ]
+                LAYERS_SIZE: [ 2, 2, 2 ]
+                HEAD_CONV: 64
+                NUM_UP_FILTERS: [ 128, 64, 64 ]
+                BEV_IMG_STRIDE: 2
+                LOSS_WEIGHTS: [ 1.0, 1.0, 1.0, 1.0, 1.0 ]
+                CRT_NUM_BINS: 40
+                CRT_DIR_NUM_BINS: 80
+                CRT_MAX_MAGNITUDE: 15.0
+                GENERATE_TARGET_WHILE_TESTING: False
 
     VFE:
         NAME: DynPillarVFE

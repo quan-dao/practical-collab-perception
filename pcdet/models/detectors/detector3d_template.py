@@ -53,10 +53,8 @@ class Detector3DTemplate(nn.Module):
     def build_pc_corrector(self, model_info_dict):
         if self.model_cfg.get('PC_CORRECTOR', None) is None:
             return None, model_info_dict
-        _cfg = self.model_cfg.PC_CORRECTOR
         corrector_module = PointCloudCorrectorE2E(
-            _cfg.BEV_SEG_CKPT, _cfg.RETURN_OFFSET, _cfg.RETURN_CLUSTER_ENCODING,
-            _cfg.RETURN_FGR_PROB, _cfg.RETURN_FGR_MASK, _cfg.SCALE_CRT_BY_PROB, _cfg.get('IS_FREEZED', True)
+            self.model_cfg.PC_CORRECTOR, model_info_dict['point_cloud_range'], model_info_dict['voxel_size']
         )
         model_info_dict['module_list'].append(corrector_module)
         model_info_dict['num_point_features'] = corrector_module.num_point_features

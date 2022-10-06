@@ -1,14 +1,75 @@
 from pyquaternion import Quaternion
 import numpy as np
 import torch
-from torch_scatter import scatter_mean, scatter_max
+from torch_scatter import scatter_mean
+import open3d as o3d
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
-from _dev_space.get_clean_pointcloud import show_pointcloud
 
 
-DYNAMIC_CLASSES = ('vehicle', 'human')  # 'human'
+DYNAMIC_CLASSES = ('vehicle', 'human')  # to get ground truth for training CFG
 CENTER_RADIUS = 2.
+
+
+def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None, fgr_offset=None, boxes_color=None):
+    """
+    Visualize pointcloud & annotations
+    Args:
+        xyz (np.ndarray): (N, 3)
+        boxes (list): list of boxes, each box is denoted by coordinates of its 8 vertices - np.ndarray (8, 3)
+        pc_colors (np.ndarray): (N, 3) - r, g, b
+    """
+    def create_cube(vers, box_color):
+        # vers: (8, 3)
+        lines = [
+            [0, 1], [1, 2], [2, 3], [3, 0],  # front
+            [4, 5], [5, 6], [6, 7], [7, 4],  # back
+            [0, 4], [1, 5], [2, 6], [3, 7],  # connecting front & back
+            [0, 2], [1, 3]  # denote forward face
+        ]
+        if box_color is None:
+            colors = [[1, 0, 0] for _ in range(len(lines))]  # red
+        else:
+            colors = [box_color for _ in range(len(lines))]
+        cube = o3d.geometry.LineSet(
+            points=o3d.utility.Vector3dVector(vers),
+            lines=o3d.utility.Vector2iVector(lines),
+        )
+        cube.colors = o3d.utility.Vector3dVector(colors)
+        return cube
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(xyz)
+
+    if fgr_mask is not None and pc_colors is None:
+        pc_colors = np.zeros((xyz.shape[0], 3))
+        pc_colors[fgr_mask, 0] = 1
+
+    offset_lines = []
+    if fgr_offset is not None:
+        assert fgr_mask is not None
+        if fgr_offset.shape[1] == 2:
+            fgr_offset = np.concatenate((fgr_offset, np.zeros((fgr_offset.shape[0], 1))), axis=1)
+        final = xyz[fgr_mask]
+        initial = final - fgr_offset[fgr_mask]
+        for fidx in range(final.shape[0]):
+            ln = o3d.geometry.LineSet(
+                points=o3d.utility.Vector3dVector(np.vstack([initial[[fidx]], final[[fidx]]])),
+                lines=o3d.utility.Vector2iVector([[0, 1]])
+            )
+            ln.colors = o3d.utility.Vector3dVector(np.array([[0, 0, 1]]))
+            offset_lines.append(ln)
+
+        offset_lines = offset_lines[::8]
+
+    if pc_colors is not None:
+        pcd.colors = o3d.utility.Vector3dVector(pc_colors)
+    if boxes is not None:
+        o3d_cubes = [create_cube(box, boxes_color[b_idx] if boxes_color is not None else None)
+                     for b_idx, box in enumerate(boxes)]
+        o3d.visualization.draw_geometries([pcd, *o3d_cubes, *offset_lines])
+    else:
+        o3d.visualization.draw_geometries([pcd, *offset_lines])
 
 
 def tf(translation, rotation):
@@ -254,65 +315,6 @@ def project_pointcloud_to_image(nusc: NuScenes, sweep_token: str, cam_token: str
     return sweep_pix_coord, sweep_in_img
 
 
-def get_nuscenes_pointcloud_partitioned_by_instances(nusc: NuScenes, curr_sd_token: str, target_sd_token: str,
-                                                     pc_time=None, box_tol=1e-2) -> tuple:
-    pcfile = nusc.get_sample_data_path(curr_sd_token)
-    pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
-
-    # pad pc with time
-    if pc_time is not None:
-        assert isinstance(pc_time, float)
-        pc = np.concatenate([pc, np.tile(np.array([[pc_time]]), (pc.shape[0], 1))], axis=1)
-
-    # remove ego points
-    too_close_mask = np.square(pc[:, :2]).sum(axis=1) < CENTER_RADIUS ** 2
-    pc = pc[np.logical_not(too_close_mask)]
-
-    # map pc to global frame
-    glob_from_curr = get_nuscenes_sensor_pose_in_global(nusc, curr_sd_token)
-    pc[:, :3] = apply_tf(glob_from_curr, pc[:, :3])
-
-    # to map pc to target frame
-    target_from_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(nusc, target_sd_token))
-
-    # partition pc using instances
-    boxes = nusc.get_boxes(curr_sd_token)  # in global
-    mask_foreground = np.zeros(pc.shape[0], dtype=bool)
-    instances = dict()
-    for bidx, box in enumerate(boxes):
-        if box.name.split('.')[0] not in DYNAMIC_CLASSES:
-            continue
-        anno_rec = nusc.get('sample_annotation', box.token)
-        if anno_rec['num_lidar_pts'] == 0:
-            continue
-
-        # map pc to box's local frame
-        box_from_glob = np.linalg.inv(tf(box.center, box.orientation))
-        pts_wrt_box = apply_tf(box_from_glob, pc[:, :3])
-        # find pts inside box
-        mask_inside_box = np.all(
-            np.abs(pts_wrt_box / np.array([box.wlh[1], box.wlh[0], box.wlh[2]])) < (0.5 + box_tol),
-            axis=1
-        )
-        mask_foreground = mask_foreground | mask_inside_box
-
-        # map box_pts currently in global frame to target frame
-        box_pts_target = apply_tf(target_from_glob, pc[mask_inside_box, :3])
-
-        # box_pts in box's local frame
-        box_pts_local = pts_wrt_box[mask_inside_box]
-
-        instances[anno_rec['instance_token']] = {
-            'xyz_in_target': box_pts_target, 'xyz_in_local': box_pts_local, 'feat': pc[mask_inside_box, 3:]
-        }
-
-    # background points
-    background = pc[~mask_foreground]
-    background[:, :3] = apply_tf(target_from_glob, background[:, :3])
-
-    return background, instances
-
-
 def get_target_sample_token(nusc, scene_idx: int, target_sample_idx: int):
     scene = nusc.scene[scene_idx]
     sample_token = scene['first_sample_token']
@@ -356,86 +358,6 @@ def compute_bev_coord(pts: np.ndarray, pc_range: np.ndarray, bev_pix_size: float
 def pad_points_with_scalar(points: np.ndarray, scalar: float) -> np.ndarray:
     padded_val = np.tile([[scalar]], (points.shape[0], 1))
     return np.concatenate([points, padded_val], axis=1)
-
-
-def get_nuscenes_sweeps_partitioned_by_instances(nusc: NuScenes, sample_token: str, n_sweeps: int,
-                                                 is_distill: bool, is_foreground_seg: bool) -> np.ndarray:
-    """
-    Args:
-        nusc:
-        sample_token:
-        n_sweeps
-    Return:
-        (N_tot, 3+C+1): X, Y, Z, features (# = C), ID (-1: background, >=0: instance id)
-    """
-    if is_distill or is_foreground_seg:
-        assert not is_distill and is_foreground_seg, "Choose one out of 2 modes"
-
-    sample_rec = nusc.get('sample', sample_token)
-    ref_sd_token = sample_rec['data']['LIDAR_TOP']
-    sd_tokens_times = get_sweeps_token(nusc, ref_sd_token, n_sweeps, return_time_lag=True)
-
-    background, instances = [], dict()
-    for sd_token, sd_time in sd_tokens_times:
-        curr_bgr, curr_instances = get_nuscenes_pointcloud_partitioned_by_instances(nusc, sd_token, ref_sd_token,
-                                                                                    sd_time)
-        background.append(curr_bgr)
-        for inst_token, info in curr_instances.items():
-            if inst_token not in instances:
-                instances[inst_token] = {
-                    'xyz_in_target': [info['xyz_in_target']],
-                    'xyz_in_local': [info['xyz_in_local']],
-                    'feat': [info['feat']]
-                }
-            else:
-                for k, v in info.items():
-                    instances[inst_token][k].append(v)
-
-    # stack points inside each instance
-    inst_idx = 0
-    inst_token2idx = dict()
-    for inst_token in instances.keys():
-        inst_token2idx[inst_token] = inst_idx
-        inst_idx += 1
-        for k in ['xyz_in_target', 'xyz_in_local', 'feat']:
-            instances[inst_token][k] = np.vstack(instances[inst_token][k])
-
-    # stack background points
-    background = pad_points_with_scalar(np.vstack(background), -1)
-
-    # format 2 kind of foreground
-    fgr_emc, fgr_acc_by_instances = [], []
-    boxes = nusc.get_boxes(ref_sd_token)  # in global
-    ref_from_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(nusc, ref_sd_token))
-    for bidx, box in enumerate(boxes):
-        anno_rec = nusc.get('sample_annotation', box.token)
-        if anno_rec['instance_token'] not in instances:
-            continue
-        info = instances[anno_rec['instance_token']]
-
-        inst_fgr_emc = pad_points_with_scalar(np.concatenate([info['xyz_in_target'], info['feat']], axis=1),
-                                              inst_token2idx[anno_rec['instance_token']])
-        fgr_emc.append(inst_fgr_emc)
-        if is_distill:
-            glob_from_box = tf(box.center, box.orientation)
-            ref_from_box = ref_from_glob @ glob_from_box
-            inst_fgr_abi = np.concatenate([apply_tf(ref_from_box, info['xyz_in_local']), info['feat']], axis=1)
-            fgr_acc_by_instances.append(inst_fgr_abi)
-
-    sweeps = background
-    if fgr_emc:
-        fgr_emc = np.vstack(fgr_emc)
-        if is_foreground_seg:
-            # replace the instance index column by a column of 0 (to merely indicate foreground)
-            fgr_emc = pad_points_with_scalar(fgr_emc[:, :-1], 0)
-
-        sweeps = np.vstack([sweeps, fgr_emc])
-
-    if fgr_acc_by_instances:
-        fgr_acc_by_instances = pad_points_with_scalar(np.vstack(fgr_acc_by_instances), 1)
-        sweeps = np.vstack([sweeps, fgr_acc_by_instances])
-
-    return sweeps
 
 
 def compute_bev_coord_torch(points: torch.Tensor, pc_range: torch.Tensor, pix_size: float, pts_feat=None):
