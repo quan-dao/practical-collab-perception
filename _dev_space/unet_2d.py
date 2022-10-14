@@ -98,20 +98,3 @@ class UNet2D(nn.Module):
         x_out = self.up5(x_out)
         return x_out
 
-
-if __name__ == '__main__':
-    from tools_4testing import BackwardHook
-
-    img = torch.rand(2, 32, 256, 256).cuda()
-    net = UNet2D(32).cuda()
-    out = net(img)
-    bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in net.named_parameters()]
-
-    label = torch.rand(out.shape).cuda()
-    loss = torch.sum(label - out)
-    net.zero_grad()
-    loss.backward()
-
-    for hook in bw_hooks:
-        if hook.grad_mag < 1e-5:
-            print(f"Zero grad ({hook.grad_mag}) at {hook.name}")
