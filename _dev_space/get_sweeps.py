@@ -198,6 +198,8 @@ def e2e_crt_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int) -> dict
     # build {'instance_token': pose @ curr ego} to map foreground points to target frame in an oracle way
     ref_from_glob = LA.inv(get_nuscenes_sensor_pose_in_global(nusc, ref_sd_token))
     inst_token_to_pose = dict()
+    inst_token_to_moving_status = dict()  # store location first, then compute distance from 1st & last, finally threshold
+
     for sd_token, _ in sd_tokens_times[::-1]:
         # iterate sd_token_times backward to populate inst_token_to_pose
         # -> value of inst_token_to_pose the most recent pose in target frame of any intances
@@ -206,23 +208,35 @@ def e2e_crt_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int) -> dict
             if box.name.split('.')[0] not in ('human', 'vehicle'):
                 continue
             anno_rec = nusc.get('sample_annotation', box.token)
+            glob_from_box = tf(box.center, box.orientation)
             if anno_rec['instance_token'] not in inst_token_to_pose:
-                glob_from_box = tf(box.center, box.orientation)
                 inst_token_to_pose[anno_rec['instance_token']] = ref_from_glob @ glob_from_box
+                # to compute moving status
+                inst_token_to_moving_status[anno_rec['instance_token']] = [glob_from_box[:3, -1]]
+            else:
+                if len(inst_token_to_moving_status[anno_rec['instance_token']]) == 2:
+                    # remove the 2nd loc (only store the oldest & latest)
+                    inst_token_to_moving_status[anno_rec['instance_token']].pop()
+                inst_token_to_moving_status[anno_rec['instance_token']].append(glob_from_box[:3, -1])
 
     # to compute label for offset toward cluster center
     # -> keep track of which foreground points belong to same cluster
     inst_token_to_index = dict(zip(inst_token_to_pose.keys(), range(len(inst_token_to_pose))))
 
+    # compute instance moving status
+    for inst_token, poses in inst_token_to_moving_status.items():
+        is_moving = LA.norm(poses[0] - poses[1]) > 1.0  # -> can't recognize pedestrian motion! No prob, ped don't follow rigid
+        inst_token_to_moving_status[inst_token] = int(is_moving)
+
     # process sweeps to get points
-    points = [e2e_crt_process_1sweep(nusc, sd_token, ref_sd_token, timelag, inst_token_to_pose, inst_token_to_index)
-              for sd_token, timelag in sd_tokens_times]
+    points = [e2e_crt_process_1sweep(nusc, sd_token, ref_sd_token, timelag, inst_token_to_pose, inst_token_to_index,
+                                     inst_token_to_moving_status) for sd_token, timelag in sd_tokens_times]
     points = np.vstack(points)
     return {'points': points, 'num_original_instances': len(inst_token_to_pose)}
 
 
 def e2e_crt_process_1sweep(nusc: NuScenes, curr_sd_token: str, target_sd_token: str, sweep_timelag: float,
-                           inst_token_to_pose: dict, inst_token_to_index: dict,
+                           inst_token_to_pose: dict, inst_token_to_index: dict, inst_token_to_moving_status: dict,
                            box_tol=1e-2, center_radius=2.) -> np.ndarray:
     """
     Returns:
@@ -253,6 +267,7 @@ def e2e_crt_process_1sweep(nusc: NuScenes, curr_sd_token: str, target_sd_token: 
     boxes = nusc.get_boxes(curr_sd_token)
     indicator = -np.ones(pc.shape[0])
     emc2oracle = np.zeros((pc.shape[0], 2))
+    moving_status = -np.ones(pc.shape[0])
 
     for bidx, box in enumerate(boxes):
         if box.name.split('.')[0] not in ('human', 'vehicle'):
@@ -273,6 +288,9 @@ def e2e_crt_process_1sweep(nusc: NuScenes, curr_sd_token: str, target_sd_token: 
         # update indicator of points inside this box
         indicator[mask_inside_box] = inst_token_to_index[anno_rec['instance_token']]
 
+        # update moving status of points inside this box
+        moving_status[mask_inside_box] = inst_token_to_moving_status[anno_rec['instance_token']]
+
         # transmit fgr to target frame using pose of box in target frame
         box_pts_emc = xyz_wrt_target[mask_inside_box]  # (N_bpts, 3)
         box_pts_oracle = apply_tf(inst_token_to_pose[anno_rec['instance_token']], xyz_wrt_box[mask_inside_box])  # (N_bpts, 3)
@@ -283,6 +301,7 @@ def e2e_crt_process_1sweep(nusc: NuScenes, curr_sd_token: str, target_sd_token: 
         xyz_wrt_target,
         pc[:, 3:],  # 2d vector: intensity, time
         emc2oracle,  # 2d vector: offset along X,Y- axis of target frame
+        moving_status[:, np.newaxis],  # -1 for background, 0 for static foreground, 1 for moving foreground
         indicator[:, np.newaxis],  # -1 for background, >= 0 for foreground
     ], axis=1)  # (N, 8)
     return sweep
