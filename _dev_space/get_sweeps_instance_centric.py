@@ -14,7 +14,7 @@ def get_sample_data_point_cloud(nusc: NuScenes, sample_data_token: str, time_lag
     pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (N, 4) - (x, y, z, intensity)
     if time_lag is not None:
         assert sweep_idx is not None
-        pc = np.pad(pc, pad_width=[(0, 0), (0, 2)], mode='constant', constant_values=0)  # (N, 5)
+        pc = np.pad(pc, pad_width=[(0, 0), (0, 2)], mode='constant', constant_values=0)  # (N, 6)
         pc[:, -2] = time_lag
         pc[:, -1] = sweep_idx
     return pc
@@ -34,7 +34,7 @@ def find_points_in_box(points: np.ndarray, target_from_box: np.ndarray, dxdydz: 
         tolerance:
     """
     box_points = apply_tf(LA.inv(target_from_box), points[:, :3])  # (N, 3)
-    mask_inside = np.all((box_points / dxdydz) < (0.5 + tolerance), axis=1)  # (N,)
+    mask_inside = np.all(np.abs(box_points / dxdydz) < (0.5 + tolerance), axis=1)  # (N,)
     return mask_inside
 
 
@@ -48,7 +48,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
     """
     sample_rec = nusc.get('sample', sample_token)
     target_sd_token = sample_rec['data']['LIDAR_TOP']
-    sd_tokens_times = get_sweeps_token(nusc, target_sd_token, n_sweeps, return_time_lag=True)
+    sd_tokens_times = get_sweeps_token(nusc, target_sd_token, n_sweeps, return_time_lag=True, return_sweep_idx=True)
 
     target_from_glob = LA.inv(get_nuscenes_sensor_pose_in_global(nusc, target_sd_token))
 
@@ -64,7 +64,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         cur_points = remove_ego_vehicle_points(cur_points, center_radius)
 
         # map to target
-        cur_points = apply_tf(target_from_glob @ glob_from_cur, cur_points)  # (N, 6) in target frame
+        cur_points[:, :3] = apply_tf(target_from_glob @ glob_from_cur, cur_points[:, :3])  # (N, 6) in target frame
 
         # pad points with instances index
         cur_points = np.pad(cur_points, pad_width=[(0, 0), (0, 1)], constant_values=-1)

@@ -86,12 +86,11 @@ def tf(translation, rotation):
 
 
 def apply_tf(tf: np.ndarray, points: np.ndarray):
-    assert points.shape[1] >= 3
+    assert points.shape[1] == 3
     assert tf.shape == (4, 4)
-    points_homo = np.pad(points[:, :3], pad_width=[(0, 0), (0, 1)], mode='constant', constant_values=1.)
-    points_homo = tf @ points_homo.T  # (4, N)
-    points[:, :3] = points_homo[:3, :].T
-    return points
+    points_homo = np.concatenate([points, np.ones((points.shape[0], 1))], axis=1)
+    out = tf @ points_homo.T
+    return out[:3, :].T
 
 
 def get_nuscenes_pointcloud(nusc: NuScenes, sample_data_token: str, center_radius=CENTER_RADIUS, ground_height=None,
@@ -261,13 +260,16 @@ def get_boxes_4viz(nusc, sample_data_token):
     return out
 
 
-def get_sweeps_token(nusc: NuScenes, curr_sd_token: str, n_sweeps: int, return_time_lag=True) -> list:
+def get_sweeps_token(nusc: NuScenes, curr_sd_token: str, n_sweeps: int, return_time_lag=True, return_sweep_idx=False) -> list:
     ref_sd_rec = nusc.get('sample_data', curr_sd_token)
     ref_time = ref_sd_rec['timestamp'] * 1e-6
     sd_tokens_times = []
     for s_idx in range(n_sweeps):
         curr_sd = nusc.get('sample_data', curr_sd_token)
-        sd_tokens_times.append((curr_sd_token, ref_time - curr_sd['timestamp'] * 1e-6, n_sweeps - 1 - s_idx))
+        if not return_sweep_idx:
+            sd_tokens_times.append((curr_sd_token, ref_time - curr_sd['timestamp'] * 1e-6))
+        else:
+            sd_tokens_times.append((curr_sd_token, ref_time - curr_sd['timestamp'] * 1e-6, n_sweeps - 1 - s_idx))
         # s_idx: the higher, the closer to the current
         # move to previous
         if curr_sd['prev'] != '':
