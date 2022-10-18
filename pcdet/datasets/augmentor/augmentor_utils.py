@@ -1,4 +1,5 @@
 import numpy as np
+import numpy.linalg as LA
 import math
 import copy
 from ...utils import common_utils
@@ -29,8 +30,10 @@ def random_flip_along_x(gt_boxes, points, return_flip=False, points_feat_to_tran
 
         if instances_tf is not None:
             tf = np.eye(4)
-            tf[0, 0] = -1.
+            tf[1, 1] = -1.
+            inv_tf = tf
             instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+            instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
 
     out = [gt_boxes, points]
     if return_flip:
@@ -64,8 +67,10 @@ def random_flip_along_y(gt_boxes, points, return_flip=False, points_feat_to_tran
 
         if instances_tf is not None:
             tf = np.eye(4)
-            tf[1, 1] = -1.
+            tf[0, 0] = -1.
+            inv_tf = tf
             instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+            instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
 
     out = [gt_boxes, points]
     if return_flip:
@@ -113,7 +118,14 @@ def global_rotation(gt_boxes, points, rot_range, return_rot=False, points_feat_t
             [0, 0, 1, 0],
             [0, 0, 0, 1]
         ])
+        inv_tf = np.array([
+            [cos, sin, 0, 0],
+            [-sin, cos, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
         instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+        instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
 
     out = [gt_boxes, points]
     if return_rot:
@@ -146,7 +158,9 @@ def global_scaling(gt_boxes, points, scale_range, return_scale=False, points_fea
 
     if instances_tf is not None:
         tf = np.diag([noise_scale, noise_scale, noise_scale, 1.])
+        inv_tf = np.diag([1./noise_scale, 1./noise_scale, 1./noise_scale, 1.])
         instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+        instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
 
     out = [gt_boxes, points]
     if return_scale:
