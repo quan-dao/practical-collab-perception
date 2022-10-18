@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pyquaternion import Quaternion
 from pcdet.datasets.nuscenes.nuscenes_utils import quaternion_yaw
+from einops import rearrange
 
 
 nusc = NuScenes(dataroot='../../data/nuscenes/v1.0-mini', version='v1.0-mini', verbose=True)
@@ -42,30 +43,22 @@ print(f"_boxes: {_boxes.shape}")
 _boxes = viz_boxes(_boxes)
 show_pointcloud(points[:, :3], _boxes, fgr_mask=points[:, -1] > -1)
 
-# test correcting point cloud with 'instances'
+# -----------------------
+# batch correction
 points_instance_idx = points[:, -1].astype(int)
 bg_points = points[points_instance_idx == -1]
 fg_points = points[points_instance_idx > -1]
 
-unq_instance_indices = np.unique(points_instance_idx)
+instances_tf = out['instances_tf']  # (N_inst, N_sweeps, 4, 4)
+instances_tf = instances_tf.reshape(-1, 4, 4)  # (N_inst * N_sweeps, 4, 4)
+n_sweeps = 10
 
-instances = out['instances']
-instances_sweep_indices = out['instances_sweep_indices']
+fg_merge_ids = fg_points[:, -1].astype(int) * n_sweeps + fg_points[:, -2].astype(int)  # (N_fg, 3 + C)
+instances_traj_4fg = instances_tf[fg_merge_ids]  # (N_fg, 4, 4)
 
-for inst_idx in unq_instance_indices:
-    inst_mask = fg_points[:, -1].astype(int) == inst_idx
-    inst_poses = instances[inst_idx]  # list
-    inst_sid = instances_sweep_indices[inst_idx]  # list
-
-    points_sid = fg_points[inst_mask, -2].astype(int)
-    unq_points_sid = np.unique(points_sid)
-    for sid in unq_points_sid:
-        mask = inst_mask & (fg_points[:, -2].astype(int) == sid)
-        t_ = inst_poses[-1] @ np.linalg.inv(inst_poses[inst_sid.index(sid)])
-        fg_points[mask, :3] = apply_tf(t_, fg_points[mask, :3])
-
+fg_points_xyz1 = np.pad(fg_points[:, :3], pad_width=[(0, 0), (0, 1)], constant_values=1.)  # (N_fg, 4)
+fg_points_xyz1 = np.einsum('BCD,BD -> BC', instances_traj_4fg, fg_points_xyz1)  # (N_fg, 4)
+fg_points[:, :3] = fg_points_xyz1[:, :3]  # (N_fg, 3)
 
 _points = np.concatenate([bg_points, fg_points], axis=0)
 show_pointcloud(_points[:, :3], _boxes, fgr_mask=_points[:, -1] > -1)
-
-

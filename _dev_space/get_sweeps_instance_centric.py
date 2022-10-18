@@ -105,10 +105,20 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         all_points.append(cur_points)
 
     all_points = np.concatenate(all_points, axis=0)
+
+    # merge instances & instances_sweep_indices
+    instances_tf = np.zeros((len(instances), n_sweeps, 4, 4))  # rigid tf that map fg points to their correct position
+    for inst_idx in range(len(instances)):
+        inst_poses = instances[inst_idx]  # list
+        inst_sweep_ids = instances_sweep_indices[inst_idx]  # list
+        for sw_i, pose in zip(inst_sweep_ids, inst_poses):
+            instances_tf[inst_idx, sw_i] = inst_poses[-1] @ LA.inv(pose)
+
     return {
         'points': all_points,
-        'instances': instances,
-        'instances_sweep_indices': instances_sweep_indices
+        'instances_tf': instances_tf,
+        # 'instances': instances,
+        # 'instances_sweep_indices': instances_sweep_indices
     }
 
 
