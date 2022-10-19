@@ -234,6 +234,13 @@ class DatasetTemplate(torch_data.Dataset):
                                 constant_values=pad_value)
                         points.append(points_pad)
                     ret[key] = np.stack(points, axis=0)
+                elif key in ['instances_tf']:
+                    max_n_inst = max([inst_tf.shape[0] for inst_tf in val])
+                    num_sweeps = val[0].shape[1]  # 1 instances_tf - (N, N_sweeps, 4, 4)
+                    batch_instances_tf = np.zeros((batch_size, max_n_inst, num_sweeps, 3, 4))  # remove last row-> save memory
+                    for b_idx in range(batch_size):
+                        batch_instances_tf[b_idx, :val[b_idx].shape[0]] = val[b_idx][:, :, :3, :]
+                    ret[key] = batch_instances_tf
                 else:
                     ret[key] = np.stack(val, axis=0)
             except:
