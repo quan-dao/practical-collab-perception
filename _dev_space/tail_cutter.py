@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch_scatter
 from einops import rearrange
-from functools import partial
+from typing import List
 from _dev_space.unet_2d import UNet2D
 
 
@@ -118,7 +118,7 @@ class PillarEncoder(nn.Module):
         batch_dict['points'] = batch_dict['points'][mask_in]  # (N, 6 + C)
 
         # compute pillars' coord & feature
-        points_feat, points_bev_coord, pillars_flatten_coord, idx_pillar_to_point = \
+        points_feat, _, pillars_flatten_coord, idx_pillar_to_point = \
             self.pillarize(batch_dict['points'])  # (N, 6 + 5)
         points_feat = self.pointnet(points_feat)  # (N, C_bev)
         pillars_feat = torch_scatter.scatter_max(points_feat, idx_pillar_to_point, dim=0)[0]  # (P, C_bev)
@@ -128,27 +128,48 @@ class PillarEncoder(nn.Module):
         batch_bev_img[pillars_flatten_coord] = pillars_feat
         batch_bev_img = rearrange(batch_bev_img, '(B H W) C -> B C H W', B=batch_dict['batch_size'], H=self.bev_size[1],
                                   W=self.bev_size[0]).contiguous()
-        return batch_bev_img, points_bev_coord
+        return batch_bev_img
 
 
-class PointSegmenter(nn.Module):
+class PointAligner(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         self.pillar_encoder = PillarEncoder(cfg.NUM_RAW_FEATURES, cfg.NUM_BEV_FEATURES, cfg.POINT_CLOUD_RANGE,
                                             cfg.VOXEL_SIZE)
         self.backbone2d = UNet2D(cfg.NUM_BEV_FEATURES)
-        self.head_fg_seg = self._make_head(cfg.HEAD_MID_CHANNELS, 1)
-        self.head_motion_seg = self._make_head(cfg.HEAD_MID_CHANNELS, 1)
-        self.head_inst_assoc = self._make_head(cfg.HEAD_MID_CHANNELS, 2)
 
-    def _make_head(self, n_channels_mid, n_channels_out):
-        return nn.Sequential(
-            nn.Linear(self.cfg.NUM_BEV_FEATURES, n_channels_mid, bias=False),
-            nn.BatchNorm1d(n_channels_mid, eps=1e-3, momentum=0.01),
-            nn.ReLU(),
-            nn.Linear(n_channels_mid, n_channels_out)
-        )
+        point_heads_channels = [cfg.NUM_BEV_FEATURES]
+        if cfg.get('HEAD_MID_CHANNELS', None) is not None:
+            point_heads_channels.append(cfg.HEAD_MID_CHANNELS)
+        self.point_head_fg_seg = self._make_mlp(point_heads_channels + [1])
+        self.point_head_motion_seg = self._make_mlp(point_heads_channels + [1])
+        self.point_head_inst_assoc = self._make_mlp(point_heads_channels + [2])
+
+        inst_global_channels = [cfg.NUM_BEV_FEATURES]
+        if cfg.get('INSTANCE_MID_CHANNELS', None) is not None:
+            inst_global_channels.append(cfg.INSTANCE_MID_CHANNELS)
+        self.inst_global_mlp = self._make_mlp(inst_global_channels + [cfg.INSTANCE_OUT_CHANNELS])
+
+        inst_local_channels = [3]  # x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
+        if cfg.get('INSTANCE_MID_CHANNELS', None) is not None:
+            inst_local_channels.append(cfg.INSTANCE_MID_CHANNELS)
+        self.inst_local_mlp = self._make_mlp(inst_local_channels + [cfg.INSTANCE_OUT_CHANNELS])
+
+    @staticmethod
+    def _make_mlp(channels: List):
+        assert len(channels) >= 2
+        layers = []
+        for c_idx in range(1, len(channels)):
+            c_in = channels[c_idx - 1]
+            c_out = channels[c_idx]
+            is_last = c_idx == len(channels) - 1
+            layers.append(nn.Linear(c_in, c_out, bias=is_last))
+            if not is_last:
+                layers.append(nn.BatchNorm1d(c_out, eps=1e-3, momentum=0.01))
+                layers.append(nn.ReLU())
+
+        return nn.Sequential(*layers)
 
     def forward(self, batch_dict: dict):
         """
@@ -156,22 +177,100 @@ class PointSegmenter(nn.Module):
             batch_dict:
                 'points': (N, 6 + C) - batch_idx, x, y, z, intensity, time, [...]
         """
-        bev_img, points_bev_coord = self.pillar_encoder(batch_dict)  # (B, C_bev, H, W), (N, 2)-bev_x, bev_y
+        bev_img = self.pillar_encoder(batch_dict)  # (B, C_bev, H, W), (N, 2)-bev_x, bev_y
         bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)
 
         # interpolate points feature from bev_img
+        points_bev_coord = (batch_dict['points'][:, [1, 2]] - self.pillar_encoder.pc_range[:2]) / \
+                           self.pillar_encoder.voxel_size[:2]
         points_batch_idx = batch_dict['points'][:, 0].long()
-        points_feat = points_batch_idx.new_zeros(points_batch_idx.shape[0], self.cfg.NUM_BEV_FEATURES)
+        points_feat = bev_img.new_zeros(points_batch_idx.shape[0], self.cfg.NUM_BEV_FEATURES)
         for b_idx in range(batch_dict['batch_size']):
             _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
             batch_mask = points_batch_idx == b_idx
             points_feat[batch_mask] = bilinear_interpolate_torch(_img, points_bev_coord[batch_mask, 0],
                                                                  points_bev_coord[batch_mask, 1])
 
-        # invoke heads
-        pred_points_fg = self.head_fg_seg(points_feat)  # (N, 1)
-        pred_points_motion = self.head_motion_seg(points_feat)  # (N, 1)
-        pred_points_inst_assoc = self.head_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
+        # invoke point heads
+        pred_points_fg = self.point_head_fg_seg(points_feat)  # (N, 1)
+        pred_points_motion = self.point_head_motion_seg(points_feat)  # (N, 1)
+        pred_points_inst_assoc = self.point_head_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
+
+        # TODO: use points_fg for foreground segmentation during inference
+
+        # TODO: DBSCAN to get instance_idx during inference
+
+        # ---------------------------------------------------------------
+        # instance stuff
+        # ---------------------------------------------------------------
+        mask_fg = batch_dict['points'][:, -1] > -1
+        fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instacne_idx
+        fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
+        fg_batch_idx = points_batch_idx[mask_fg]
+        fg_inst_idx = fg[:, -1].long()
+        fg_sweep_idx = fg[:, -2].long()
+
+        # merge batch_idx & instance_idx
+        max_num_inst = batch_dict['instances_tf'].shape[1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
+        fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
+
+        # merge batch_idx, instance_idx & sweep_idx
+        fg_bisw_idx = fg_bi_idx * self.cfg.get('NUM_SWEEPS', 10) + fg_sweep_idx
+
+        # ------------
+        # compute instance global feature
+        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, return_inverse=True)
+        # inst_bi: (N_inst,)
+        # inst_bi_inv_indices: (N_fg,)
+
+        # ---
+        fg_feat4glob = self.inst_global_mlp(fg_feat)  # (N_fg, C_inst)
+        inst_global_feat = torch_scatter.scatter_max(fg_feat4glob, inst_bi_inv_indices, dim=0)[0]  # (N_inst, C_inst)
+
+        # ------------
+        # compute instance local shape encoding
+        local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, return_inverse=True)
+        # local_bisw: (N_local,)
+
+        # ---
+        local_center = torch_scatter.scatter_mean(fg[:, 1: 4], local_bisw_inv_indices, dim=0)  # (N_local, 3)
+
+        fg_centered_xyz = fg[:, 1: 4] - local_center[local_bisw_inv_indices]  # (N_fg, 3)
+        fg_shape_enc = self.inst_local_mlp(fg_centered_xyz)  # (N_fg, C_inst)
+        # ---
+        local_shape_enc = torch_scatter.scatter_max(fg_shape_enc, local_bisw_inv_indices, dim=0)[0]  # (N_local, C_inst)
+
+        # ------------
+        # get the max sweep_index of each instance
+        inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)
+
+        # get bisw_index of each instance's max sweep
+        inst_target_bisw_idx = inst_bi * self.cfg.get('NUM_SWEEPS', 10) + inst_max_sweep_idx  # (N_inst,)
+
+        # for each value in inst_target_bisw_idx find WHERE (i.e., index) it appear in local_bisw
+        corr = local_bisw[:, None] == inst_target_bisw_idx[None, :]  # (N_local, N_inst)
+        corr = corr.long() * torch.arange(local_bisw.shape[0]).unsqueeze(1).to(fg.device)
+        corr = corr.sum(dim=0)  # (N_inst)
+
+        #
+        inst_target_center_shape = torch.cat((local_center[corr], local_shape_enc[corr]), dim=1)  # (N_inst, 3+C_inst)
+        inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
+
+        # ------------
+        # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
+        local_bi = local_bisw // self.cfg.get('NUM_SWEEPS', 10)
+        # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
+        local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
+        local_bi_in_inst_bi = local_bi_in_inst_bi.long() * torch.arange(inst_bi.shape[0]).unsqueeze(1).to(fg.device)
+        local_bi_in_inst_bi = local_bi_in_inst_bi.sum(dim=0)  # (N_local)
+        # ---
+        local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)
+
+        local_feat = torch.cat((local_global_feat, local_center, local_shape_enc), dim=1)  # (N_local, 6+3*C_inst)
+        batch_dict['local_feat'] = local_feat
+
+        return batch_dict
+
 
     def assign_target(self, batch_dict):
         """
