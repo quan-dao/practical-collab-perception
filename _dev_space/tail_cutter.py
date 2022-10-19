@@ -271,30 +271,47 @@ class PointAligner(nn.Module):
 
         return batch_dict
 
-
     def assign_target(self, batch_dict):
         """
         Args:
             batch_dict:
-                'points': (N, 6 + C) - ..., moving_status, inst_indicator
-                    * moving_status: -1 for background, 0 for static foreground, 1 for moving foreground
+                'points': (N, 8) - batch_idx, x, y, z, intensity, time, sweep_idx, instance_idx
                     * inst_indicator: -1 for background, >= 0 for foreground
+                'instances_tf': (B, N_inst_max, N_sweeps, 3, 4)
         """
         points = batch_dict['points']
-        # sanity check
-        mask_bg = points[:, -2].long() == -1
-        assert torch.all(points[mask_bg, -1].long() == -1), "inconsistency between moving stat & inst_indicator"
+        points_batch_idx = points[:, 0].long()
+        points_inst_idx = points[:, -1].long()
+        max_num_inst = batch_dict['instances_tf'].shape[1]
 
-        target_fg = (points[:, -1].long() > -1).long()
-        target_motion = (points[:, -2].long() > 0).long()  # only supervise this for g.t foreground points
+        # -------------------------------------------------------
+        # Point-wise target
+        # -------------------------------------------------------
+        # --------------
+        # target foreground
+        fg_mask = points_inst_idx > -1
+        target_fg = fg_mask.long()  # (N,)
 
-        # target of inst_assoc by offset toward mean of points inside each instance
-        unq_inst_idx, idx_inst_to_point = torch.unique(points[:, -1].long(), return_inverse=True)
-        inst_mean_xy = torch_scatter.scatter_mean(points[:, 1: 3], idx_inst_to_point, dim=0)  # (N_inst, 2)
-        target_inst_assoc = inst_mean_xy[idx_inst_to_point] - points[:, 1: 3]
+        # --------------
+        # target of inst_assoc
+        # as offset toward mean of points inside each instance
+        fg_bi_idx = points_batch_idx[fg_mask] * max_num_inst + points_inst_idx[fg_mask]  # (N,)
+        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, return_inverse=True)
+        # inst_bi: (N_inst,) | N_inst == total number of 'actual' (not include the 0-padded) instances in the batch
+
+        inst_mean_xy = torch_scatter.scatter_mean(points[fg_mask, 1: 3], inst_bi_inv_indices, dim=0)  # (N_inst, 2)
+        target_inst_assoc = inst_mean_xy[inst_bi_inv_indices] - points[fg_mask, 1: 3]  # TODO: test this
+
+        # --------------
+        # target motion
+        instances_tf = batch_dict['instances_tf']
+        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
+        inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
+        inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
+        target_motion_stat = inst_motion_stat[inst_bi_inv_indices]  # (N_fg,)  # TODO: test this
 
         # format output
-        target_dict = {'fg': target_fg, 'motion': target_motion, 'inst_assoc': target_inst_assoc}
+        target_dict = {'fg': target_fg, 'inst_assoc': target_inst_assoc, 'motion_stat': target_motion_stat}
         return target_dict
 
 
