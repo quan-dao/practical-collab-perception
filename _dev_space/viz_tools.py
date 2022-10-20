@@ -28,8 +28,9 @@ def viz_boxes(boxes: np.ndarray):
 
 
 def print_dict(d: dict):
+    print('{')
     for k, v in d.items():
-        out = f"{k} | {type(v)} | "
+        out = f"\t{k} | {type(v)} | "
         if isinstance(v, str):
             out += v
         elif isinstance(v, np.ndarray):
@@ -41,6 +42,7 @@ def print_dict(d: dict):
         elif isinstance(v, torch.Tensor):
             out += f"{v.shape}"
         print(out)
+    print('}\n')
 
 
 def viz_clusters2d(xy, labels, ax, marker='o', prefix=''):

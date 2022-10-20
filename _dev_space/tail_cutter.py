@@ -305,7 +305,7 @@ class PointAligner(nn.Module):
         # inst_bi: (N_inst,) | N_inst == total number of 'actual' (not include the 0-padded) instances in the batch
 
         inst_mean_xy = torch_scatter.scatter_mean(points[fg_mask, 1: 3], inst_bi_inv_indices, dim=0)  # (N_inst, 2)
-        target_inst_assoc = inst_mean_xy[inst_bi_inv_indices] - points[fg_mask, 1: 3]  # TODO: test this
+        target_inst_assoc = inst_mean_xy[inst_bi_inv_indices] - points[fg_mask, 1: 3]
 
         # -------------------------------------------------------
         # Instance-wise target
@@ -316,7 +316,7 @@ class PointAligner(nn.Module):
         # target motion
         inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
-        inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)  # TODO: test this
+        inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
 
         # --------------
         # locals' transformation
@@ -324,7 +324,7 @@ class PointAligner(nn.Module):
         # local_bisw: (N_local,)
 
         local_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
-        local_tf = local_tf[local_bisw]  # (N_local, 3, 4)  # TODO: test this
+        local_tf = local_tf[local_bisw]  # (N_local, 3, 4)
 
         # format output
         target_dict = {
