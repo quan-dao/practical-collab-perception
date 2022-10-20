@@ -139,28 +139,34 @@ class PointAligner(nn.Module):
                                             cfg.VOXEL_SIZE)
         self.backbone2d = UNet2D(cfg.NUM_BEV_FEATURES)
 
-        point_heads_channels = [cfg.NUM_BEV_FEATURES]
-        if cfg.get('HEAD_MID_CHANNELS', None) is not None:
-            point_heads_channels.append(cfg.HEAD_MID_CHANNELS)
-        self.point_head_fg_seg = self._make_mlp(point_heads_channels + [1])
-        self.point_head_motion_seg = self._make_mlp(point_heads_channels + [1])
-        self.point_head_inst_assoc = self._make_mlp(point_heads_channels + [2])
+        # ----
+        # point heads
+        self.point_fg_seg = self._make_mlp(cfg.NUM_BEV_FEATURES, 1, cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_inst_assoc = self._make_mlp(cfg.NUM_BEV_FEATURES, 2, cfg.get('HEAD_MID_CHANNELS', None))
 
-        inst_global_channels = [cfg.NUM_BEV_FEATURES]
-        if cfg.get('INSTANCE_MID_CHANNELS', None) is not None:
-            inst_global_channels.append(cfg.INSTANCE_MID_CHANNELS)
-        self.inst_global_mlp = self._make_mlp(inst_global_channels + [cfg.INSTANCE_OUT_CHANNELS])
+        # ---
+        self.inst_global_mlp = self._make_mlp(cfg.NUM_BEV_FEATURES, cfg.INSTANCE_OUT_CHANNELS,
+                                              cfg.get('INSTANCE_MID_CHANNELS', None))
+        self.inst_local_mlp = self._make_mlp(3, cfg.INSTANCE_OUT_CHANNELS, cfg.get('INSTANCE_MID_CHANNELS', None))
+        # input channels == 3 because: x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
 
-        inst_local_channels = [3]  # x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
-        if cfg.get('INSTANCE_MID_CHANNELS', None) is not None:
-            inst_local_channels.append(cfg.INSTANCE_MID_CHANNELS)
-        self.inst_local_mlp = self._make_mlp(inst_local_channels + [cfg.INSTANCE_OUT_CHANNELS])
+        # ----
+        # instance heads
+        self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1, cfg.get('INSTANCE_HEAD_MID', None))
+
+        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3, cfg.get('INSTANCE_HEAD_MID', None))
+        # out == 3 for 3 components of translation vector
+
+        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4, cfg.get('INSTANCE_HEAD_MID', None))
+        # out == 4 for 4 components of quaternion
 
         self.forward_return_dict = dict()
 
     @staticmethod
-    def _make_mlp(channels: List):
-        assert len(channels) >= 2
+    def _make_mlp(in_c: int, out_c: int, mid_c: List = None):
+        if mid_c is None:
+            mid_c = []
+        channels = [in_c] + mid_c + [out_c]
         layers = []
         for c_idx in range(1, len(channels)):
             c_in = channels[c_idx - 1]
@@ -179,6 +185,8 @@ class PointAligner(nn.Module):
             batch_dict:
                 'points': (N, 6 + C) - batch_idx, x, y, z, intensity, time, [...]
         """
+        self.forward_return_dict = dict()  # clear previous output
+
         bev_img = self.pillar_encoder(batch_dict)  # (B, C_bev, H, W), (N, 2)-bev_x, bev_y
         bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)
 
@@ -194,13 +202,18 @@ class PointAligner(nn.Module):
                                                                  points_bev_coord[batch_mask, 1])
 
         # invoke point heads
-        pred_points_fg = self.point_head_fg_seg(points_feat)  # (N, 1)
-        pred_points_motion = self.point_head_motion_seg(points_feat)  # (N, 1)
-        pred_points_inst_assoc = self.point_head_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
+        pred_points_fg = self.point_fg_seg(points_feat)  # (N, 1)
+        pred_points_inst_assoc = self.point_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
+        pred_dict = {
+            'fg': pred_points_fg.reshape(-1).contiguous(),  # (N,)
+            'inst_assoc': pred_points_inst_assoc  # (N, 2)
+        }
 
-        # TODO: use points_fg for foreground segmentation during inference
+        if not self.training:
+            raise NotImplementedError
+            # TODO: use points_fg for foreground segmentation during inference
 
-        # TODO: DBSCAN to get instance_idx during inference
+            # TODO: DBSCAN to get instance_idx during inference
 
         # ---------------------------------------------------------------
         # instance stuff
@@ -230,7 +243,9 @@ class PointAligner(nn.Module):
         fg_feat4glob = self.inst_global_mlp(fg_feat)  # (N_fg, C_inst)
         inst_global_feat = torch_scatter.scatter_max(fg_feat4glob, inst_bi_inv_indices, dim=0)[0]  # (N_inst, C_inst)
 
-        # TODO: use inst_global_feat to predict motion stat
+        # use inst_global_feat to predict motion stat
+        pred_inst_motion_stat = self.inst_motion_seg(inst_global_feat)  # (N_inst, 1)
+        pred_dict['inst_motion_stat'] = pred_inst_motion_stat.reshape(-1).contiguous()
 
         # ------------
         # compute instance local shape encoding
@@ -273,9 +288,22 @@ class PointAligner(nn.Module):
         # ---
         local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)
 
+        # concatenate feat of local
         local_feat = torch.cat((local_global_feat, local_center, local_shape_enc), dim=1)  # (N_local, 6+3*C_inst)
-        batch_dict['local_feat'] = local_feat  # (N_local, 6+3*C_inst)
-        # TODO: use local_feat to predict local_tf of size (N_local, 3, 4)
+
+        # use local_feat to predict local_tf of size (N_local, 3, 4)
+        pred_local_transl = self.inst_local_transl(local_feat)  # (N_local, 3)
+        pred_dict['local_transl'] = pred_local_transl
+
+        pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
+        pred_dict['local_rot'] = pred_local_rot
+
+        batch_dict.update(pred_dict)
+        if self.training:
+            self.forward_return_dict.update(pred_dict)  # for computing loss
+
+            target_dict = self.assign_target(batch_dict)
+            self.forward_return_dict.update(target_dict)  # for computing loss
 
         return batch_dict
 
