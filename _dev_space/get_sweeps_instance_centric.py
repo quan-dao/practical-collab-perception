@@ -72,7 +72,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         boxes = nusc.get_boxes(sd_token)
 
         for b_idx, box in enumerate(boxes):
-            if box.name.split('.')[0] not in ('human', 'vehicle'):
+            if box.name.split('.')[0] not in ('vehicle'):  # 'human'
                 continue
 
             anno_rec = nusc.get('sample_annotation', box.token)
