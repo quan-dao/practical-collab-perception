@@ -4,7 +4,10 @@ import torch.nn as nn
 import torch_scatter
 from einops import rearrange
 from typing import List
+from kornia.losses.focal import BinaryFocalLossWithLogits
+
 from _dev_space.unet_2d import UNet2D
+from _dev_space.instance_centric_tools import quat2mat
 
 
 def to_ndarray(x):
@@ -160,6 +163,10 @@ class PointAligner(nn.Module):
         self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4, cfg.get('INSTANCE_HEAD_MID', None))
         # out == 4 for 4 components of quaternion
 
+        # ---
+        # loss func
+        self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
+
         self.forward_return_dict = dict()
 
     @staticmethod
@@ -205,7 +212,7 @@ class PointAligner(nn.Module):
         pred_points_fg = self.point_fg_seg(points_feat)  # (N, 1)
         pred_points_inst_assoc = self.point_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
         pred_dict = {
-            'fg': pred_points_fg.reshape(-1).contiguous(),  # (N,)
+            'fg': pred_points_fg,  # (N, 1)
             'inst_assoc': pred_points_inst_assoc  # (N, 2)
         }
 
@@ -245,7 +252,7 @@ class PointAligner(nn.Module):
 
         # use inst_global_feat to predict motion stat
         pred_inst_motion_stat = self.inst_motion_seg(inst_global_feat)  # (N_inst, 1)
-        pred_dict['inst_motion_stat'] = pred_inst_motion_stat.reshape(-1).contiguous()
+        pred_dict['inst_motion_stat'] = pred_inst_motion_stat
 
         # ------------
         # compute instance local shape encoding
@@ -285,6 +292,8 @@ class PointAligner(nn.Module):
         local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
         local_bi_in_inst_bi = local_bi_in_inst_bi.long() * torch.arange(inst_bi.shape[0]).unsqueeze(1).to(fg.device)
         local_bi_in_inst_bi = local_bi_in_inst_bi.sum(dim=0)  # (N_local)
+        self.forward_return_dict['meta']['local_bi_in_inst_bi'] = local_bi_in_inst_bi
+
         # ---
         local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)
 
@@ -300,11 +309,9 @@ class PointAligner(nn.Module):
 
         batch_dict.update(pred_dict)
         if self.training:
-            self.forward_return_dict.update(pred_dict)  # for computing loss
-
-            target_dict = self.assign_target(batch_dict)
-            self.forward_return_dict.update(target_dict)  # for computing loss
-
+            # for update forward_return_dict with prediction & target computing loss
+            self.forward_return_dict['pred_dict'] = pred_dict
+            self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
         return batch_dict
 
     def assign_target(self, batch_dict):
@@ -360,5 +367,103 @@ class PointAligner(nn.Module):
             'inst_motion_stat': inst_motion_stat, 'local_tf': local_tf,
         }
         return target_dict
+
+    @staticmethod
+    def l2_loss(pred: torch.Tensor, target: torch.Tensor, dim=-1, reduction='sum'):
+        """
+        Args:
+            pred
+            target
+            dim: dimension where the norm take place
+            reduction
+        """
+        assert len(pred.shape) >= 2
+        assert pred.shape == target.shape
+        assert reduction in ('sum', 'mean', 'none')
+        diff = torch.linalg.norm(pred - target, dim=dim)
+        if reduction == 'none':
+            return diff
+        elif reduction == 'sum':
+            return diff.sum()
+        else:
+            return diff.mean()
+
+    def get_training_loss(self, tb_dict=None):
+        if tb_dict is None:
+            tb_dict = dict()
+        pred_dict = self.forward_return_dict['pred_dict']
+        target_dict = self.forward_return_dict['target_dict']
+
+        # -----------------------
+        # Point-wise loss
+        # -----------------------
+        # ---
+        # foreground seg
+        fg_logit = pred_dict['fg']  # (N, 1)
+        fg_target = target_dict['fg']  # (N,)
+
+        num_gt_fg = fg_target.sum().item()
+        loss_fg = self.focal_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
+        tb_dict['loss_fg'] = loss_fg.item()
+
+        # ---
+        # instance assoc
+        gt_fg_mask = fg_target == 1  # (N,)
+        inst_assoc = pred_dict['inst_assoc']  # (N, 2)
+        inst_assoc_target = target_dict['inst_assoc']  # (N, 2)
+        if num_gt_fg > 0:
+            loss_inst_assoc = self.l2_loss(inst_assoc[gt_fg_mask], inst_assoc_target[gt_fg_mask], dim=1, reduction='mean')
+            tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
+        else:
+            loss_inst_assoc = 0.
+            tb_dict['loss_inst_assoc'] = 0.
+
+        # -----------------------
+        # Instance-wise loss
+        # -----------------------
+        # ---
+        # motion seg
+        inst_mos_logit = pred_dict['inst_motion_stat']  # (N_inst, 1)
+        inst_mos_target = target_dict['inst_motion_stat']  # (N_inst,)
+
+        num_gt_dyn_inst = float(inst_mos_target.sum().item())
+        loss_inst_mos = self.focal_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
+        tb_dict['loss_inst_mos'] = loss_inst_mos.item()
+
+        # ---
+        # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
+
+        local_transl = pred_dict['local_transl']  # (N_local, 3)
+        local_rot = pred_dict['local_rot']  # (N_local, 4)
+        local_rot_mat = quat2mat(local_rot)  # (N_local, 3, 3)
+
+        local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
+
+        # which local are associated with dynamic instances
+        local_bi_in_inst_bi = self.forward_return_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
+        local_mos_target = inst_mos_target[local_bi_in_inst_bi]  # (N_local,)
+        local_mos_mask = local_mos_target == 1  # (N_local,)
+
+        # translation
+        if torch.any(local_mos_mask):
+            loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
+                                             dim=-1, reduction='mean')
+            tb_dict['loss_local_transl'] = loss_local_transl.item()
+        else:
+            loss_local_transl = 0.0
+            tb_dict['loss_local_transl'] = 0.0
+
+        # rotation
+        if torch.any(local_mos_mask):
+            loss_local_rot = torch.linalg.norm(
+                local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
+            tb_dict['loss_local_rot'] = loss_local_rot.item()
+        else:
+            loss_local_rot = 0.0
+            tb_dict['loss_local_rot'] = 0.0
+
+        # ---
+        # Local tf - reconstruction loss
+        # TODO: quaternion to tf
 
 
