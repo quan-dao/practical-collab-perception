@@ -219,13 +219,15 @@ class PointAligner(nn.Module):
 
         # ------------
         # compute instance global feature
-        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, return_inverse=True)
+        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=self.training, return_inverse=True)
         # inst_bi: (N_inst,)
         # inst_bi_inv_indices: (N_fg,)
 
         # ---
         fg_feat4glob = self.inst_global_mlp(fg_feat)  # (N_fg, C_inst)
         inst_global_feat = torch_scatter.scatter_max(fg_feat4glob, inst_bi_inv_indices, dim=0)[0]  # (N_inst, C_inst)
+
+        # TODO: use inst_global_feat to predict motion stat
 
         # ------------
         # compute instance local shape encoding
@@ -296,7 +298,7 @@ class PointAligner(nn.Module):
         # target of inst_assoc
         # as offset toward mean of points inside each instance
         fg_bi_idx = points_batch_idx[fg_mask] * max_num_inst + points_inst_idx[fg_mask]  # (N,)
-        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, return_inverse=True)
+        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
         # inst_bi: (N_inst,) | N_inst == total number of 'actual' (not include the 0-padded) instances in the batch
 
         inst_mean_xy = torch_scatter.scatter_mean(points[fg_mask, 1: 3], inst_bi_inv_indices, dim=0)  # (N_inst, 2)
@@ -307,11 +309,10 @@ class PointAligner(nn.Module):
         instances_tf = batch_dict['instances_tf']
         inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
-        inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
-        target_motion_stat = inst_motion_stat[inst_bi_inv_indices]  # (N_fg,)  # TODO: test this
+        inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)  # TODO: test this
 
         # format output
-        target_dict = {'fg': target_fg, 'inst_assoc': target_inst_assoc, 'motion_stat': target_motion_stat}
+        target_dict = {'fg': target_fg, 'inst_assoc': target_inst_assoc, 'inst_motion_stat': inst_motion_stat}
         return target_dict
 
 
