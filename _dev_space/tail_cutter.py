@@ -156,6 +156,8 @@ class PointAligner(nn.Module):
             inst_local_channels.append(cfg.INSTANCE_MID_CHANNELS)
         self.inst_local_mlp = self._make_mlp(inst_local_channels + [cfg.INSTANCE_OUT_CHANNELS])
 
+        self.forward_return_dict = dict()
+
     @staticmethod
     def _make_mlp(channels: List):
         assert len(channels) >= 2
@@ -222,6 +224,7 @@ class PointAligner(nn.Module):
         inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=self.training, return_inverse=True)
         # inst_bi: (N_inst,)
         # inst_bi_inv_indices: (N_fg,)
+        self.forward_return_dict['meta'] = {'inst_bi': inst_bi, 'inst_bi_inv_indices': inst_bi_inv_indices}
 
         # ---
         fg_feat4glob = self.inst_global_mlp(fg_feat)  # (N_fg, C_inst)
@@ -231,8 +234,10 @@ class PointAligner(nn.Module):
 
         # ------------
         # compute instance local shape encoding
-        local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, return_inverse=True)
+        local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=self.training, return_inverse=True)
         # local_bisw: (N_local,)
+        self.forward_return_dict['meta'].update({'local_bisw': local_bisw,
+                                                 'local_bisw_inv_indices': local_bisw_inv_indices})
 
         # ---
         local_center = torch_scatter.scatter_mean(fg[:, 1: 4], local_bisw_inv_indices, dim=0)  # (N_local, 3)
@@ -269,7 +274,8 @@ class PointAligner(nn.Module):
         local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)
 
         local_feat = torch.cat((local_global_feat, local_center, local_shape_enc), dim=1)  # (N_local, 6+3*C_inst)
-        batch_dict['local_feat'] = local_feat
+        batch_dict['local_feat'] = local_feat  # (N_local, 6+3*C_inst)
+        # TODO: use local_feat to predict local_tf of size (N_local, 3, 4)
 
         return batch_dict
 
@@ -282,37 +288,49 @@ class PointAligner(nn.Module):
                 'instances_tf': (B, N_inst_max, N_sweeps, 3, 4)
         """
         points = batch_dict['points']
-        points_batch_idx = points[:, 0].long()
         points_inst_idx = points[:, -1].long()
-        max_num_inst = batch_dict['instances_tf'].shape[1]
-
         # -------------------------------------------------------
         # Point-wise target
         # -------------------------------------------------------
+        fg_mask = points_inst_idx > -1
+
         # --------------
         # target foreground
-        fg_mask = points_inst_idx > -1
         target_fg = fg_mask.long()  # (N,)
 
         # --------------
-        # target of inst_assoc
-        # as offset toward mean of points inside each instance
-        fg_bi_idx = points_batch_idx[fg_mask] * max_num_inst + points_inst_idx[fg_mask]  # (N,)
-        inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
+        # target of inst_assoc as offset toward mean of points inside each instance
+        inst_bi = self.forward_return_dict['meta']['inst_bi']
+        inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']
         # inst_bi: (N_inst,) | N_inst == total number of 'actual' (not include the 0-padded) instances in the batch
 
         inst_mean_xy = torch_scatter.scatter_mean(points[fg_mask, 1: 3], inst_bi_inv_indices, dim=0)  # (N_inst, 2)
         target_inst_assoc = inst_mean_xy[inst_bi_inv_indices] - points[fg_mask, 1: 3]  # TODO: test this
 
+        # -------------------------------------------------------
+        # Instance-wise target
+        # -------------------------------------------------------
+        instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
+
         # --------------
         # target motion
-        instances_tf = batch_dict['instances_tf']
         inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)  # TODO: test this
 
+        # --------------
+        # locals' transformation
+        local_bisw = self.forward_return_dict['meta']['local_bisw']
+        # local_bisw: (N_local,)
+
+        local_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
+        local_tf = local_tf[local_bisw]  # (N_local, 3, 4)  # TODO: test this
+
         # format output
-        target_dict = {'fg': target_fg, 'inst_assoc': target_inst_assoc, 'inst_motion_stat': inst_motion_stat}
+        target_dict = {
+            'fg': target_fg, 'inst_assoc': target_inst_assoc,
+            'inst_motion_stat': inst_motion_stat, 'local_tf': local_tf,
+        }
         return target_dict
 
 
