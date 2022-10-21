@@ -5,6 +5,7 @@ import torch_scatter
 from einops import rearrange
 from typing import List
 from kornia.losses.focal import BinaryFocalLossWithLogits
+from torchmetrics.classification import BinaryAveragePrecision
 
 from _dev_space.unet_2d import UNet2D
 from _dev_space.instance_centric_tools import quat2mat
@@ -167,10 +168,13 @@ class PointAligner(nn.Module):
 
         self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4, cfg.get('INSTANCE_HEAD_MID', None))
         # out == 4 for 4 components of quaternion
-
+        fill_fc_weights(self.inst_local_rot)
         # ---
         # loss func
         self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
+        # ---
+        # eval metrics
+        self.avg_precision = BinaryAveragePrecision(thresholds=5)
 
         self.forward_return_dict = dict()
 
@@ -506,7 +510,32 @@ class PointAligner(nn.Module):
         loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
         tb_dict['loss'] = loss.item()
 
+        # eval foregound seg, motion seg during training
+        with torch.no_grad():
+            pred_fg_prob = sigmoid(fg_logit.detach()).squeeze(-1)  # (N,)
+            avg_precision_fg = self.avg_precision(pred_fg_prob, fg_target)
+            tb_dict['AP_fg'] = avg_precision_fg.item()
+
+            inst_mos_prob = sigmoid(inst_mos_logit.detach()).squeeze(-1)  # (N_inst)
+            avg_precision_mos = self.avg_precision(inst_mos_prob, inst_mos_target)
+            tb_dict['AP_mos'] = avg_precision_mos.item()
+
         out = [loss, tb_dict]
         if debug:
             out.append(debug_dict)
         return out
+
+
+def sigmoid(x):
+    y = torch.clamp(x.sigmoid(), min=1e-4, max=1 - 1e-4)
+    return y
+
+
+def fill_fc_weights(layers):
+    for m in layers.modules():
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, std=0.001)
+            # torch.nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
+            # torch.nn.init.xavier_normal_(m.weight.data)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
