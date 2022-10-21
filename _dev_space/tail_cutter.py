@@ -305,7 +305,7 @@ class PointAligner(nn.Module):
         pred_dict['local_transl'] = pred_local_transl
 
         pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
-        pred_dict['local_rot'] = pred_local_rot
+        pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
 
         batch_dict.update(pred_dict)
         if self.training:
@@ -412,9 +412,9 @@ class PointAligner(nn.Module):
         # instance assoc
         gt_fg_mask = fg_target == 1  # (N,)
         inst_assoc = pred_dict['inst_assoc']  # (N, 2)
-        inst_assoc_target = target_dict['inst_assoc']  # (N, 2)
+        inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
         if num_gt_fg > 0:
-            loss_inst_assoc = self.l2_loss(inst_assoc[gt_fg_mask], inst_assoc_target[gt_fg_mask], dim=1, reduction='mean')
+            loss_inst_assoc = self.l2_loss(inst_assoc[gt_fg_mask], inst_assoc_target, dim=1, reduction='mean')
             tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
         else:
             loss_inst_assoc = 0.
@@ -436,7 +436,7 @@ class PointAligner(nn.Module):
         # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
 
         local_transl = pred_dict['local_transl']  # (N_local, 3)
-        local_rot_mat = quat2mat(pred_dict['local_rot'])  # (N_local, 3, 3)
+        local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
 
         local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
 

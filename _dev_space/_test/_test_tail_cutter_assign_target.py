@@ -10,7 +10,7 @@ from pcdet.models import load_data_to_gpu
 from _dev_space.tail_cutter import PointAligner
 from _dev_space.viz_tools import print_dict, viz_boxes
 from _dev_space.tools_box import show_pointcloud
-from _dev_space.tools_4testing import load_data_to_tensor
+from tools_4testing import load_data_to_tensor
 
 
 cfg_file = './tail_cutter_cfg.yaml'
