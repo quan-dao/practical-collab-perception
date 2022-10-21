@@ -24,41 +24,54 @@ class ResBlock(nn.Module):
 
 
 class UNet2D(nn.Module):
-    def __init__(self, n_input_feat: int):
+    def __init__(self, n_input_feat: int, cfg):
         super().__init__()
         norm2d = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
+        ch_down = cfg.DOWN_CHANNELS
+        ch_up = cfg.UP_CHANNELS
+        self.n_output_feat = ch_up[-1]
+
         # ---
         # Downsampling
         # ---
-        self.conv0 = nn.Sequential(nn.Conv2d(n_input_feat, 64, 7, padding=3, bias=False), norm2d(64))
-        self.res0 = ResBlock(64)
+        self.conv0 = nn.Sequential(nn.Conv2d(n_input_feat, ch_down[0], 7, padding=3, bias=False), norm2d(ch_down[0]))
+        self.res0 = ResBlock(ch_down[0])
 
-        self.conv1 = nn.Sequential(nn.Conv2d(64, 64, 3, stride=2, padding=1, bias=False), norm2d(64))  # tot_stride = 2
-        self.res1 = ResBlock(64)
+        self.conv1 = nn.Sequential(nn.Conv2d(ch_down[0], ch_down[1], 3, stride=2, padding=1, bias=False),
+                                   norm2d(ch_down[1]))  # tot_stride = 2
+        self.res1 = ResBlock(ch_down[1])
 
-        self.conv2 = nn.Sequential(nn.Conv2d(64, 128, 3, stride=2, padding=1, bias=False), norm2d(128))  # tot_stride = 4
-        self.res2 = ResBlock(128)
+        self.conv2 = nn.Sequential(nn.Conv2d(ch_down[1], ch_down[2], 3, stride=2, padding=1, bias=False),
+                                   norm2d(ch_down[2]))  # tot_stride = 4
+        self.res2 = ResBlock(ch_down[2])
 
-        self.conv3 = nn.Sequential(nn.Conv2d(128, 128, 3, stride=2, padding=1, bias=False), norm2d(128))  # tot_stride = 8
-        self.res3 = ResBlock(128)
+        self.conv3 = nn.Sequential(nn.Conv2d(ch_down[2], ch_down[3], 3, stride=2, padding=1, bias=False),
+                                   norm2d(ch_down[3]))  # tot_stride = 8
+        self.res3 = ResBlock(ch_down[3])
 
         # ---
         # Up
         # ---
-        self.up1 = nn.Sequential(nn.ConvTranspose2d(128, 128, 3, stride=2, padding=1, output_padding=1, bias=False),
-                                 norm2d(128))  # tot_stride = 4
-        self.up_res1 = ResBlock(128)
+        self.up1 = nn.Sequential(
+            nn.ConvTranspose2d(ch_down[3], ch_up[1], 3, stride=2, padding=1, output_padding=1, bias=False),
+            norm2d(ch_up[1])
+        )  # tot_stride = 4
+        self.up_res1 = ResBlock(ch_up[1])
 
-        self.up2 = nn.Sequential(nn.ConvTranspose2d(128 + 128, 128, 3, stride=2, padding=1, output_padding=1, bias=False),
-                                 norm2d(128))  # tot_stride = 2
-        self.up_res2 = ResBlock(128)
+        self.up2 = nn.Sequential(
+            nn.ConvTranspose2d(ch_up[1] + ch_down[2], ch_up[2], 3, stride=2, padding=1, output_padding=1, bias=False),
+            norm2d(ch_up[2])
+        )  # tot_stride = 2
+        self.up_res2 = ResBlock(ch_up[2])
 
-        self.up3 = nn.Sequential(nn.ConvTranspose2d(128 + 64, 128, 3, stride=2, padding=1, output_padding=1, bias=False),
-                                 norm2d(128))  # tot_stride = 1
-        self.up_res3 = ResBlock(128)
+        self.up3 = nn.Sequential(
+            nn.ConvTranspose2d(ch_up[2] + ch_down[1], ch_up[3], 3, stride=2, padding=1, output_padding=1, bias=False),
+            norm2d(ch_up[3])
+        )  # tot_stride = 1
+        self.up_res3 = ResBlock(ch_up[3])
 
-        self.up4 = nn.Sequential(nn.Conv2d(128 + 64, 64, 1, bias=False), norm2d(64))
-        self.up5 = nn.Sequential(nn.Conv2d(64, 64, 1, bias=False), norm2d(64))
+        self.up4 = nn.Sequential(nn.Conv2d(ch_up[3] + ch_down[0], ch_up[4], 1, bias=False), norm2d(ch_up[4]))
+        self.up5 = nn.Sequential(nn.Conv2d(ch_up[4], ch_up[5], 1, bias=False), norm2d(ch_up[5]))
 
     def forward(self, x_in):
         # ---

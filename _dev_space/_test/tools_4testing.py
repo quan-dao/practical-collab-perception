@@ -49,6 +49,18 @@ def load_data_to_tensor(batch_dict):
             batch_dict[key] = torch.from_numpy(val).float()
 
 
+def load_dict_to_gpu(batch_dict):
+    for k, v in batch_dict.items():
+        if isinstance(v, torch.Tensor):
+            batch_dict[k] = v.cuda()
+
+
+def load_dict_to_cpu(batch_dict):
+    for k, v in batch_dict.items():
+        if isinstance(v, torch.Tensor):
+            batch_dict[k] = v.detach().cpu()
+
+
 def show_points_in_batch_dict(batch_dict, batch_idx, points=None, points_color=None):
     if points is None:
         points = batch_dict['points']

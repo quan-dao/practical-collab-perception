@@ -138,17 +138,22 @@ class PointAligner(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.pillar_encoder = PillarEncoder(cfg.NUM_RAW_FEATURES, cfg.NUM_BEV_FEATURES, cfg.POINT_CLOUD_RANGE,
-                                            cfg.VOXEL_SIZE)
-        self.backbone2d = UNet2D(cfg.NUM_BEV_FEATURES)
+
+        pillar_cfg = cfg.PILLAR_ENCODER
+        self.pillar_encoder = PillarEncoder(
+            pillar_cfg.NUM_RAW_FEATURES, pillar_cfg.NUM_BEV_FEATURES, pillar_cfg.POINT_CLOUD_RANGE,
+            pillar_cfg.VOXEL_SIZE)
+
+        self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
 
         # ----
+        backbone_out_c = self.backbone2d.n_output_feat
         # point heads
-        self.point_fg_seg = self._make_mlp(cfg.NUM_BEV_FEATURES, 1, cfg.get('HEAD_MID_CHANNELS', None))
-        self.point_inst_assoc = self._make_mlp(cfg.NUM_BEV_FEATURES, 2, cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_fg_seg = self._make_mlp(backbone_out_c, 1, cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, cfg.get('HEAD_MID_CHANNELS', None))
 
         # ---
-        self.inst_global_mlp = self._make_mlp(cfg.NUM_BEV_FEATURES, cfg.INSTANCE_OUT_CHANNELS,
+        self.inst_global_mlp = self._make_mlp(backbone_out_c, cfg.INSTANCE_OUT_CHANNELS,
                                               cfg.get('INSTANCE_MID_CHANNELS', None))
         self.inst_local_mlp = self._make_mlp(3, cfg.INSTANCE_OUT_CHANNELS, cfg.get('INSTANCE_MID_CHANNELS', None))
         # input channels == 3 because: x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
@@ -201,7 +206,7 @@ class PointAligner(nn.Module):
         points_bev_coord = (batch_dict['points'][:, [1, 2]] - self.pillar_encoder.pc_range[:2]) / \
                            self.pillar_encoder.voxel_size[:2]
         points_batch_idx = batch_dict['points'][:, 0].long()
-        points_feat = bev_img.new_zeros(points_batch_idx.shape[0], self.cfg.NUM_BEV_FEATURES)
+        points_feat = bev_img.new_zeros(points_batch_idx.shape[0], bev_img.shape[1])
         for b_idx in range(batch_dict['batch_size']):
             _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
             batch_mask = points_batch_idx == b_idx

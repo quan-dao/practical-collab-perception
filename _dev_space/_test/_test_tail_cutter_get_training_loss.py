@@ -2,15 +2,14 @@ import torch
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
 from pcdet.utils import common_utils
-from pcdet.models import load_data_to_gpu
-
 from _dev_space.tail_cutter import PointAligner
 from _dev_space.viz_tools import print_dict
-from tools_4testing import load_data_to_tensor, show_points_in_batch_dict
+from tools_4testing import load_data_to_tensor, show_points_in_batch_dict, load_dict_to_gpu, BackwardHook, \
+    load_dict_to_cpu
 import argparse
 
 
-def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=False):
+def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=False, test_full=False):
     cfg_file = './tail_cutter_cfg.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./dummy_log.txt')
@@ -28,6 +27,7 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
 
     model = PointAligner(cfg.MODEL)
     if test_pred_is_gt:
+        assert not test_full
         # ---
         # populate forward return dict
         # ---
@@ -106,11 +106,54 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
             _colors = torch.cat([color_static_fg, color_dyn_fg, color_bg], dim=0)
             show_points_in_batch_dict(batch_dict, 1, _points, _colors)
 
+    if test_full:
+        assert not test_pred_is_gt, "test_pred_is_gt can't be True if test_full"
+        model.cuda()
+        bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters()]
+
+        load_dict_to_gpu(batch_dict)
+        batch_dict = model(batch_dict)
+        loss, tb_dict, debug_dict = model.get_training_loss(batch_dict, debug=True)
+
+        print('loss = ', loss)
+        print_dict(tb_dict)
+
+        model.zero_grad()
+        loss.backward()
+        for hook in bw_hooks:
+            if hook.grad_mag < 1e-4:
+                print(f'zero grad at {hook.name}')
+
+        if show_correction_result:
+            # find static fg
+            target_dict = model.forward_return_dict['target_dict']
+            load_dict_to_cpu(target_dict)
+            load_dict_to_cpu(batch_dict)
+            load_dict_to_cpu(model.forward_return_dict['meta'])
+            load_dict_to_cpu(debug_dict)
+
+            inst_mos_target = target_dict['inst_motion_stat']  # (N_inst,)
+            inst_bi_inv_indices = model.forward_return_dict['meta']['inst_bi_inv_indices']
+            fg_motion = inst_mos_target[inst_bi_inv_indices] == 1  # (N_fg)
+            fg = batch_dict['points'][target_dict['fg'] == 1]  # (N_fg)
+
+            static_fg = fg[torch.logical_not(fg_motion), :4]  # batch_idx, x, y, z
+            dyn_fg = torch.cat((fg[fg_motion, 0].unsqueeze(1), debug_dict['gt_recon_dyn_fg']), dim=1)
+            bg = batch_dict['points'][target_dict['fg'] == 0, :4]  # (N_bg)
+            _points = torch.cat([static_fg, dyn_fg, bg], dim=0)
+
+            color_static_fg = torch.tensor((0, 0, 1)).repeat(static_fg.shape[0], 1).float()
+            color_dyn_fg = torch.tensor((1, 0, 0)).repeat(dyn_fg.shape[0], 1).float()
+            color_bg = torch.tensor((0, 0, 0)).repeat(bg.shape[0], 1).float()
+            _colors = torch.cat([color_static_fg, color_dyn_fg, color_bg], dim=0)
+            show_points_in_batch_dict(batch_dict, 1, _points, _colors)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--show_raw_data', action='store_true', default=False)
     parser.add_argument('--test_pred_is_gt', action='store_true', default=False)
     parser.add_argument('--show_correction_result', action='store_true', default=False)
+    parser.add_argument('--test_full', action='store_true', default=False)
     args = parser.parse_args()
-    main(args.show_raw_data, args.test_pred_is_gt, args.show_correction_result)
+    main(args.show_raw_data, args.test_pred_is_gt, args.show_correction_result, args.test_full)

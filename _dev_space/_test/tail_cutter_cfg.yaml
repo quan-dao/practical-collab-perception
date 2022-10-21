@@ -5,7 +5,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: ../../tools/cfgs/dataset_configs/nuscenes_dataset.yaml
     DATA_PATH: ../../data/nuscenes
     VERSION: 'v1.0-mini'
-    MAX_SWEEPS: 10
+    MAX_SWEEPS: 5
     USE_MINI_TRAINVAL: False
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 
@@ -45,11 +45,19 @@ DATA_CONFIG:
 
 MODEL:
     NAME: PointAligner
-    POINT_CLOUD_RANGE: [ -51.2, -51.2, -5.0, 51.2, 51.2, 3.0 ]
-    VOXEL_SIZE: [ 0.2, 0.2, 8.0 ]
-    NUM_SWEEPS: 10
-    NUM_RAW_FEATURES: 5
-    NUM_BEV_FEATURES: 64
+
+    PILLAR_ENCODER:
+        POINT_CLOUD_RANGE: [ -51.2, -51.2, -5.0, 51.2, 51.2, 3.0 ]
+        VOXEL_SIZE: [ 0.2, 0.2, 8.0 ]
+        NUM_RAW_FEATURES: 5
+        NUM_BEV_FEATURES: 64
+
+    BEV_BACKBONE:
+        NAME: UNET2D
+        DOWN_CHANNELS: [8, 8, 16, 16]  # [64, 64, 128, 128]  # 0-1-2-3
+        UP_CHANNELS: [-1, 16, 16, 16, 8, 8]  # [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
+
+    NUM_SWEEPS: 5
 #    HEAD_MID_CHANNELS: 16
 #    INSTANCE_MID_CHANNELS: 16
     INSTANCE_OUT_CHANNELS: 4
