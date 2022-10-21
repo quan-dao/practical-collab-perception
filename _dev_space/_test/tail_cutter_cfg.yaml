@@ -1,0 +1,58 @@
+CLASS_NAMES: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
+              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+
+DATA_CONFIG:
+    _BASE_CONFIG_: ../../tools/cfgs/dataset_configs/nuscenes_dataset.yaml
+    DATA_PATH: ../../data/nuscenes
+    VERSION: 'v1.0-mini'
+    MAX_SWEEPS: 10
+    USE_MINI_TRAINVAL: False
+    POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx' ],
+        src_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx' ],
+    }
+
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: [ 'placeholder', 'gt_sampling' ]
+        AUG_CONFIG_LIST:
+            -   NAME: random_world_flip
+                ALONG_AXIS_LIST: [ 'x', 'y' ]
+                POINT_FEAT_TO_TRANSFORM: [ 5, 6 ]
+
+            -   NAME: random_world_rotation
+                WORLD_ROT_ANGLE: [ -0.3925, 0.3925 ]
+                POINT_FEAT_TO_TRANSFORM: [ 5, 6 ]
+
+            -   NAME: random_world_scaling
+                WORLD_SCALE_RANGE: [ 0.95, 1.05 ]
+                POINT_FEAT_TO_TRANSFORM: [ 5, 6 ]
+
+    DATA_PROCESSOR:
+        -   NAME: mask_points_and_boxes_outside_range
+            REMOVE_OUTSIDE_BOXES: True
+
+        -   NAME: shuffle_points
+            SHUFFLE_ENABLED: {
+                'train': True,
+                'test': True
+            }
+
+        -   NAME: transform_points_to_voxels_placeholder
+            VOXEL_SIZE: [0.2, 0.2, 8.0]
+
+MODEL:
+    NAME: PointAligner
+    POINT_CLOUD_RANGE: [ -51.2, -51.2, -5.0, 51.2, 51.2, 3.0 ]
+    VOXEL_SIZE: [ 0.2, 0.2, 8.0 ]
+    NUM_SWEEPS: 10
+    NUM_RAW_FEATURES: 5
+    NUM_BEV_FEATURES: 64
+#    HEAD_MID_CHANNELS: 16
+#    INSTANCE_MID_CHANNELS: 16
+    INSTANCE_OUT_CHANNELS: 4
+    TARGET_CONFIG:
+        MOTION_THRESH: 0.5
+

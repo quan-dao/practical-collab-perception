@@ -10,7 +10,7 @@ from tools_4testing import load_data_to_tensor, show_points_in_batch_dict
 import argparse
 
 
-def main(show_raw_data=False, test_pred_is_gt=False):
+def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=False):
     cfg_file = './tail_cutter_cfg.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./dummy_log.txt')
@@ -89,10 +89,28 @@ def main(show_raw_data=False, test_pred_is_gt=False):
         print_dict(tb_dict)
         print_dict(debug_dict)
 
+        if show_correction_result:
+            # find static fg
+            inst_mos_target = target_dict['inst_motion_stat']  # (N_inst,)
+            fg_motion = inst_mos_target[inst_bi_inv_indices] == 1  # (N_fg)
+            fg = batch_dict['points'][target_dict['fg'] == 1]  # (N_fg)
+
+            static_fg = fg[torch.logical_not(fg_motion), :4]  # batch_idx, x, y, z
+            dyn_fg = torch.cat((fg[fg_motion, 0].unsqueeze(1), debug_dict['gt_recon_dyn_fg']), dim=1)
+            bg = batch_dict['points'][target_dict['fg'] == 0, :4]  # (N_bg)
+            _points = torch.cat([static_fg, dyn_fg, bg], dim=0)
+
+            color_static_fg = torch.tensor((0, 0, 1)).repeat(static_fg.shape[0], 1).float()
+            color_dyn_fg = torch.tensor((1, 0, 0)).repeat(dyn_fg.shape[0], 1).float()
+            color_bg = torch.tensor((0, 0, 0)).repeat(bg.shape[0], 1).float()
+            _colors = torch.cat([color_static_fg, color_dyn_fg, color_bg], dim=0)
+            show_points_in_batch_dict(batch_dict, 1, _points, _colors)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--show_raw_data', action='store_true', default=False)
     parser.add_argument('--test_pred_is_gt', action='store_true', default=False)
+    parser.add_argument('--show_correction_result', action='store_true', default=False)
     args = parser.parse_args()
-    main(args.show_raw_data, args.test_pred_is_gt)
+    main(args.show_raw_data, args.test_pred_is_gt, args.show_correction_result)
