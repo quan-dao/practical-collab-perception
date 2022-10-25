@@ -52,13 +52,13 @@ MODEL:
 
     BEV_BACKBONE:
         NAME: UNET2D
-        DOWN_CHANNELS: [8, 8, 16, 16]  # [64, 64, 128, 128]  # 0-1-2-3
-        UP_CHANNELS: [-1, 16, 16, 16, 8, 8]  # [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
+        DOWN_CHANNELS: [64, 64, 128, 128]  # 0-1-2-3
+        UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
 
     NUM_SWEEPS: 10
 #    HEAD_MID_CHANNELS: 16
 #    INSTANCE_MID_CHANNELS: 16
-    INSTANCE_OUT_CHANNELS: 4
+    INSTANCE_OUT_CHANNELS: 64
     TARGET_CONFIG:
         MOTION_THRESH: 0.5
 
