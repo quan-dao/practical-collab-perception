@@ -161,12 +161,12 @@ class PointAligner(nn.Module):
 
         # ----
         # instance heads
-        self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1, cfg.get('INSTANCE_HEAD_MID', None))
+        self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1, cfg.get('INSTANCE_MID_CHANNELS', None))
 
-        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3, cfg.get('INSTANCE_HEAD_MID', None))
+        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3, cfg.get('INSTANCE_MID_CHANNELS', None))
         # out == 3 for 3 components of translation vector
 
-        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4, cfg.get('INSTANCE_HEAD_MID', None))
+        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4, cfg.get('INSTANCE_MID_CHANNELS', None))
         # out == 4 for 4 components of quaternion
         fill_fc_weights(self.inst_local_rot)
         # ---
@@ -192,7 +192,7 @@ class PointAligner(nn.Module):
             layers.append(nn.Linear(c_in, c_out, bias=is_last))
             if not is_last:
                 layers.append(nn.BatchNorm1d(c_out, eps=1e-3, momentum=0.01))
-                layers.append(nn.ReLU())
+                layers.append(nn.ReLU(True))
 
         return nn.Sequential(*layers)
 
