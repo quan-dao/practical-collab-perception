@@ -5,7 +5,7 @@ import torch_scatter
 from einops import rearrange
 from typing import List
 from kornia.losses.focal import BinaryFocalLossWithLogits
-from torchmetrics.classification import BinaryAveragePrecision
+from torchmetrics.functional import precision_recall
 
 from _dev_space.unet_2d import UNet2D
 from _dev_space.instance_centric_tools import quat2mat
@@ -175,7 +175,7 @@ class PointAligner(nn.Module):
         self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
         # ---
         # eval metrics
-        self.avg_precision = BinaryAveragePrecision(thresholds=5)
+        # self.avg_precision = BinaryAveragePrecision(thresholds=5)
 
         self.forward_return_dict = dict()
 
@@ -520,13 +520,15 @@ class PointAligner(nn.Module):
         with torch.no_grad():
             t_tic = time()
             pred_fg_prob = sigmoid(fg_logit.detach()).squeeze(-1)  # (N,)
-            avg_precision_fg = self.avg_precision(pred_fg_prob, fg_target)
-            tb_dict['AP_fg'] = avg_precision_fg.item()
+            precision_fg, recall_fg = precision_recall(pred_fg_prob, fg_target, threshold=0.5)
+            tb_dict['fg_P'] = precision_fg.item()
+            tb_dict['fg_R'] = recall_fg.item()
 
             inst_mos_prob = sigmoid(inst_mos_logit.detach()).squeeze(-1)  # (N_inst)
-            avg_precision_mos = self.avg_precision(inst_mos_prob, inst_mos_target)
-            tb_dict['AP_mos'] = avg_precision_mos.item()
-            tb_dict['time_compute_AP'] = time() - t_tic
+            precision_mos, recall_mos = precision_recall(inst_mos_prob, inst_mos_target, threshold=0.5)
+            tb_dict['mos_P'] = precision_mos.item()
+            tb_dict['mos_R'] = recall_mos.item()
+            tb_dict['time_compute_PR'] = time() - t_tic
         out = [loss, tb_dict]
         if debug:
             out.append(debug_dict)
