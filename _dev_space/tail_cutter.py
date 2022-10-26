@@ -9,7 +9,6 @@ from torchmetrics.functional import precision_recall
 
 from _dev_space.unet_2d import UNet2D
 from _dev_space.instance_centric_tools import quat2mat
-from time import time
 
 
 def to_ndarray(x):
@@ -409,7 +408,6 @@ class PointAligner(nn.Module):
         # -----------------------
         # Point-wise loss
         # -----------------------
-        t_tic = time()
         # ---
         # foreground seg
         fg_logit = pred_dict['fg']  # (N, 1)
@@ -431,12 +429,9 @@ class PointAligner(nn.Module):
             loss_inst_assoc = 0.
             tb_dict['loss_inst_assoc'] = 0.
 
-        tb_dict['time_point_loss'] = time() - t_tic
-
         # -----------------------
         # Instance-wise loss
         # -----------------------
-        t_tic = time()
         # ---
         # motion seg
         inst_mos_logit = pred_dict['inst_motion_stat']  # (N_inst, 1)
@@ -514,11 +509,9 @@ class PointAligner(nn.Module):
 
         loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
         tb_dict['loss'] = loss.item()
-        tb_dict['time_inst_loss'] = time() - t_tic
 
         # eval foregound seg, motion seg during training
         with torch.no_grad():
-            t_tic = time()
             pred_fg_prob = sigmoid(fg_logit.detach()).squeeze(-1)  # (N,)
             precision_fg, recall_fg = precision_recall(pred_fg_prob, fg_target, threshold=0.5)
             tb_dict['fg_P'] = precision_fg.item()
@@ -528,7 +521,6 @@ class PointAligner(nn.Module):
             precision_mos, recall_mos = precision_recall(inst_mos_prob, inst_mos_target, threshold=0.5)
             tb_dict['mos_P'] = precision_mos.item()
             tb_dict['mos_R'] = recall_mos.item()
-            tb_dict['time_compute_PR'] = time() - t_tic
         out = [loss, tb_dict]
         if debug:
             out.append(debug_dict)
