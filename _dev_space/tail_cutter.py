@@ -6,7 +6,7 @@ from einops import rearrange
 from typing import List
 from kornia.losses.focal import BinaryFocalLossWithLogits
 from torchmetrics.functional import precision_recall
-
+from sklearn.cluster import DBSCAN
 from _dev_space.unet_2d import UNet2D
 from _dev_space.instance_centric_tools import quat2mat
 
@@ -177,6 +177,7 @@ class PointAligner(nn.Module):
         # self.avg_precision = BinaryAveragePrecision(thresholds=5)
 
         self.forward_return_dict = dict()
+        self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None):
@@ -225,24 +226,53 @@ class PointAligner(nn.Module):
             'inst_assoc': pred_points_inst_assoc  # (N, 2)
         }
 
-        if not self.training:
-            raise NotImplementedError
-            # TODO: use points_fg for foreground segmentation during inference
+        if self.training:
+            mask_fg = batch_dict['points'][:, -1] > -1
+            fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
+            fg_inst_idx = fg[:, -1].long()  # (N_fg,)
+            max_num_inst = batch_dict['instances_tf'].shape[1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
+            fg_batch_idx = points_batch_idx[mask_fg]
+            fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
+        else:
+            # mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.get('FG_THRESH', 0.5)
+            mask_fg = batch_dict['points'][:, -1] > -1
+            fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
+            fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
+            fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
+            fg_inst_idx = fg.new_zeros(fg.shape[0]).long()
+            # ==
+            # DBSCAN to get instance_idx during inference
+            # ==
+            # apply inst_assoc
+            fg_embed = fg[:, 1: 3] + pred_points_inst_assoc[mask_fg]  # (N_fg, 2)
 
-            # TODO: DBSCAN to get instance_idx during inference
+            # invoke dbscan
+            max_num_inst = 0
+            for batch_idx in range(batch_dict['batch_size']):
+                mask_batch = fg_batch_idx == batch_idx
+                cur_fg_embed_numpy = fg_embed[mask_batch].detach().cpu().numpy()  # # (N_cur, 2)
+                self.clusterer.fit(cur_fg_embed_numpy)
+                fg_labels = self.clusterer.labels_  # (N_cur,)
+
+                # update fg_inst_idx
+                fg_inst_idx[mask_batch] = torch.from_numpy(fg_labels).long().to(fg.device)
+
+                # update max_num_inst
+                max_num_inst = max(max_num_inst, np.max(fg_labels))
+
+            # remove noisy foreground (i.e. foreground that don't get assigned to any clusters)
+            valid_fg = fg_inst_idx > -1
+            fg = fg[valid_fg]  # (N_fg_valid, 8)
+            fg_batch_idx = fg_batch_idx[valid_fg]  # (N_fg_valid,)
+            fg_inst_idx = fg_inst_idx[valid_fg]  # (N_fg_valid,)
+            fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
 
         # ---------------------------------------------------------------
         # instance stuff
         # ---------------------------------------------------------------
-        mask_fg = batch_dict['points'][:, -1] > -1
-        fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instacne_idx
-        fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
-        fg_batch_idx = points_batch_idx[mask_fg]
-        fg_inst_idx = fg[:, -1].long()
         fg_sweep_idx = fg[:, -2].long()
 
         # merge batch_idx & instance_idx
-        max_num_inst = batch_dict['instances_tf'].shape[1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
         fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
 
         # merge batch_idx, instance_idx & sweep_idx
@@ -317,10 +347,18 @@ class PointAligner(nn.Module):
         pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
 
         batch_dict.update(pred_dict)
+
+        # for update forward_return_dict with prediction & target computing loss
+        self.forward_return_dict['pred_dict'] = pred_dict
         if self.training:
-            # for update forward_return_dict with prediction & target computing loss
-            self.forward_return_dict['pred_dict'] = pred_dict
             self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
+
+        if self.cfg.get('DEBUG', False) and not self.training:
+            batch_dict['xyz_bg'] = batch_dict['points'][torch.logical_not(mask_fg), :4]  # batch_idx, x, y, z
+            batch_dict['xyz_fg'] = fg[:, :4]
+            batch_dict['fg_inst_idx'] = fg_inst_idx
+            batch_dict['forward_meta'] = self.forward_return_dict['meta']
+
         return batch_dict
 
     def assign_target(self, batch_dict):
