@@ -7,6 +7,7 @@ from _dev_space.viz_tools import print_dict
 from tools_4testing import load_data_to_tensor, show_points_in_batch_dict, load_dict_to_gpu, BackwardHook, \
     load_dict_to_cpu
 import argparse
+from time import time
 
 
 def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=False, test_full=False):
@@ -17,8 +18,12 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=2,
                                               dist=False, logger=logger, training=False, total_epochs=1, seed=666)
     iter_dataloader = iter(dataloader)
-    for _ in range(5):
+    t_tic = time()
+    for _ in range(25):
         batch_dict = next(iter_dataloader)
+    time_data = (time() - t_tic) / 25.
+    print('time_data: ', time_data)
+
     print_dict(batch_dict)
     load_data_to_tensor(batch_dict)
 
