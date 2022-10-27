@@ -74,7 +74,7 @@ def inference():
     load_data_to_tensor(batch_dict)
 
     model = Aligner(cfg.MODEL, num_class=10, dataset=dataset)
-    load_params_from_file(model, '../from_idris/ckpt/tail_cutter_ep10_nusc4th.pth', logger, to_cpu=True)
+    load_params_from_file(model, '../from_idris/ckpt/tail_cutter_fatter_head_ep12_nusc4th.pth', logger, to_cpu=True)
 
     model.eval()
     model.cuda()
@@ -128,6 +128,11 @@ def display_inference():
     _boxes = _boxes[valid_gt_boxes]
     _boxes = viz_boxes(_boxes.numpy())
 
+    _original_points = torch.cat((cur_bg, cur_fg))
+    _original_points_color = _original_points.new_zeros(_original_points.shape[0], 3)
+    _original_points_color[cur_bg.shape[0]:, 0] = 1
+    show_pointcloud(_original_points[:, 1: 4], _boxes, _original_points_color)
+
     # color by instances
     # unq_inst_idx, inv_ids = torch.unique(cur_fg_inst_idx, return_inverse=True)
     # inst_color = plt.cm.rainbow(np.linspace(0, 1, unq_inst_idx.shape[0]))[:, :3]
@@ -152,5 +157,5 @@ def display_inference():
 
 
 if __name__ == '__main__':
-    # inference()
+    inference()
     display_inference()

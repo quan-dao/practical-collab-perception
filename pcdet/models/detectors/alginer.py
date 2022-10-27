@@ -15,4 +15,7 @@ class Aligner(Detector3DTemplate):
             ret_dict = {'loss': loss}
             return ret_dict, tb_dict, {}
         else:
-            raise NotImplementedError
+            if self.model_cfg.get('DEBUG', False):
+                return batch_dict
+            else:
+                raise NotImplementedError

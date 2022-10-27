@@ -234,8 +234,10 @@ class PointAligner(nn.Module):
             fg_batch_idx = points_batch_idx[mask_fg]
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
         else:
-            # mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.get('FG_THRESH', 0.5)
-            mask_fg = batch_dict['points'][:, -1] > -1
+            if self.cfg.get('FG_THRESH', None) is not None:
+                mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.FG_THRESH
+            else:
+                mask_fg = batch_dict['points'][:, -1] > -1
             fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
             fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
@@ -518,7 +520,7 @@ class PointAligner(nn.Module):
         fg_motion = fg_motion == 1  # (N_fg)
         if torch.any(fg_motion):
             # extract dyn fg points
-            fg = batch_dict['points'][fg_target == 1]  # (N_fg)
+            fg = batch_dict['points'][fg_target == 1]  # (N_fg)  # TODO: foreground here
             dyn_fg = fg[fg_motion, 1: 4]  # (N_dyn, 3)
 
             # reconstruct with ground truth
