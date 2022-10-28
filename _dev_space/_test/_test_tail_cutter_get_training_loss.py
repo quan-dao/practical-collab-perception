@@ -42,7 +42,7 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
         points_batch_idx = batch_dict['points'][:, 0].long()
         fg_batch_idx = points_batch_idx[mask_fg]
         fg_inst_idx = fg[:, -1].long()
-        fg_sweep_idx = fg[:, -2].long()
+        fg_sweep_idx = fg[:, -3].long()
 
         max_num_inst = batch_dict['instances_tf'].shape[
             1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
