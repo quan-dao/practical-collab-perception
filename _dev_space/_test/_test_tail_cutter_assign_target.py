@@ -5,7 +5,6 @@ import numpy as np
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
 from pcdet.utils import common_utils
-from pcdet.models import load_data_to_gpu
 
 from _dev_space.tail_cutter import PointAligner
 from _dev_space.viz_tools import print_dict, viz_boxes
@@ -38,6 +37,7 @@ if show_point_cloud:
     valid_gt_boxes = torch.linalg.norm(_boxes, dim=1) > 0
     _boxes = _boxes[valid_gt_boxes]
     _boxes = viz_boxes(_boxes.numpy())
+    print('showing original point cloud')
     show_pointcloud(_points[:, 1: 4], _boxes, fgr_mask=_points[:, -1] > -1)
 
 
@@ -50,16 +50,16 @@ fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity
 points_batch_idx = batch_dict['points'][:, 0].long()
 fg_batch_idx = points_batch_idx[mask_fg]
 fg_inst_idx = fg[:, -1].long()
-fg_sweep_idx = fg[:, -2].long()
+fg_sweep_idx = fg[:, -3].long()
 
 max_num_inst = batch_dict['instances_tf'].shape[1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
 fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
 fg_bisw_idx = fg_bi_idx * model.cfg.get('NUM_SWEEPS', 10) + fg_sweep_idx
 
-inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=model.training, return_inverse=True)
+inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
 model.forward_return_dict['meta'] = {'inst_bi': inst_bi, 'inst_bi_inv_indices': inst_bi_inv_indices}
 
-local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=model.training, return_inverse=True)
+local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=True, return_inverse=True)
 # local_bisw: (N_local,)
 model.forward_return_dict['meta'].update({'local_bisw': local_bisw,
                                           'local_bisw_inv_indices': local_bisw_inv_indices})
@@ -68,12 +68,14 @@ target_dict = model.assign_target(batch_dict)
 print_dict(target_dict)
 
 
-show_inst_assoc = False
+show_inst_assoc = True
 if show_inst_assoc:
+    # use ORIGINAL inst index
     batch_idx = 1
-    batch_mask = fg[:, 0].long() == batch_idx
+    _fg = points[batch_dict['points'][:, -2].long() > -1]
+    batch_mask = _fg[:, 0].long() == batch_idx
 
-    cur_fg = fg[batch_mask]  # (N_cur_fg, 8)
+    cur_fg = _fg[batch_mask]  # (N_fg, 9)
 
     inst_assoc = target_dict['inst_assoc']  # (N_fg, 2)
     cur_inst_assoc = inst_assoc[batch_mask]  # (N_cur_fg, 2)
@@ -86,13 +88,14 @@ if show_inst_assoc:
     valid_gt_boxes = torch.linalg.norm(_boxes, dim=1) > 0
     _boxes = _boxes[valid_gt_boxes]
     _boxes = viz_boxes(_boxes.numpy())
-    bg = points[torch.logical_not(mask_fg)]
-    cur_bg = bg[bg[:, 0].long() == batch_idx]
+    _bg = points[points[:, -2].long() == -1]
+    cur_bg = _bg[_bg[:, 0].long() == batch_idx]
     pc = torch.cat([cur_bg, cur_fg], dim=0)
-    show_pointcloud(pc[:, 1: 4], _boxes, fgr_mask=pc[:, -1] > -1)
+    print('showing instance assoc')
+    show_pointcloud(pc[:, 1: 4], _boxes, fgr_mask=pc[:, -2] > -1)
 
 
-show_motion_stat = False
+show_motion_stat = True
 if show_motion_stat:
     inst_motion_stat = target_dict['inst_motion_stat']  # (N_inst)
     fg_motion = inst_motion_stat[inst_bi_inv_indices]
@@ -115,19 +118,38 @@ if show_motion_stat:
     cur_bg = bg[bg[:, 0].long() == batch_idx]
     pc = torch.cat([cur_bg, cur_fg], dim=0)
     pc_colors = torch.cat((cur_bg.new_zeros(cur_bg.shape[0], 3), cur_fg_color), dim=0)
+    print('showing motion stats')
     show_pointcloud(pc[:, 1: 4], _boxes, pc_colors=pc_colors.numpy())
 
 
 show_correction = True
 if show_correction:
+    # local_tf is computed on aug inst index -> noisy set of foreground
+    # then, applied to ground truth set of foreground
+    # expected result: good looking point cloud
+    mask_fg = batch_dict['points'][:, -2] > -1
+    fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instacne_idx
+    points_batch_idx = batch_dict['points'][:, 0].long()
+    fg_batch_idx = points_batch_idx[mask_fg]
+    fg_inst_idx = fg[:, -2].long()
+    fg_sweep_idx = fg[:, -3].long()
+
+    max_num_inst = batch_dict['instances_tf'].shape[1]
+    fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
+    fg_bisw_idx = fg_bi_idx * model.cfg.get('NUM_SWEEPS', 10) + fg_sweep_idx
+
+    _, _inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
+
+    _, _local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=True, return_inverse=True)
+
     local_tf = target_dict['local_tf']  # (N_local, 3, 4)
-    fg_local_tf = local_tf[local_bisw_inv_indices]  # (N_fg, 3, 4)
+    fg_local_tf = local_tf[_local_bisw_inv_indices]  # (N_fg, 3, 4)
 
     # --
     # only apply correction on fg belongs to moving instance
     # --
     inst_motion_stat = target_dict['inst_motion_stat']  # (N_inst)
-    fg_motion = inst_motion_stat[inst_bi_inv_indices]  # (N_fg)
+    fg_motion = inst_motion_stat[_inst_bi_inv_indices]  # (N_fg)
 
     fg_motion = fg_motion == 1
     dyn_fg = fg[fg_motion]  # (N_dyn, 8)
@@ -154,6 +176,7 @@ if show_correction:
     valid_gt_boxes = torch.linalg.norm(_boxes, dim=1) > 0
     _boxes = _boxes[valid_gt_boxes]
     _boxes = viz_boxes(_boxes.numpy())
+    print('showing corrected point cloud')
     show_pointcloud(pc[:, 1: 4], _boxes, pc_colors=pc_colors.numpy())
 
 

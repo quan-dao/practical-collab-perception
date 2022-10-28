@@ -11,8 +11,8 @@ DATA_CONFIG:
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
-        used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx' ],
-        src_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx' ],
+        used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx' ],
+        src_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx' ],
     }
 
     DATA_AUGMENTOR:
@@ -63,4 +63,6 @@ MODEL:
     INSTANCE_OUT_CHANNELS: 4
     TARGET_CONFIG:
         MOTION_THRESH: 0.5
-
+    CLUSTER:
+        EPS: 1.5
+        MIN_POINTS: 3

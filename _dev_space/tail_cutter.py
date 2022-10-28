@@ -226,7 +226,12 @@ class PointAligner(nn.Module):
             'inst_assoc': pred_points_inst_assoc  # (N, 2)
         }
 
+        # ---------------------------------------------------------------
+        # INSTANCE stuff
+        # ---------------------------------------------------------------
+
         if self.training:
+            # use AUGMENTED instance index
             mask_fg = batch_dict['points'][:, -1] > -1
             fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
             fg_inst_idx = fg[:, -1].long()  # (N_fg,)
@@ -237,7 +242,7 @@ class PointAligner(nn.Module):
             if self.cfg.get('FG_THRESH', None) is not None:
                 mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.FG_THRESH
             else:
-                mask_fg = batch_dict['points'][:, -1] > -1
+                mask_fg = batch_dict['points'][:, -2] > -1
             fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
             fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
@@ -269,10 +274,7 @@ class PointAligner(nn.Module):
             fg_inst_idx = fg_inst_idx[valid_fg]  # (N_fg_valid,)
             fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
 
-        # ---------------------------------------------------------------
-        # instance stuff
-        # ---------------------------------------------------------------
-        fg_sweep_idx = fg[:, -2].long()
+        fg_sweep_idx = fg[:, -3].long()
 
         # merge batch_idx & instance_idx
         fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
@@ -372,31 +374,33 @@ class PointAligner(nn.Module):
                 'instances_tf': (B, N_inst_max, N_sweeps, 3, 4)
         """
         points = batch_dict['points']
-        points_inst_idx = points[:, -1].long()
         # -------------------------------------------------------
         # Point-wise target
+        # use ORIGINAL instance index
         # -------------------------------------------------------
-        fg_mask = points_inst_idx > -1
-
         # --------------
         # target foreground
-        target_fg = fg_mask.long()  # (N,)
+        mask_fg = points[:, -2].long() > -1
+        target_fg = mask_fg.long()  # (N,) - use original instance index for foreground seg
 
         # --------------
         # target of inst_assoc as offset toward mean of points inside each instance
-        inst_bi = self.forward_return_dict['meta']['inst_bi']
-        inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']
-        # inst_bi: (N_inst,) | N_inst == total number of 'actual' (not include the 0-padded) instances in the batch
+        _fg = points[mask_fg]
+        max_num_inst = batch_dict['instances_tf'].shape[1]
+        _fg_bi_idx = _fg[:, 0].long() * max_num_inst + _fg[:, -2]
+        _, _inst_bi_inv_indices = torch.unique(_fg_bi_idx, sorted=True, return_inverse=True)
 
-        inst_mean_xy = torch_scatter.scatter_mean(points[fg_mask, 1: 3], inst_bi_inv_indices, dim=0)  # (N_inst, 2)
-        target_inst_assoc = inst_mean_xy[inst_bi_inv_indices] - points[fg_mask, 1: 3]
+        inst_mean_xy = torch_scatter.scatter_mean(points[mask_fg, 1: 3], _inst_bi_inv_indices, dim=0)  # (N_inst, 2)
+        target_inst_assoc = inst_mean_xy[_inst_bi_inv_indices] - points[mask_fg, 1: 3]
 
         # -------------------------------------------------------
         # Instance-wise target
+        # use AUGMENTED instance index
         # -------------------------------------------------------
         instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
 
         # --------------
+        inst_bi = self.forward_return_dict['meta']['inst_bi']
         # target motion
         inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
@@ -459,11 +463,10 @@ class PointAligner(nn.Module):
 
         # ---
         # instance assoc
-        gt_fg_mask = fg_target == 1  # (N,)
         inst_assoc = pred_dict['inst_assoc']  # (N, 2)
         inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
         if num_gt_fg > 0:
-            loss_inst_assoc = self.l2_loss(inst_assoc[gt_fg_mask], inst_assoc_target, dim=1, reduction='mean')
+            loss_inst_assoc = self.l2_loss(inst_assoc[fg_target == 1], inst_assoc_target, dim=1, reduction='mean')
             tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
         else:
             loss_inst_assoc = 0.
@@ -520,7 +523,8 @@ class PointAligner(nn.Module):
         fg_motion = fg_motion == 1  # (N_fg)
         if torch.any(fg_motion):
             # extract dyn fg points
-            fg = batch_dict['points'][fg_target == 1]  # (N_fg)  # TODO: foreground here
+            aug_fg_mask = batch_dict['points'][:, -1].long() > -1  # (N,) - use aug inst index
+            fg = batch_dict['points'][aug_fg_mask]  # (N_fg)
             dyn_fg = fg[fg_motion, 1: 4]  # (N_dyn, 3)
 
             # reconstruct with ground truth
