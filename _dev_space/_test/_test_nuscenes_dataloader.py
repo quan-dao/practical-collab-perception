@@ -26,9 +26,10 @@ cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
     'gt_sampling',
 ]
 
-cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx']
-cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx']
-
+cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx',
+                                                'aug_instance_idx']
+cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx',
+                                               'aug_instance_idx']
 
 dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg, class_names=cfg.CLASS_NAMES, batch_size=2, dist=False,
                                           logger=logger, training=False, total_epochs=1, seed=666)
@@ -48,11 +49,15 @@ valid_gt_boxes = np.linalg.norm(gt_boxes, axis=1) > 0
 gt_boxes = gt_boxes[valid_gt_boxes]
 
 _boxes = viz_boxes(gt_boxes)
+print('showing gt instance idx')
+show_pointcloud(points[:, 1: 4], _boxes, fgr_mask=points[:, -2] > -1)
+
+print('showing augmented instance idx')
 show_pointcloud(points[:, 1: 4], _boxes, fgr_mask=points[:, -1] > -1)
 
 # -----------------------
 # correction
-points_instance_idx = points[:, -1].astype(int)
+points_instance_idx = points[:, -2].astype(int)
 bg_points = points[points_instance_idx == -1]
 fg_points = points[points_instance_idx > -1]
 
@@ -61,4 +66,5 @@ n_valid_instances = np.max(points_instance_idx) + 1
 instances_tf = instances_tf[batch_idx, :n_valid_instances]  # (N_inst, N_sweeps, 3, 4)
 
 corrected_xyz = correction_numpy(points[:, 1:], instances_tf)
-show_pointcloud(corrected_xyz, _boxes, fgr_mask=points[:, -1] > -1)
+print('showing corrected point cloud')
+show_pointcloud(corrected_xyz, _boxes, fgr_mask=points[:, -2] > -1)

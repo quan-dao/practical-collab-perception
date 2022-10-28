@@ -66,8 +66,8 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         # map to target
         cur_points[:, :3] = apply_tf(target_from_glob @ glob_from_cur, cur_points[:, :3])  # (N, 6) in target frame
 
-        # pad points with instances index
-        cur_points = np.pad(cur_points, pad_width=[(0, 0), (0, 1)], constant_values=-1)
+        # pad points with instances index & augmented instance index
+        cur_points = np.pad(cur_points, pad_width=[(0, 0), (0, 2)], constant_values=-1)
 
         boxes = nusc.get_boxes(sd_token)
 
@@ -97,10 +97,40 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 instances[cur_instance_idx].append(target_from_box)
                 instances_sweep_indices[cur_instance_idx].append(s_idx)
 
-            # pad points with instance index
+            # set points' instance index
             mask_in = find_points_in_box(cur_points, target_from_box, np.array([box.wlh[1], box.wlh[0], box.wlh[2]]),
                                          in_box_tolerance)
-            cur_points[mask_in, -1] = inst_token_2_index[inst_token]
+            cur_points[mask_in, -2] = inst_token_2_index[inst_token]
+
+            if np.any(mask_in):
+                # this box has some points
+                # --
+                # Enlarge box to simulate False Positive foreground
+                # ---
+                noise_factor = np.random.uniform(in_box_tolerance, 0.35)
+                large_mask_in = find_points_in_box(cur_points, target_from_box,
+                                                   np.array([box.wlh[1], box.wlh[0], box.wlh[2]]), noise_factor)
+                # set aug inst index
+                cur_points[large_mask_in, -1] = inst_token_2_index[inst_token]
+
+                # --
+                # Drop points in box to simulate False Negative foreground
+                # ---
+                drop_prob = 0.5
+                points_in_box_indices = np.arange(cur_points.shape[0])[large_mask_in]
+                mask_keep_points = np.random.choice([0, 1], size=points_in_box_indices.shape[0],
+                                                    p=[drop_prob, 1.0 - drop_prob])
+                num_total = points_in_box_indices.shape[0]
+                num_keep = mask_keep_points.sum()
+                # if a box has points, it should still have points after dropping
+                # => if drop too many, switch back a few to keep at least 2 points
+                num_to_switch = min(2, num_total) - num_keep
+                if num_to_switch > 0:
+                    drop_indices = np.arange(num_total)[mask_keep_points == 0]  # drop_indices of mask_keep_points
+                    mask_keep_points[drop_indices[:num_to_switch]] = 1
+
+                # drop points by setting their aug inst idx to -1
+                cur_points[points_in_box_indices[mask_keep_points == 0], -1] = -1
 
         all_points.append(cur_points)
 

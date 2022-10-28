@@ -12,7 +12,7 @@ def correction_numpy(points: np.ndarray, instances_tf: np.ndarray):
     """
     # merge sweep_idx & instance_idx
     n_sweeps = instances_tf.shape[1]
-    points_merge_idx = points[:, -1].astype(int) * n_sweeps + points[:, -2].astype(int)  # (N,)
+    points_merge_idx = points[:, -2].astype(int) * n_sweeps + points[:, -3].astype(int)  # (N,)
     _tf = instances_tf.reshape((-1, 3, 4))
     _tf = _tf[points_merge_idx]  # (N, 3, 4)
 
