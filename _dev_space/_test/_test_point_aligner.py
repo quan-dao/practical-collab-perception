@@ -23,12 +23,10 @@ print_dict(data_dict)
 print('---\n---')
 
 net = PointAligner(cfg.MODEL)
-# print(net)
+print(net)
 
 net.cuda()
 load_data_to_gpu(data_dict)
 
 with torch.no_grad():
     data_dict = net(data_dict)
-
-print(f"data_dict['local_feat']: {data_dict['local_feat'].shape}")
