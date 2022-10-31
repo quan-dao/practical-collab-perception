@@ -162,14 +162,14 @@ class PointAligner(nn.Module):
         # ----
         # instance heads
         self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1,
-                                              cfg.get('INSTANCE_MID_CHANNELS', None), use_drop_out=True)
+                                              cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
 
         self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
-                                                cfg.get('INSTANCE_MID_CHANNELS', None), use_drop_out=True)
+                                                cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 3 for 3 components of translation vector
 
         self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
-                                             cfg.get('INSTANCE_MID_CHANNELS', None), use_drop_out=True)
+                                             cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 4 for 4 components of quaternion
         fill_fc_weights(self.inst_local_rot)
         # ---
