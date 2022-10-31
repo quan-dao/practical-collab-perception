@@ -31,6 +31,7 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
         show_points_in_batch_dict(batch_dict, batch_idx=1)
 
     model = PointAligner(cfg.MODEL)
+    print('---\n', model, '\n---\n')
     if test_pred_is_gt:
         assert not test_full
         # ---

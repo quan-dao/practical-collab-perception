@@ -161,12 +161,15 @@ class PointAligner(nn.Module):
 
         # ----
         # instance heads
-        self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1, cfg.get('INSTANCE_MID_CHANNELS', None))
+        self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1,
+                                              cfg.get('INSTANCE_MID_CHANNELS', None), use_drop_out=True)
 
-        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3, cfg.get('INSTANCE_MID_CHANNELS', None))
+        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
+                                                cfg.get('INSTANCE_MID_CHANNELS', None), use_drop_out=True)
         # out == 3 for 3 components of translation vector
 
-        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4, cfg.get('INSTANCE_MID_CHANNELS', None))
+        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
+                                             cfg.get('INSTANCE_MID_CHANNELS', None), use_drop_out=True)
         # out == 4 for 4 components of quaternion
         fill_fc_weights(self.inst_local_rot)
         # ---
@@ -180,7 +183,7 @@ class PointAligner(nn.Module):
         self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
 
     @staticmethod
-    def _make_mlp(in_c: int, out_c: int, mid_c: List = None):
+    def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
         if mid_c is None:
             mid_c = []
         channels = [in_c] + mid_c + [out_c]
@@ -193,6 +196,8 @@ class PointAligner(nn.Module):
             if not is_last:
                 layers.append(nn.BatchNorm1d(c_out, eps=1e-3, momentum=0.01))
                 layers.append(nn.ReLU(True))
+                if c_idx == len(channels) - 2 and use_drop_out:
+                    layers.append(nn.Dropout(p=0.5))
 
         return nn.Sequential(*layers)
 

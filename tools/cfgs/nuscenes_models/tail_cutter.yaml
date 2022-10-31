@@ -54,6 +54,7 @@ MODEL:
         NAME: UNET2D
         DOWN_CHANNELS: [64, 64, 128, 128]  # 0-1-2-3
         UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
+        UP_DEFORM_CONV: [-1, False, True, True, True, True]  # dummy-1-2-3-4-5
 
     NUM_SWEEPS: 10
     HEAD_MID_CHANNELS: [128]
