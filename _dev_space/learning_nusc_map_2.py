@@ -4,6 +4,7 @@ from nuscenes import NuScenes
 from nuscenes.map_expansion.map_api import NuScenesMap
 from nuscenes.prediction import PredictHelper
 from nuscenes.prediction.input_representation.static_layers import *
+import colorsys
 
 from _dev_space.tools_box import apply_tf, tf, get_nuscenes_sensor_pose_in_global, \
     get_nuscenes_sensor_pose_in_ego_vehicle
@@ -57,6 +58,20 @@ def draw_boxes_in_bev_(boxes, pc_range, resolution, ax_, color='r'):
         ax_.plot(heading_line[:, 0], heading_line[:, 1], c=color)
 
 
+def draw_lane_in_bev_(lane, pc_range, resolution, ax_, discretization_meters=1):
+    """
+    Args:
+        lane (np.ndarray): (N, 3) - x, y, yaw in frame where BEV is generated (default: LiDAR frame)
+    """
+    lane_xy_in_bev = np.floor((lane[:, :2] - pc_range[:2]) / resolution)  # (N, 2)
+    for _i in range(lane.shape[0]):
+        cos, sin = discretization_meters * np.cos(lane[_i, -1]), discretization_meters * np.sin(lane[_i, -1])
+
+        normalized_rgb_color = colorsys.hsv_to_rgb(np.rad2deg(lane[_i, -1]) / 360, 1., 1.)
+
+        ax_.arrow(lane_xy_in_bev[_i, 0], lane_xy_in_bev[_i, 1], cos, sin, color=normalized_rgb_color, width=0.75)
+
+
 def _set_up_cfg_(cfg):
     cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
                        'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
@@ -106,7 +121,9 @@ class StaticLayerRenderer:
 
         images = [masks[ch_idx] for ch_idx in range(masks.shape[0])]
 
-        return images
+        lanes = get_lanes_in_radius(x, y, 60, discretization_meters=1, map_api=self.maps[map_name])
+
+        return images, lanes
 
 
 if __name__ == '__main__':
@@ -130,13 +147,44 @@ if __name__ == '__main__':
 
     sample = nusc.get('sample', data_dict['metadata']['token'])
 
-    images = renderer.make_representation(sample['data']['LIDAR_TOP'])
+    images, lanes = renderer.make_representation(sample['data']['LIDAR_TOP'])
+
+    # map lanes to LiDAR frame
+    glob_from_lidar = get_nuscenes_sensor_pose_in_global(nusc, sample['data']['LIDAR_TOP'])
+    lidar_from_glob = np.linalg.inv(glob_from_lidar)
+
+    for k in lanes:
+        lane = np.array(lanes[k])  # (N, 3) - x, y, yaw in global
+        lane_xyz = np.pad(lane[:, :2], pad_width=[(0, 0), (0, 1)], constant_values=0)
+        lane_xyz = apply_tf(lidar_from_glob, lane_xyz)  # (N, 3) - x, y, dummy_z in lidar frame
+
+        cos, sin = np.cos(lane[:, -1]), np.sin(lane[:, -1])  # (N,)
+        zeros, ones = np.zeros(cos.shape[0]), np.ones(cos.shape[0])  # (N,)
+        lane_ori = np.stack([
+            cos,    -sin, zeros,
+            sin,     cos, zeros,
+            zeros, zeros, ones
+        ], axis=1)  # (N, 9) - in global
+        lane_ori = lane_ori.reshape((-1, 3, 3))  # (N, 3, 3) - in global
+        lane_ori = np.matmul(lidar_from_glob[np.newaxis, :3, :3], lane_ori)  # (N, 3, 3)
+
+        # overwrite
+        lane[:, :2] = lane_xyz[:, :2]
+        lane[:, -1] = np.arctan2(lane_ori[:, 1, 0], lane_ori[:, 0, 0])  # TODO: put in [0, 2*np.pi)
+        _neg = lane[:, -1] < 0
+        lane[_neg, -1] += 2 * np.pi
+        lanes[k] = lane
+
+    print(f'lanes: {type(lanes)}')
+    print(f"lanes [0] ({type(lanes[list(lanes.keys())[0]])}): {lanes[list(lanes.keys())[0]]}")
 
     fig, ax = plt.subplots(1, 2)
 
     ax[0].set_title('drivable_are @ LiDAR')
     ax[0].set_aspect('equal')
     ax[0].imshow(images[0])
+    ax[0].set_xlim([0, renderer.img_size_length_pixels])
+    ax[0].set_ylim([0, renderer.img_size_length_pixels])
     draw_lidar_frame_(renderer.point_cloud_range, renderer.resolution, ax[0])
     draw_boxes_in_bev_(gt_boxes, renderer.point_cloud_range, renderer.resolution, ax[0])
 
@@ -145,5 +193,12 @@ if __name__ == '__main__':
     ax[1].imshow(images[1])
     draw_lidar_frame_(renderer.point_cloud_range, renderer.resolution, ax[1])
     draw_boxes_in_bev_(gt_boxes, renderer.point_cloud_range, renderer.resolution, ax[1])
+
+    # TODO: draw lane orientation as arrow
+    lanes_color = plt.cm.rainbow(np.linspace(0, 1, len(lanes)))
+    lane_idx = 0
+    for _, lane in lanes.items():
+        draw_lane_in_bev_(lane, renderer.point_cloud_range, renderer.resolution, ax[0])
+        lane_idx += 1
 
     plt.show()
