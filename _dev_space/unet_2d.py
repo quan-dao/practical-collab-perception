@@ -1,27 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.ops import DeformConv2d
+from mmcv.ops.deform_conv import DeformConv2dPack
 from functools import partial
-
-
-class DeformConv2dPack(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1,
-                 padding: int = 0, dilation: int = 1, groups: int = 1, bias: bool = True):
-        super().__init__()
-        self.deform_conv = DeformConv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
-        self.conv_offset = nn.Conv2d(in_channels, 2 * kernel_size * kernel_size, kernel_size, stride, padding,
-                                     dilation, groups, bias=True)
-        self.init_offset()
-
-    def init_offset(self):
-        self.conv_offset.weight.data.zero_()
-        self.conv_offset.bias.data.zero_()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        offset = self.conv_offset(x)
-        out = self.deform_conv(x, offset)
-        return out
 
 
 class ResBlock(nn.Module):
