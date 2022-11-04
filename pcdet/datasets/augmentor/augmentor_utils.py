@@ -148,7 +148,7 @@ def global_rotation(gt_boxes, points, rot_range, return_rot=False, points_feat_t
     if img_map is not None:
         rot_matrix = cv2.getRotationMatrix2D((img_map.shape[2] / 2, img_map.shape[1] / 2),
                                              np.rad2deg(-noise_rotation), 1)
-        img_map = cv2.warpAffine(rearrange(img_map, 'C H W -> H W C'), rot_matrix, img_map.shape[1:])
+        img_map = cv2.warpAffine(rearrange(img_map, 'C H W -> H W C'), rot_matrix, img_map.shape[1:], cv2.INTER_NEAREST)
         img_map = rearrange(img_map, 'H W C -> C H W')
 
     out = [gt_boxes, points]
@@ -192,7 +192,7 @@ def global_scaling(gt_boxes, points, scale_range, return_scale=False, points_fea
 
     if img_map is not None:
         scale_matrix = cv2.getRotationMatrix2D((img_map.shape[2] / 2, img_map.shape[1] / 2), 0, noise_scale)
-        img_map = cv2.warpAffine(rearrange(img_map, 'C H W -> H W C'), scale_matrix, img_map.shape[1:])
+        img_map = cv2.warpAffine(rearrange(img_map, 'C H W -> H W C'), scale_matrix, img_map.shape[1:], cv2.INTER_NEAREST)
         img_map = rearrange(img_map, 'H W C -> C H W')
 
     out = [gt_boxes, points]
