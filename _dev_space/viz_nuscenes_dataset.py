@@ -17,9 +17,10 @@ def modify_dataset_cfg(cfg, use_hd_map=False):
 
     cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
         'placeholder',
-        'random_world_flip', 'random_world_scaling',
+        # 'random_world_flip',
+        # 'random_world_scaling',
         'gt_sampling',
-        'random_world_rotation',
+        # 'random_world_rotation',
     ]
 
     cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx',

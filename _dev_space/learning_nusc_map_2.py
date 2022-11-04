@@ -93,7 +93,7 @@ class MapMaker:
         return bev_coord
 
     def draw_lane_in_bev(self, lanes: dict, normalize_lane_angle=True):
-        lane_img = -np.ones(self.canvas_size)
+        lane_img = np.zeros(self.canvas_size)
         max_angle = 2 * np.pi + 1e-3
         for _, lane in lanes.items():
             lane_xy_in_bev = self.compute_bev_coord(lane, to_int=True)  # (N, 2)
@@ -142,7 +142,7 @@ class MapMaker:
         lanes_in_sensor = self.map_lanes_to_sensor(sample_data_token, lanes)
         lanes_img = self.draw_lane_in_bev(lanes_in_sensor, self.normalize_lane_angle)
 
-        out = np.concatenate([masks.astype(float), lanes_img[np.newaxis]], axis=0)
+        out = np.concatenate([masks.astype(float), lanes_img[np.newaxis]], axis=0)  # (5, H, W)
         if return_lanes:
             return out, lanes_in_sensor
         else:
