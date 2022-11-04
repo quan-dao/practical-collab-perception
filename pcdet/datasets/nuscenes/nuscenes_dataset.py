@@ -10,7 +10,8 @@ from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
 from _dev_space.get_sweeps_instance_centric import inst_centric_get_sweeps
-from nuscenes.nuscenes import NuScenes
+from _dev_space.learning_nusc_map_2 import MapMaker
+from nuscenes import NuScenes
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -29,6 +30,13 @@ class NuScenesDataset(DatasetTemplate):
             self.infos = self.infos[::4]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
+        if dataset_cfg.get('USE_HD_MAP', False):
+            self.map_maker = MapMaker(self.nusc,
+                                      dataset_cfg.get('BEV_IMAGE_RESOLUTION', 0.2),
+                                      dataset_cfg.POINT_CLOUD_RANGE,
+                                      dataset_cfg.get('NORMALIZE_LANE_ANGLE', False))
+        else:
+            self.map_maker = None
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -138,6 +146,13 @@ class NuScenesDataset(DatasetTemplate):
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token']}
         }
+
+        # ------
+        # get HD Map
+        # ------
+        if self.map_maker is not None:
+            sample_rec = self.nusc.get('sample', info['token'])
+            input_dict['img_map'] = self.map_maker.make_representation(sample_rec['data']['LIDAR_TOP'])
 
         if 'gt_boxes' in info:
             if self.dataset_cfg.get('FILTER_MIN_POINTS_IN_GT', False):

@@ -1,94 +1,13 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import cv2
 from nuscenes import NuScenes
-from nuscenes.map_expansion.map_api import NuScenesMap
 from nuscenes.prediction import PredictHelper
-from nuscenes.prediction.input_representation.static_layers import *
-import colorsys
-
-from _dev_space.tools_box import apply_tf, tf, get_nuscenes_sensor_pose_in_global, \
-    get_nuscenes_sensor_pose_in_ego_vehicle
-from _dev_space.viz_tools import viz_boxes
-
-from pcdet.config import cfg, cfg_from_yaml_file
-from pcdet.utils import common_utils
-from pcdet.datasets import NuScenesDataset
-
-
-def print_record(rec, rec_type=None):
-    print(f'--- {rec_type}' if rec_type is not None else '---')
-    for k, v in rec.items():
-        print(f"{k}: {v}")
-    print('---\n')
-
-
-def draw_lidar_frame_(pc_range, resolution, ax_):
-    lidar_frame = np.array([
-        [0, 0],  # origin
-        [3, 0],  # x-axis
-        [0, 3]  # y-axis
-    ])
-    lidar_frame_in_bev = np.floor((lidar_frame - pc_range[:2]) / resolution)
-    ax_.arrow(lidar_frame_in_bev[0, 0], lidar_frame_in_bev[0, 1],
-              lidar_frame_in_bev[1, 0] - lidar_frame_in_bev[0, 0],
-              lidar_frame_in_bev[1, 1] - lidar_frame_in_bev[0, 1],
-              color='r', width=3)  # x-axis
-
-    ax_.arrow(lidar_frame_in_bev[0, 0], lidar_frame_in_bev[0, 1],
-              lidar_frame_in_bev[2, 0] - lidar_frame_in_bev[0, 0],
-              lidar_frame_in_bev[2, 1] - lidar_frame_in_bev[0, 1],
-              color='b', width=3)  # y-axis
-
-
-def draw_boxes_in_bev_(boxes, pc_range, resolution, ax_, color='r'):
-    """
-    Args:
-        boxes (List[np.ndarray]): each box - (8, 3) forward: 0-1-2-3, backward: 4-5-6-7, up: 0-1-5-4
-        ax_
-    """
-    for box in boxes:
-        box_in_bev = np.floor((box[:, :2] - pc_range[:2]) / resolution)  # (8, 2)
-        top_face = box_in_bev[[0, 1, 5, 4, 0]]
-        ax_.plot(top_face[:, 0], top_face[:, 1], c=color)
-
-        # draw heading
-        center = (box_in_bev[0] + box_in_bev[5]) / 2.0
-        mid_01 = (box_in_bev[0] + box_in_bev[1]) / 2.0
-        heading_line = np.stack([center, mid_01], axis=0)
-        ax_.plot(heading_line[:, 0], heading_line[:, 1], c=color)
-
-
-def draw_lane_in_bev_(lane, pc_range, resolution, ax_, discretization_meters=1):
-    """
-    Args:
-        lane (np.ndarray): (N, 3) - x, y, yaw in frame where BEV is generated (default: LiDAR frame)
-    """
-    lane_xy_in_bev = np.floor((lane[:, :2] - pc_range[:2]) / resolution)  # (N, 2)
-    for _i in range(lane.shape[0]):
-        cos, sin = discretization_meters * np.cos(lane[_i, -1]), discretization_meters * np.sin(lane[_i, -1])
-
-        normalized_rgb_color = colorsys.hsv_to_rgb(np.rad2deg(lane[_i, -1]) / 360, 1., 1.)
-
-        ax_.arrow(lane_xy_in_bev[_i, 0], lane_xy_in_bev[_i, 1], cos, sin, color=normalized_rgb_color, width=0.75)
-
-
-def _set_up_cfg_(cfg):
-    cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
-                       'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
-    cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
-        'placeholder',
-        'random_world_flip', 'random_world_scaling',
-        'gt_sampling',
-        'random_world_rotation',
-    ]
-    cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx',
-                                                    'instance_idx',
-                                                    'aug_instance_idx']
-    cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx',
-                                                   'aug_instance_idx']
-    cfg.VERSION = 'v1.0-mini'
+from nuscenes.prediction.input_representation.static_layers import load_all_maps, quaternion_yaw, get_patchbox, \
+    get_lanes_in_radius
+from pyquaternion import Quaternion
+from _dev_space.tools_box import apply_tf, get_nuscenes_sensor_pose_in_global
+from _dev_space.viz_tools import draw_lane_in_bev_, draw_boxes_in_bev_, draw_lidar_frame_
 
 
 def put_in_2pi(angles: np.ndarray):
@@ -105,9 +24,10 @@ def put_in_2pi(angles: np.ndarray):
 class MapMaker:
     def __init__(self, nuscenes_api: NuScenes,
                  resolution: float = 0.2, # meters / pixel
-                 point_cloud_range=(-51.2, -51.2, -5.0, 51.2, 51.2, 3.0)):
+                 point_cloud_range=(-51.2, -51.2, -5.0, 51.2, 51.2, 3.0),
+                 normalize_lane_angle=False):
         self.nusc = nuscenes_api
-        self.helper = PredictHelper(nusc)
+        self.helper = PredictHelper(self.nusc)
         self.maps = load_all_maps(self.helper)
 
         self.layer_names = ['drivable_area', 'ped_crossing', 'walkway', 'carpark_area']
@@ -120,6 +40,7 @@ class MapMaker:
         self.img_size_length_pixels = int(self.img_size_length / self.resolution)
         self.canvas_size = (self.img_size_length_pixels, self.img_size_length_pixels)
         self.lane_thickness = 10  # in pixels
+        self.normalize_lane_angle = normalize_lane_angle
 
     def map_lanes_to_sensor(self, sensor_token: str, lanes: dict) -> dict:
         """
@@ -171,8 +92,8 @@ class MapMaker:
             bev_coord = np.floor(bev_coord).astype(int)
         return bev_coord
 
-    def draw_lane_in_bev(self, lanes: dict):
-        lane_img = np.zeros(self.canvas_size)
+    def draw_lane_in_bev(self, lanes: dict, normalize_lane_angle=True):
+        lane_img = -np.ones(self.canvas_size)
         max_angle = 2 * np.pi + 1e-3
         for _, lane in lanes.items():
             lane_xy_in_bev = self.compute_bev_coord(lane, to_int=True)  # (N, 2)
@@ -182,6 +103,11 @@ class MapMaker:
                 color = lane[p_idx, -1] / max_angle
                 cv2.line(lane_img, lane_xy_in_bev[p_idx, :2], lane_xy_in_bev[p_idx + 1, :2], color,
                          self.lane_thickness)
+
+        if not normalize_lane_angle:
+            mask_has_angle = lane_img > -1
+            lane_img[mask_has_angle] = lane_img[mask_has_angle] * max_angle
+
         return lane_img
 
     def make_representation(self, sample_data_token: str, return_lanes=False):
@@ -214,7 +140,7 @@ class MapMaker:
         # ---------
         lanes = get_lanes_in_radius(x, y, 60, discretization_meters=1, map_api=self.maps[map_name])
         lanes_in_sensor = self.map_lanes_to_sensor(sample_data_token, lanes)
-        lanes_img = self.draw_lane_in_bev(lanes_in_sensor)
+        lanes_img = self.draw_lane_in_bev(lanes_in_sensor, self.normalize_lane_angle)
 
         out = np.concatenate([masks.astype(float), lanes_img[np.newaxis]], axis=0)
         if return_lanes:
@@ -222,69 +148,70 @@ class MapMaker:
         else:
             return out
 
-    def render_map_in_color_(self, map_image: np.ndarray, ax: Axes, lanes=None, boxes=None, draw_sensor_frame=False):
+    def render_map_in_color_(self, map_image: np.ndarray, ax_: Axes, lanes=None, boxes=None, draw_sensor_frame=False):
         """
         Args:
             map_image: (5, H, W) - 4 binary layers & 1 float layer representing lane dir
-            ax:
+            ax_:
             lanes (dict):
             boxes (list): each element (8, 3) - x, y, z of 8 vertices
         """
         assert map_image.shape[0] == 5, f"expect (5, H, W), get {map_image.shape}"
-        ax.set_title('colorize map @ sensor frame')
-        ax.set_xlim([0, self.img_size_length_pixels])
-        ax.set_ylim([0, self.img_size_length_pixels])
+        ax_.set_title('colorize map @ sensor frame')
+        ax_.set_xlim([0, self.img_size_length_pixels])
+        ax_.set_ylim([0, self.img_size_length_pixels])
 
         colorized_binary_layers = np.zeros((*self.canvas_size, 3))
         for l_id, color in enumerate(self.colors):
             colorized_binary_layers[map_image[l_id].astype(bool)] = np.array(color)
-        ax.imshow(colorized_binary_layers)
+        ax_.imshow(colorized_binary_layers)
 
         if lanes is not None:
             for _, lane in lanes.items():
-                draw_lane_in_bev_(lane, self.point_cloud_range, self.resolution, ax, discretization_meters=1)
+                draw_lane_in_bev_(lane, self.point_cloud_range, self.resolution, ax_, discretization_meters=1)
 
         if boxes is not None:
-            draw_boxes_in_bev_(gt_boxes, self.point_cloud_range, self.resolution, ax)
+            draw_boxes_in_bev_(boxes, self.point_cloud_range, self.resolution, ax_)
 
         if draw_sensor_frame:
-            draw_lidar_frame_(self.point_cloud_range, self.resolution, ax)
+            draw_lidar_frame_(self.point_cloud_range, self.resolution, ax_)
 
 
-if __name__ == '__main__':
-    np.random.seed(666)
-    cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml'
-    cfg_from_yaml_file(cfg_file, cfg)
-    _set_up_cfg_(cfg)
-    logger = common_utils.create_logger('./dummy_log.txt')
-    nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
-
-    data_dict = nuscenes_dataset[200]  # 400, 200, 100, 5, 10
-
-    gt_boxes = viz_boxes(data_dict['gt_boxes'])
-
-    # -----------------------
-    # Map stuff
-    # -----------------------
-    nusc = nuscenes_dataset.nusc
-    renderer = MapMaker(nusc)
-
-    sample = nusc.get('sample', data_dict['metadata']['token'])
-
-    map_img, lanes_in_lidar = renderer.make_representation(sample['data']['LIDAR_TOP'], return_lanes=True)
-
-    fig, ax = plt.subplots(1, 2)
-    for _i, (layer, layer_idx) in enumerate(zip(['drivable_are', 'lanes'], [0, -1])):
-        ax[_i].set_title(f' {layer} @ LiDAR')
-        ax[_i].set_aspect('equal')
-        ax[_i].set_xlim([0, renderer.img_size_length_pixels])
-        ax[_i].set_ylim([0, renderer.img_size_length_pixels])
-        ax[_i].imshow(map_img[layer_idx])
-
-        draw_lidar_frame_(renderer.point_cloud_range, renderer.resolution, ax[_i])
-        draw_boxes_in_bev_(gt_boxes, renderer.point_cloud_range, renderer.resolution, ax[_i])
-
-    fig2, ax2 = plt.subplots()
-    renderer.render_map_in_color_(map_img, ax2, lanes_in_lidar, gt_boxes, draw_sensor_frame=True)
-
-    plt.show()
+# if __name__ == '__main__':
+    # TODO: move the below part to a different viz_nuscenes_dataset
+    # np.random.seed(666)
+    # cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml'
+    # cfg_from_yaml_file(cfg_file, cfg)
+    # _set_up_cfg_(cfg)
+    # logger = common_utils.create_logger('./dummy_log.txt')
+    # nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
+    #
+    # data_dict = nuscenes_dataset[200]  # 400, 200, 100, 5, 10
+    #
+    # gt_boxes = viz_boxes(data_dict['gt_boxes'])
+    #
+    # # -----------------------
+    # # Map stuff
+    # # -----------------------
+    # nusc = nuscenes_dataset.nusc
+    # renderer = MapMaker(nusc)
+    #
+    # sample = nusc.get('sample', data_dict['metadata']['token'])
+    #
+    # map_img, lanes_in_lidar = renderer.make_representation(sample['data']['LIDAR_TOP'], return_lanes=True)
+    #
+    # fig, ax = plt.subplots(1, 2)
+    # for _i, (layer, layer_idx) in enumerate(zip(['drivable_are', 'lanes'], [0, -1])):
+    #     ax[_i].set_title(f' {layer} @ LiDAR')
+    #     ax[_i].set_aspect('equal')
+    #     ax[_i].set_xlim([0, renderer.img_size_length_pixels])
+    #     ax[_i].set_ylim([0, renderer.img_size_length_pixels])
+    #     ax[_i].imshow(map_img[layer_idx])
+    #
+    #     draw_lidar_frame_(renderer.point_cloud_range, renderer.resolution, ax[_i])
+    #     draw_boxes_in_bev_(gt_boxes, renderer.point_cloud_range, renderer.resolution, ax[_i])
+    #
+    # fig2, ax2 = plt.subplots()
+    # renderer.render_map_in_color_(map_img, ax2, lanes_in_lidar, gt_boxes, draw_sensor_frame=True)
+    #
+    # plt.show()

@@ -2,9 +2,14 @@ import numpy as np
 import torch
 from _dev_space.tools_box import apply_tf
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+import colorsys
 
 
 def viz_boxes(boxes: np.ndarray):
+    # box convention:
+    # forward: 0 - 1 - 2 - 3, backward: 4 - 5 - 6 - 7, up: 0 - 1 - 5 - 4
+
     xs = np.array([1, 1, 1, 1, -1, -1, -1, -1], dtype=float) / 2.0
     ys = np.array([-1, 1, 1, -1, -1, 1, 1, -1], dtype=float) / 2.0
     zs = np.array([1, 1, -1, -1, 1, 1, -1, -1], dtype=float) / 2.0
@@ -67,3 +72,78 @@ def viz_clusters2d(xy, labels, ax, marker='o', prefix=''):
         ax.annotate(f"{prefix}{unq_labels[cl_idx]}", tuple(centroid[cl_idx].tolist()), color='r')
 
 
+def draw_lidar_frame_(pc_range, resolution, ax_):
+    lidar_frame = np.array([
+        [0, 0],  # origin
+        [3, 0],  # x-axis
+        [0, 3]  # y-axis
+    ])
+    lidar_frame_in_bev = np.floor((lidar_frame - pc_range[:2]) / resolution)
+    ax_.arrow(lidar_frame_in_bev[0, 0], lidar_frame_in_bev[0, 1],
+              lidar_frame_in_bev[1, 0] - lidar_frame_in_bev[0, 0],
+              lidar_frame_in_bev[1, 1] - lidar_frame_in_bev[0, 1],
+              color='r', width=3)  # x-axis
+
+    ax_.arrow(lidar_frame_in_bev[0, 0], lidar_frame_in_bev[0, 1],
+              lidar_frame_in_bev[2, 0] - lidar_frame_in_bev[0, 0],
+              lidar_frame_in_bev[2, 1] - lidar_frame_in_bev[0, 1],
+              color='b', width=3)  # y-axis
+
+
+def draw_boxes_in_bev_(boxes_in_bev, ax_: Axes, color='r'):
+    """
+    Args:
+        boxes_in_bev (List[np.ndarray]): each box - (8, 2) forward: 0-1-2-3, backward: 4-5-6-7, up: 0-1-5-4
+        ax_:
+        color
+    """
+    for box_in_bev in boxes_in_bev:
+        top_face = box_in_bev[[0, 1, 5, 4, 0]]
+        ax_.plot(top_face[:, 0], top_face[:, 1], c=color)
+
+        # draw heading
+        center = (box_in_bev[0] + box_in_bev[5]) / 2.0
+        mid_01 = (box_in_bev[0] + box_in_bev[1]) / 2.0
+        heading_line = np.stack([center, mid_01], axis=0)
+        ax_.plot(heading_line[:, 0], heading_line[:, 1], c=color)
+
+
+def draw_lane_in_bev_(lane, pc_range, resolution, ax_, discretization_meters=1):
+    """
+    Args:
+        lane (np.ndarray): (N, 3) - x, y, yaw in frame where BEV is generated (default: LiDAR frame)
+    """
+    lane_xy_in_bev = np.floor((lane[:, :2] - pc_range[:2]) / resolution)  # (N, 2)
+    for _i in range(lane.shape[0]):
+        cos, sin = discretization_meters * np.cos(lane[_i, -1]), discretization_meters * np.sin(lane[_i, -1])
+
+        normalized_rgb_color = colorsys.hsv_to_rgb(np.rad2deg(lane[_i, -1]) / 360, 1., 1.)
+
+        ax_.arrow(lane_xy_in_bev[_i, 0], lane_xy_in_bev[_i, 1], cos, sin, color=normalized_rgb_color, width=0.75)
+
+
+def print_nuscenes_record(rec: dict, rec_type=None):
+    print(f'--- {rec_type}' if rec_type is not None else '---')
+    for k, v in rec.items():
+        print(f"{k}: {v}")
+    print('---\n')
+
+
+def show_image_(ax_: Axes, img: np.ndarray, title=None, xlims=None, ylims=None, boxes=None, cmap=None):
+    if cmap is None:
+        ax_.imshow(img)
+    else:
+        ax_.imshow(img, cmap=cmap)
+    ax_.set_aspect('equal')
+
+    if title is not None:
+        ax_.set_title(title)
+
+    if xlims is not None:
+        ax_.set_xlim(xlims)
+
+    if ylims is not None:
+        ax_.set_ylim(ylims)
+
+    if boxes is not None:
+        draw_boxes_in_bev_(boxes, ax_)
