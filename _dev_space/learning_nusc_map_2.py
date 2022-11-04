@@ -8,6 +8,7 @@ from nuscenes.prediction.input_representation.static_layers import load_all_maps
 from pyquaternion import Quaternion
 from _dev_space.tools_box import apply_tf, get_nuscenes_sensor_pose_in_global
 from _dev_space.viz_tools import draw_lane_in_bev_, draw_boxes_in_bev_, draw_lidar_frame_
+import logging
 
 
 def put_in_2pi(angles: np.ndarray):
@@ -131,14 +132,15 @@ class MapMaker:
         # ---------
         # Map's binary layers
         # ---------
+        logging.disable(logging.INFO)
         patch_box = get_patchbox(x, y, self.img_size_length)
         masks = self.maps[map_name].get_map_mask(patch_box, np.rad2deg(yaw), self.layer_names,
                                                  canvas_size=self.canvas_size)  # (N_layers, H, W)
-
+        logging.disable(logging.NOTSET)
         # ---------
         # Lanes
         # ---------
-        lanes = get_lanes_in_radius(x, y, 60, discretization_meters=1, map_api=self.maps[map_name])
+        lanes = get_lanes_in_radius(x, y, 51.2, discretization_meters=1, map_api=self.maps[map_name])
         lanes_in_sensor = self.map_lanes_to_sensor(sample_data_token, lanes)
         lanes_img = self.draw_lane_in_bev(lanes_in_sensor, self.normalize_lane_angle)
 
@@ -175,43 +177,3 @@ class MapMaker:
 
         if draw_sensor_frame:
             draw_lidar_frame_(self.point_cloud_range, self.resolution, ax_)
-
-
-# if __name__ == '__main__':
-    # TODO: move the below part to a different viz_nuscenes_dataset
-    # np.random.seed(666)
-    # cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml'
-    # cfg_from_yaml_file(cfg_file, cfg)
-    # _set_up_cfg_(cfg)
-    # logger = common_utils.create_logger('./dummy_log.txt')
-    # nuscenes_dataset = NuScenesDataset(cfg, cfg.CLASS_NAMES, training=True, logger=logger)
-    #
-    # data_dict = nuscenes_dataset[200]  # 400, 200, 100, 5, 10
-    #
-    # gt_boxes = viz_boxes(data_dict['gt_boxes'])
-    #
-    # # -----------------------
-    # # Map stuff
-    # # -----------------------
-    # nusc = nuscenes_dataset.nusc
-    # renderer = MapMaker(nusc)
-    #
-    # sample = nusc.get('sample', data_dict['metadata']['token'])
-    #
-    # map_img, lanes_in_lidar = renderer.make_representation(sample['data']['LIDAR_TOP'], return_lanes=True)
-    #
-    # fig, ax = plt.subplots(1, 2)
-    # for _i, (layer, layer_idx) in enumerate(zip(['drivable_are', 'lanes'], [0, -1])):
-    #     ax[_i].set_title(f' {layer} @ LiDAR')
-    #     ax[_i].set_aspect('equal')
-    #     ax[_i].set_xlim([0, renderer.img_size_length_pixels])
-    #     ax[_i].set_ylim([0, renderer.img_size_length_pixels])
-    #     ax[_i].imshow(map_img[layer_idx])
-    #
-    #     draw_lidar_frame_(renderer.point_cloud_range, renderer.resolution, ax[_i])
-    #     draw_boxes_in_bev_(gt_boxes, renderer.point_cloud_range, renderer.resolution, ax[_i])
-    #
-    # fig2, ax2 = plt.subplots()
-    # renderer.render_map_in_color_(map_img, ax2, lanes_in_lidar, gt_boxes, draw_sensor_frame=True)
-    #
-    # plt.show()

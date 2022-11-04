@@ -6,6 +6,9 @@ DATA_CONFIG:
     VERSION: 'v1.0-trainval'
     USE_MINI_TRAINVAL: True
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+    USE_HD_MAP: True
+    NORMALIZE_LANE_ANGLE: False
+    BEV_IMAGE_RESOLUTION: 0.2
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
@@ -50,11 +53,15 @@ MODEL:
         NUM_RAW_FEATURES: 5
         NUM_BEV_FEATURES: 64
 
+    MAP_NET:
+        NUM_MAP_LAYERS: 5  # drivable_area, walkway, pedcrossing, carpark_area, lane
+        CHANNELS: [16, 16, 32, 32, 64, 64]
+
     BEV_BACKBONE:
         NAME: UNET2D
         DOWN_CHANNELS: [64, 64, 128, 128]  # 0-1-2-3
         UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
-        UP_DEFORM_CONV: [-1, False, True, True, True, True]  # dummy-1-2-3-4-5
+        UP_DEFORM_CONV: [-1, False, False, False, False, False]  # dummy-1-2-3-4-5
 
     NUM_SWEEPS: 10
     HEAD_MID_CHANNELS: [128]

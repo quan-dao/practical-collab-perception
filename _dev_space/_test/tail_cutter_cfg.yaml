@@ -8,6 +8,8 @@ DATA_CONFIG:
     MAX_SWEEPS: 10
     USE_MINI_TRAINVAL: False
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+    USE_HD_MAP: True
+    NORMALIZE_LANE_ANGLE: True
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
@@ -51,6 +53,10 @@ MODEL:
         VOXEL_SIZE: [ 0.2, 0.2, 8.0 ]
         NUM_RAW_FEATURES: 5
         NUM_BEV_FEATURES: 64
+
+    MAP_NET:
+        NUM_MAP_LAYERS: 5  # drivable_area, walkway, pedcrossing, carpark_area, lane
+        CHANNELS: [4, 4, 4, 4, 4, 4]
 
     BEV_BACKBONE:
         NAME: UNET2D

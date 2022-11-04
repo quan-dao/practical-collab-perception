@@ -145,7 +145,20 @@ class PointAligner(nn.Module):
             pillar_cfg.NUM_RAW_FEATURES, pillar_cfg.NUM_BEV_FEATURES, pillar_cfg.POINT_CLOUD_RANGE,
             pillar_cfg.VOXEL_SIZE)
 
-        self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
+        map_net_cfg = cfg.MAP_NET
+        map_net_channels = [map_net_cfg.NUM_MAP_LAYERS] + map_net_cfg.CHANNELS
+        map_net_layers = []
+        for ch_idx in range(len(map_net_channels) - 1):
+            is_last_layer = ch_idx == len(map_net_channels) - 2
+            map_net_layers.append(
+                nn.Conv2d(map_net_channels[ch_idx], map_net_channels[ch_idx + 1], 3, padding=1, bias=is_last_layer)
+            )
+            if not is_last_layer:
+                map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
+                map_net_layers.append(nn.ReLU(True))
+        self.map_net = nn.Sequential(*map_net_layers)
+
+        self.backbone2d = UNet2D(map_net_channels[-1] + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
 
         # ----
         backbone_out_c = self.backbone2d.n_output_feat
@@ -210,6 +223,11 @@ class PointAligner(nn.Module):
         self.forward_return_dict = dict()  # clear previous output
 
         bev_img = self.pillar_encoder(batch_dict)  # (B, C_bev, H, W), (N, 2)-bev_x, bev_y
+
+        # concatenate hd_map with bev_img before passing to backbone_2d
+        map_img = self.map_net(batch_dict['img_map'])
+        bev_img = torch.cat([bev_img, map_img], dim=1)  # (B, C_bev + C_map, H, W)
+
         bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)
 
         # interpolate points feature from bev_img
