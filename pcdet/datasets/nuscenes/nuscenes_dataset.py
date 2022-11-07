@@ -144,7 +144,10 @@ class NuScenesDataset(DatasetTemplate):
         # ------
         if self.dataset_cfg.get('USE_HD_MAP', False):
             map_file = self.root_path / 'hd_map' / f"map_{info['token']}.npy"
-            input_dict['img_map'] = np.load(map_file)
+            try:
+                input_dict['img_map'] = np.load(map_file)
+            except:
+                input_dict['img_map'] = np.zeros((5, 512, 512))  # in case map_file is corrupted
 
         if 'gt_boxes' in info:
             if self.dataset_cfg.get('FILTER_MIN_POINTS_IN_GT', False):

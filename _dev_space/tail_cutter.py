@@ -9,6 +9,7 @@ from torchmetrics.functional import precision_recall
 from sklearn.cluster import DBSCAN
 from _dev_space.unet_2d import UNet2D
 from _dev_space.instance_centric_tools import quat2mat
+from _dev_space.external_drop import DropBlock2d
 
 
 def to_ndarray(x):
@@ -157,6 +158,7 @@ class PointAligner(nn.Module):
                 map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
                 map_net_layers.append(nn.ReLU(True))
         self.map_net = nn.Sequential(*map_net_layers)
+        self.drop_map = DropBlock2d(map_net_cfg.DROP_PROB, map_net_cfg.DROP_BLOCK_SIZE)
 
         self.backbone2d = UNet2D(map_net_channels[-1] + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
 
@@ -226,6 +228,8 @@ class PointAligner(nn.Module):
 
         # concatenate hd_map with bev_img before passing to backbone_2d
         map_img = self.map_net(batch_dict['img_map'])
+        map_img = self.drop_map(map_img)
+
         bev_img = torch.cat([bev_img, map_img], dim=1)  # (B, C_bev + C_map, H, W)
 
         bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)

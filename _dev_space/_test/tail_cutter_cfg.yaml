@@ -57,6 +57,8 @@ MODEL:
     MAP_NET:
         NUM_MAP_LAYERS: 5  # drivable_area, walkway, pedcrossing, carpark_area, lane
         CHANNELS: [4, 4, 4, 4, 4, 4]
+        DROP_PROB: 0.3
+        DROP_BLOCK_SIZE: 7
 
     BEV_BACKBONE:
         NAME: UNET2D
