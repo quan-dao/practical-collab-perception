@@ -121,12 +121,15 @@ class DropBlock2d(nn.Module):
             fast: bool = True):
         super(DropBlock2d, self).__init__()
         self.drop_prob = drop_prob
-        self.gamma_scale = gamma_scale
         self.block_size = block_size
         self.with_noise = with_noise
         self.inplace = inplace
         self.batchwise = batchwise
         self.fast = fast  # FIXME finish comparisons of fast vs not
+        self.gamma_scale = self._compute_gamma()
+
+    def _compute_gamma(self):
+        return self.drop_prob / (self.block_size ** 2)
 
     def forward(self, x):
         if not self.training or not self.drop_prob:
