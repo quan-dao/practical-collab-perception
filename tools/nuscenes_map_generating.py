@@ -38,8 +38,11 @@ def main(nusc_ver):
 
     for info in tqdm(nusc_infos):
         sample_rec = nusc.get('sample', info['token'])
+        map_file = os.path.join(map_dir, f"map_{info['token']}.npy")
+        if os.path.isfile(map_file):
+            continue
         img_map = map_maker.make_representation(sample_rec['data']['LIDAR_TOP'])
-        np.save(os.path.join(map_dir, f"map_{info['token']}.npy"), img_map)
+        np.save(map_file, img_map)
 
 
 if __name__ == '__main__':
