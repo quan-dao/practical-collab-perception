@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from _dev_space.e2e_corrector import PointCloudCorrectorE2E
 
 try:
     import torch_scatter
