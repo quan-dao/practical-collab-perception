@@ -43,22 +43,26 @@ class DataAugmentor(object):
     def random_world_flip(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.random_world_flip, config=config)
-        gt_boxes, points = data_dict['gt_boxes'], data_dict['points']
+        gt_boxes, points, instances_tf = data_dict['gt_boxes'], data_dict['points'], data_dict['instances_tf']
+        img_map = data_dict['img_map']
+
         for cur_axis in config['ALONG_AXIS_LIST']:
             assert cur_axis in ['x', 'y']
-            gt_boxes, points, enable = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
-                gt_boxes, points, return_flip=True
+            gt_boxes, points, enable, instances_tf, img_map = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
+                gt_boxes, points, return_flip=True, instances_tf=instances_tf, img_map=img_map
             )
             data_dict['flip_%s'%cur_axis] = enable
             if 'roi_boxes' in data_dict.keys():
                 num_frame, num_rois,dim = data_dict['roi_boxes'].shape
                 roi_boxes, _, _ = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
-                data_dict['roi_boxes'].reshape(-1,dim), np.zeros([1,3]), return_flip=True, enable=enable
+                    data_dict['roi_boxes'].reshape(-1,dim), np.zeros([1,3]), return_flip=True, enable=enable
                 )
                 data_dict['roi_boxes'] = roi_boxes.reshape(num_frame, num_rois,dim)
 
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
+        data_dict['instances_tf'] = instances_tf
+        data_dict['img_map'] = img_map
         return data_dict
 
     def random_world_rotation(self, data_dict=None, config=None):
@@ -67,8 +71,9 @@ class DataAugmentor(object):
         rot_range = config['WORLD_ROT_ANGLE']
         if not isinstance(rot_range, list):
             rot_range = [-rot_range, rot_range]
-        gt_boxes, points, noise_rot = augmentor_utils.global_rotation(
-            data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range, return_rot=True
+        gt_boxes, points, noise_rot, instances_tf, img_map = augmentor_utils.global_rotation(
+            data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range, return_rot=True,
+            instances_tf=data_dict['instances_tf'], img_map=data_dict['img_map']
         )
         if 'roi_boxes' in data_dict.keys():
             num_frame, num_rois,dim = data_dict['roi_boxes'].shape
@@ -79,25 +84,29 @@ class DataAugmentor(object):
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
         data_dict['noise_rot'] = noise_rot
+        data_dict['instances_tf'] = instances_tf
+        data_dict['img_map'] = img_map
         return data_dict
 
     def random_world_scaling(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.random_world_scaling, config=config)
-        
         if 'roi_boxes' in data_dict.keys():
             gt_boxes, roi_boxes, points, noise_scale = augmentor_utils.global_scaling_with_roi_boxes(
                 data_dict['gt_boxes'], data_dict['roi_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'], return_scale=True
             )
             data_dict['roi_boxes'] = roi_boxes
         else:
-            gt_boxes, points, noise_scale = augmentor_utils.global_scaling(
-                data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'], return_scale=True
+            gt_boxes, points, noise_scale, instances_tf, img_map = augmentor_utils.global_scaling(
+                data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'], return_scale=True,
+                instances_tf=data_dict['instances_tf'], img_map=data_dict['img_map']
             )
 
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
         data_dict['noise_scale'] = noise_scale
+        data_dict['instances_tf'] = instances_tf
+        data_dict['img_map'] = img_map
         return data_dict
 
     def random_image_flip(self, data_dict=None, config=None):

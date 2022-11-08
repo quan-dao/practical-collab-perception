@@ -19,3 +19,6 @@ version.py
 _dev_space
 --cfg_file
 --version
+data/nuscenes
+build
+idr_log

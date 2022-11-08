@@ -49,7 +49,11 @@ class PFNLayerV2(nn.Module):
 class DynamicPillarVFE(VFETemplate):
     def __init__(self, model_cfg, num_point_features, voxel_size, grid_size, point_cloud_range, **kwargs):
         super().__init__(model_cfg=model_cfg)
-
+        # enable overwriting num_point_features from config file
+        if self.model_cfg.get('NUM_RAW_POINT_FEATURES', None) is not None:
+            num_point_features = self.model_cfg.NUM_RAW_POINT_FEATURES
+        # ---
+        self.num_raw_point_features = num_point_features
         self.use_norm = self.model_cfg.USE_NORM
         self.with_distance = self.model_cfg.WITH_DISTANCE
         self.use_absolute_xyz = self.model_cfg.USE_ABSLOTE_XYZ
@@ -88,7 +92,8 @@ class DynamicPillarVFE(VFETemplate):
         return self.num_filters[-1]
 
     def forward(self, batch_dict, **kwargs):
-        points = batch_dict['points'] # (batch_idx, x, y, z, i, e)
+        # points = batch_dict['points']  # (batch_idx, x, y, z, i, e)
+        points = batch_dict['points'][:, :1 + self.num_raw_point_features]  # (batch_idx,x,y,z,i,time,[offset_x,_y])
 
         points_coords = torch.floor((points[:, [1,2]] - self.point_cloud_range[[0,1]]) / self.voxel_size[[0,1]]).int()
         mask = ((points_coords >= 0) & (points_coords < self.grid_size[[0,1]])).all(dim=1)

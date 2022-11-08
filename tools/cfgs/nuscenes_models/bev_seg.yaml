@@ -62,38 +62,7 @@ DATA_CONFIG:
             VOXEL_SIZE: [0.2, 0.2, 8.0]
 
 MODEL:
-    NAME: CenterPoint
-
-    PC_CORRECTOR:
-        RETURN_OFFSET: True
-        IS_FREEZED: False
-        RETURN_FGR_PROB: True
-        USE_FGR_PROB_AS_RAW_FEAT: False
-        NUM_RAW_POINT_FEATURES: 5
-        MODEL:
-            DEBUG: True
-            CKPT: pretrained_models/bev_seg_caddn_style_fullnusc_ep5.pth
-            VFE:
-                NAME: DynPillarVFE
-                WITH_DISTANCE: False
-                USE_ABSLOTE_XYZ: True
-                USE_NORM: True
-                NUM_FILTERS: [ 64, 64 ]
-            MAP_TO_BEV:
-                NAME: PointPillarScatter
-                NUM_BEV_FEATURES: 64
-            BACKBONE_2D:
-                NAME: PoseResNet
-                NUM_FILTERS: [ 64, 128, 256 ]
-                LAYERS_SIZE: [ 2, 2, 2 ]
-                HEAD_CONV: 64
-                NUM_UP_FILTERS: [ 128, 64, 64 ]
-                BEV_IMG_STRIDE: 2
-                LOSS_WEIGHTS: [ 1.0, 1.0, 1.0, 1.0, 1.0 ]
-                CRT_NUM_BINS: 40
-                CRT_DIR_NUM_BINS: 80
-                CRT_MAX_MAGNITUDE: 15.0
-                GENERATE_TARGET_WHILE_TESTING: False
+    NAME: BEVSegmentation
 
     VFE:
         NAME: DynPillarVFE
@@ -101,71 +70,26 @@ MODEL:
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
         NUM_FILTERS: [ 64, 64 ]
+        NUM_RAW_POINT_FEATURES: 5
 
     MAP_TO_BEV:
         NAME: PointPillarScatter
         NUM_BEV_FEATURES: 64
 
     BACKBONE_2D:
-        NAME: BaseBEVBackbone
-        LAYER_NUMS: [3, 5, 5]
-        LAYER_STRIDES: [2, 2, 2]
+        NAME: PoseResNet
         NUM_FILTERS: [64, 128, 256]
-        UPSAMPLE_STRIDES: [0.5, 1, 2]
-        NUM_UPSAMPLE_FILTERS: [128, 128, 128]
-
-    DENSE_HEAD:
-        NAME: CenterHead
-        CLASS_AGNOSTIC: False
-
-        CLASS_NAMES_EACH_HEAD: [
-            ['car'],
-            ['truck', 'construction_vehicle'],
-            ['bus', 'trailer'],
-            ['barrier'],
-            ['motorcycle', 'bicycle'],
-            ['pedestrian', 'traffic_cone'],
-        ]
-
-        SHARED_CONV_CHANNEL: 64
-        USE_BIAS_BEFORE_NORM: True
-        NUM_HM_CONV: 2
-        SEPARATE_HEAD_CFG:
-            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot', 'vel']
-            HEAD_DICT: {
-                'center': {'out_channels': 2, 'num_conv': 2},
-                'center_z': {'out_channels': 1, 'num_conv': 2},
-                'dim': {'out_channels': 3, 'num_conv': 2},
-                'rot': {'out_channels': 2, 'num_conv': 2},
-                'vel': {'out_channels': 2, 'num_conv': 2},
-            }
-
-        TARGET_ASSIGNER_CONFIG:
-            FEATURE_MAP_STRIDE: 4
-            NUM_MAX_OBJS: 500
-            GAUSSIAN_OVERLAP: 0.1
-            MIN_RADIUS: 2
-
-        LOSS_CONFIG:
-            LOSS_WEIGHTS: {
-                'cls_weight': 1.0,
-                'loc_weight': 0.25,
-                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2, 1.0, 1.0]
-            }
-
-        POST_PROCESSING:
-            SCORE_THRESH: 0.1
-            POST_CENTER_LIMIT_RANGE: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
-            MAX_OBJ_PER_SAMPLE: 500
-            NMS_CONFIG:
-                NMS_TYPE: nms_gpu
-                NMS_THRESH: 0.2
-                NMS_PRE_MAXSIZE: 1000
-                NMS_POST_MAXSIZE: 83
+        LAYERS_SIZE: [2, 2, 2]
+        HEAD_CONV: 64
+        NUM_UP_FILTERS: [128, 64, 64]
+        BEV_IMG_STRIDE: 2
+        LOSS_WEIGHTS: [1.0, 1.0, 1.0, 1.0, 1.0]
+        CRT_NUM_BINS: 40
+        CRT_DIR_NUM_BINS: 80
+        CRT_MAX_MAGNITUDE: 15.0
 
     POST_PROCESSING:
-        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
-
+        RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
         EVAL_METRIC: kitti
 
 
@@ -178,10 +102,10 @@ OPTIMIZATION:
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 
-    MOMS: [0.95, 0.85]
+    MOMS: [ 0.95, 0.85 ]
     PCT_START: 0.4
     DIV_FACTOR: 10
-    DECAY_STEP_LIST: [35, 45]
+    DECAY_STEP_LIST: [ 35, 45 ]
     LR_DECAY: 0.1
     LR_CLIP: 0.0000001
 
@@ -189,3 +113,5 @@ OPTIMIZATION:
     WARMUP_EPOCH: 1
 
     GRAD_NORM_CLIP: 10
+
+

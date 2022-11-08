@@ -409,9 +409,17 @@ class DataBaseSampler(object):
                     img_aug_gt_dict, info, data_dict, obj_points, sampled_gt_boxes, sampled_gt_boxes2d, idx
                 )
 
+            # ---
+            # for foreground segementation & compute of correction vector
+            # ---
+            if self.sampler_cfg.get('PAD_WITH_OFFSET_INDICATOR', False):
+                obj_points = np.pad(obj_points, [(0, 0), (0, 3)], constant_values=0)
+                obj_points[:, -1] = data_dict['metadata']['n_original_instances'] + idx
+
             obj_points_list.append(obj_points)
 
         obj_points = np.concatenate(obj_points_list, axis=0)
+
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
 
         if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False) or obj_points.shape[-1] != points.shape[-1]:

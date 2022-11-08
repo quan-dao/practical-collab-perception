@@ -9,6 +9,9 @@ from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
+from _dev_space.get_sweeps_instance_centric import inst_centric_get_sweeps
+from nuscenes import NuScenes
+
 
 class NuScenesDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
@@ -20,6 +23,12 @@ class NuScenesDataset(DatasetTemplate):
         self.include_nuscenes_data(self.mode)
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
+
+        self.infos.sort(key=lambda e: e['timestamp'])
+        if self.dataset_cfg.get('USE_MINI_TRAINVAL', False) and training:
+            self.infos = self.infos[::4]  # use 1/4th of the trainval data
+
+        self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -119,13 +128,26 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
 
         info = copy.deepcopy(self.infos[index])
-        points = self.get_lidar_with_sweeps(index, max_sweeps=self.dataset_cfg.MAX_SWEEPS)
+
+        _out = inst_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
+        points = _out['points']
 
         input_dict = {
             'points': points,
+            'instances_tf': _out['instances_tf'],
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token']}
         }
+
+        # ------
+        # get HD Map
+        # ------
+        if self.dataset_cfg.get('USE_HD_MAP', False):
+            map_file = self.root_path / 'hd_map' / f"map_{info['token']}.npy"
+            try:
+                input_dict['img_map'] = np.load(map_file)
+            except:
+                input_dict['img_map'] = np.zeros((5, 512, 512))  # in case map_file is corrupted
 
         if 'gt_boxes' in info:
             if self.dataset_cfg.get('FILTER_MIN_POINTS_IN_GT', False):

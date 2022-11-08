@@ -1,15 +1,23 @@
 import numpy as np
+import numpy.linalg as LA
 import math
 import copy
 from ...utils import common_utils
 from ...utils import box_utils
+import cv2
+from einops import rearrange
 
 
-def random_flip_along_x(gt_boxes, points, return_flip=False, enable=None):
+def random_flip_along_x(gt_boxes, points, return_flip=False, points_feat_to_transform=None, instances_tf=None,
+                        img_map=None, enable=None):
     """
     Args:
         gt_boxes: (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
         points: (M, 3 + C)
+        return_flip:
+        points_feat_to_transform:
+        instances_tf (np.ndarray): (N_inst, N_sweeps, 4, 4)
+        img_map (np.ndarray): (5, H, W)
     Returns:
     """
     if enable is None:
@@ -21,16 +29,40 @@ def random_flip_along_x(gt_boxes, points, return_flip=False, enable=None):
         
         if gt_boxes.shape[1] > 7:
             gt_boxes[:, 8] = -gt_boxes[:, 8]
+
+        if points_feat_to_transform is not None:
+            points[:, points_feat_to_transform[1]] *= -1
+
+        if instances_tf is not None:
+            tf = np.eye(4)
+            tf[1, 1] = -1.
+            inv_tf = tf
+            instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+            instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
+
+        if img_map is not None:
+            img_map = img_map[:, ::-1]  # (5, H, W)
+
+    out = [gt_boxes, points]
     if return_flip:
-        return gt_boxes, points, enable
-    return gt_boxes, points
+        out.append(enable)
+    if instances_tf is not None:
+        out.append(instances_tf)
+    if img_map is not None:
+        out.append(img_map)
+    return out
 
 
-def random_flip_along_y(gt_boxes, points, return_flip=False, enable=None):
+def random_flip_along_y(gt_boxes, points, return_flip=False, points_feat_to_transform=None, instances_tf=None,
+                        img_map=None, enable=None):
     """
     Args:
-        gt_boxes: (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
-        points: (M, 3 + C)
+        gt_boxes (np.ndarray): (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
+        points (np.ndarray): (M, 3 + C)
+        return_flip:
+        points_feat_to_transform:
+        instances_tf (np.ndarray): (N_inst, N_sweeps, 4, 4)
+        img_map (np.ndarray): (5, H, W)
     Returns:
     """
     if enable is None:
@@ -42,22 +74,55 @@ def random_flip_along_y(gt_boxes, points, return_flip=False, enable=None):
 
         if gt_boxes.shape[1] > 7:
             gt_boxes[:, 7] = -gt_boxes[:, 7]
+
+        if points_feat_to_transform is not None:
+            points[:, points_feat_to_transform[0]] *= -1
+
+        if instances_tf is not None:
+            tf = np.eye(4)
+            tf[0, 0] = -1.
+            inv_tf = tf
+            instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+            instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
+
+        if img_map is not None:
+            img_map = img_map[:, :, ::-1]  # (5, H, W)
+
+    out = [gt_boxes, points]
     if return_flip:
-        return gt_boxes, points, enable
-    return gt_boxes, points
+        out.append(enable)
+    if instances_tf is not None:
+        out.append(instances_tf)
+    if img_map is not None:
+        out.append(img_map)
+    return out
 
 
-def global_rotation(gt_boxes, points, rot_range, return_rot=False, noise_rotation=None):
+def global_rotation(gt_boxes, points, rot_range, return_rot=False, points_feat_to_transform=None, instances_tf=None,
+                    img_map=None, noise_rotation=None):
     """
     Args:
-        gt_boxes: (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
-        points: (M, 3 + C),
+        gt_boxes (np.ndarray): (N, 7 + C), [x, y, z, dx, dy, dz, heading, [vx], [vy]]
+        points (np.ndarray): (M, 3 + C),
         rot_range: [min, max]
+        return_rot:
+        points_feat_to_transform (list): index of point feat to be transformed by this augmentation operation
+        instances_tf (np.ndarray): (N_inst, N_sweeps, 4, 4)
+        img_map (np.ndarray): (5, H, W)
     Returns:
     """
     if noise_rotation is None: 
         noise_rotation = np.random.uniform(rot_range[0], rot_range[1])
     points = common_utils.rotate_points_along_z(points[np.newaxis, :, :], np.array([noise_rotation]))[0]
+
+    if points_feat_to_transform is not None:
+        feat = points[:, points_feat_to_transform]
+        if feat.shape[1] < 3:
+            feat = np.pad(feat, [(0, 0), (0, 3 - feat.shape[1])], constant_values=0)
+        feat = common_utils.rotate_points_along_z(feat[np.newaxis, ...], np.array([noise_rotation]))[0]
+        # overwrite point feat
+        points[:, points_feat_to_transform] = feat[:, :len(points_feat_to_transform)]
+
     gt_boxes[:, 0:3] = common_utils.rotate_points_along_z(gt_boxes[np.newaxis, :, 0:3], np.array([noise_rotation]))[0]
     gt_boxes[:, 6] += noise_rotation
     if gt_boxes.shape[1] > 7:
@@ -66,30 +131,83 @@ def global_rotation(gt_boxes, points, rot_range, return_rot=False, noise_rotatio
             np.array([noise_rotation])
         )[0][:, 0:2]
 
+    if instances_tf is not None:
+        cos, sin = np.cos(noise_rotation), np.sin(noise_rotation)
+        tf = np.array([
+            [cos, -sin, 0, 0],
+            [sin, cos, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        inv_tf = np.array([
+            [cos, sin, 0, 0],
+            [-sin, cos, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+        instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
+
+    if img_map is not None:
+        rot_matrix = cv2.getRotationMatrix2D((img_map.shape[2] / 2, img_map.shape[1] / 2),
+                                             np.rad2deg(-noise_rotation), 1)
+        img_map = cv2.warpAffine(rearrange(img_map, 'C H W -> H W C'), rot_matrix, img_map.shape[1:], cv2.INTER_NEAREST)
+        img_map = rearrange(img_map, 'H W C -> C H W')
+
+    out = [gt_boxes, points]
     if return_rot:
-        return gt_boxes, points, noise_rotation
-    return gt_boxes, points
+        out.append(noise_rotation)
+    if instances_tf is not None:
+        out.append(instances_tf)
+    if img_map is not None:
+        out.append(img_map)
+    return out
 
 
-def global_scaling(gt_boxes, points, scale_range, return_scale=False):
+def global_scaling(gt_boxes, points, scale_range, return_scale=False, points_feat_to_transform=None, instances_tf=None,
+                   img_map=None):
     """
     Args:
-        gt_boxes: (N, 7), [x, y, z, dx, dy, dz, heading]
-        points: (M, 3 + C),
+        gt_boxes (np.ndarray): (N, 7), [x, y, z, dx, dy, dz, heading]
+        points (np.ndarray): (M, 3 + C),
         scale_range: [min, max]
+        return_scale:
+        points_feat_to_transform (list):
+        instances_tf (np.ndarray): (N_inst, N_sweeps, 4, 4)
+        img_map (np.ndarray): (5, H, W)
     Returns:
     """
     if scale_range[1] - scale_range[0] < 1e-3:
         return gt_boxes, points
     noise_scale = np.random.uniform(scale_range[0], scale_range[1])
     points[:, :3] *= noise_scale
+
+    if points_feat_to_transform is not None:
+        points[:, points_feat_to_transform] *= noise_scale
+
     gt_boxes[:, :6] *= noise_scale
     if gt_boxes.shape[1] > 7:
         gt_boxes[:, 7:] *= noise_scale
-        
+
+    if instances_tf is not None:
+        tf = np.diag([noise_scale, noise_scale, noise_scale, 1.])
+        inv_tf = np.diag([1./noise_scale, 1./noise_scale, 1./noise_scale, 1.])
+        instances_tf = np.matmul(tf[np.newaxis, np.newaxis], instances_tf)
+        instances_tf = np.matmul(instances_tf, inv_tf[np.newaxis, np.newaxis])
+
+    if img_map is not None:
+        scale_matrix = cv2.getRotationMatrix2D((img_map.shape[2] / 2, img_map.shape[1] / 2), 0, noise_scale)
+        img_map = cv2.warpAffine(rearrange(img_map, 'C H W -> H W C'), scale_matrix, img_map.shape[1:], cv2.INTER_NEAREST)
+        img_map = rearrange(img_map, 'H W C -> C H W')
+
+    out = [gt_boxes, points]
     if return_scale:
-        return gt_boxes, points, noise_scale
-    return gt_boxes, points
+        out.append(noise_scale)
+    if instances_tf is not None:
+        out.append(instances_tf)
+    if img_map is not None:
+        out.append(img_map)
+    return out
 
 def global_scaling_with_roi_boxes(gt_boxes, roi_boxes, points, scale_range, return_scale=False):
     """
