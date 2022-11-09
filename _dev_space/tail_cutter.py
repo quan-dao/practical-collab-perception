@@ -170,18 +170,18 @@ class PointAligner(nn.Module):
         # ---
         self.inst_global_mlp = self._make_mlp(backbone_out_c, cfg.INSTANCE_OUT_CHANNELS,
                                               cfg.get('INSTANCE_MID_CHANNELS', None))
-        # self.inst_local_mlp = self._make_mlp(3, cfg.INSTANCE_OUT_CHANNELS, cfg.get('INSTANCE_MID_CHANNELS', None))
-        # # input channels == 3 because: x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
-        #
-        # # ----
+        self.inst_local_mlp = self._make_mlp(3, cfg.INSTANCE_OUT_CHANNELS, cfg.get('INSTANCE_MID_CHANNELS', None))
+        # input channels == 3 because: x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
+
+        # ----
         # instance heads
         self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1,
                                               cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
-        #
-        # self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
-        #                                         cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
-        # # out == 3 for 3 components of translation vector
-        #
+
+        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
+                                                cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        # out == 3 for 3 components of translation vector
+
         # self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
         #                                      cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # # out == 4 for 4 components of quaternion
@@ -310,7 +310,14 @@ class PointAligner(nn.Module):
             inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
             # inst_bi: (N_inst,)
             # inst_bi_inv_indices: (N_fg,)
-            self.forward_return_dict['meta'] = {'inst_bi': inst_bi, 'inst_bi_inv_indices': inst_bi_inv_indices}
+
+            local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=True, return_inverse=True)
+            # local_bisw: (N_local,)
+
+            self.forward_return_dict['meta'] = {
+                'inst_bi': inst_bi, 'inst_bi_inv_indices': inst_bi_inv_indices,
+                'local_bisw': local_bisw, 'local_bisw_inv_indices': local_bisw_inv_indices
+            }
 
         # ------------
         # compute instance global feature
@@ -321,55 +328,48 @@ class PointAligner(nn.Module):
         pred_inst_motion_stat = self.inst_motion_seg(inst_global_feat)  # (N_inst, 1)
         pred_dict['inst_motion_stat'] = pred_inst_motion_stat
 
-        # # ------------
-        # # compute instance local shape encoding
-        # local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=True, return_inverse=True)
-        # # local_bisw: (N_local,)
-        # self.forward_return_dict['meta'].update({'local_bisw': local_bisw,
-        #                                          'local_bisw_inv_indices': local_bisw_inv_indices})
-        #
-        # # ---
-        # local_center = torch_scatter.scatter_mean(fg[:, 1: 4], local_bisw_inv_indices, dim=0)  # (N_local, 3)
-        #
-        # fg_centered_xyz = fg[:, 1: 4] - local_center[local_bisw_inv_indices]  # (N_fg, 3)
-        # fg_shape_enc = self.inst_local_mlp(fg_centered_xyz)  # (N_fg, C_inst)
-        # # ---
-        # local_shape_enc = torch_scatter.scatter_max(fg_shape_enc, local_bisw_inv_indices, dim=0)[0]  # (N_local, C_inst)
-        #
-        # # ------------
-        # # get the max sweep_index of each instance
-        # inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)
-        #
-        # # get bisw_index of each instance's max sweep
-        # inst_target_bisw_idx = inst_bi * self.cfg.get('NUM_SWEEPS', 10) + inst_max_sweep_idx  # (N_inst,)
-        #
-        # # for each value in inst_target_bisw_idx find WHERE (i.e., index) it appear in local_bisw
-        # corr = local_bisw[:, None] == inst_target_bisw_idx[None, :]  # (N_local, N_inst)
-        # corr = corr.long() * torch.arange(local_bisw.shape[0]).unsqueeze(1).to(fg.device)
-        # corr = corr.sum(dim=0)  # (N_inst)
-        #
-        # #
-        # inst_target_center_shape = torch.cat((local_center[corr], local_shape_enc[corr]), dim=1)  # (N_inst, 3+C_inst)
-        # inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
-        #
-        # # ------------
-        # # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
-        # local_bi = local_bisw // self.cfg.get('NUM_SWEEPS', 10)
-        # # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
-        # local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
-        # local_bi_in_inst_bi = local_bi_in_inst_bi.long() * torch.arange(inst_bi.shape[0]).unsqueeze(1).to(fg.device)
-        # local_bi_in_inst_bi = local_bi_in_inst_bi.sum(dim=0)  # (N_local)
-        # self.forward_return_dict['meta']['local_bi_in_inst_bi'] = local_bi_in_inst_bi
-        #
-        # # ---
-        # local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)
-        #
-        # # concatenate feat of local
-        # local_feat = torch.cat((local_global_feat, local_center, local_shape_enc), dim=1)  # (N_local, 6+3*C_inst)
-        #
-        # # use local_feat to predict local_tf of size (N_local, 3, 4)
-        # pred_local_transl = self.inst_local_transl(local_feat)  # (N_local, 3)
-        # pred_dict['local_transl'] = pred_local_transl
+        # ------------
+        # compute instance local shape encoding
+        local_center = torch_scatter.scatter_mean(fg[:, 1: 4], local_bisw_inv_indices, dim=0)  # (N_local, 3)
+        fg_centered_xyz = fg[:, 1: 4] - local_center[local_bisw_inv_indices]  # (N_fg, 3)
+        fg_shape_enc = self.inst_local_mlp(fg_centered_xyz)  # (N_fg, C_inst)
+
+        local_shape_enc = torch_scatter.scatter_max(fg_shape_enc, local_bisw_inv_indices, dim=0)[0]  # (N_local, C_inst)
+
+        # ------------
+        with torch.no_grad():
+            # get the max sweep_index of each instance
+            inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)
+            # get bisw_index of each instance's max sweep
+            inst_target_bisw_idx = inst_bi * self.cfg.get('NUM_SWEEPS', 10) + inst_max_sweep_idx  # (N_inst,)
+
+            # for each value in inst_target_bisw_idx find WHERE (i.e., index) it appear in local_bisw
+            corr = local_bisw[:, None] == inst_target_bisw_idx[None, :]  # (N_local, N_inst)
+            corr = corr.long() * torch.arange(local_bisw.shape[0]).unsqueeze(1).to(fg.device)
+            corr = corr.sum(dim=0)  # (N_inst)
+
+        inst_target_center_shape = torch.cat((local_center[corr], local_shape_enc[corr]), dim=1)  # (N_inst, 3+C_inst)
+        inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
+
+        # ------------
+        with torch.no_grad():
+            # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
+            local_bi = local_bisw // self.cfg.get('NUM_SWEEPS', 10)
+            # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
+            local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
+            local_bi_in_inst_bi = local_bi_in_inst_bi.long() * torch.arange(inst_bi.shape[0]).unsqueeze(1).to(fg.device)
+            local_bi_in_inst_bi = local_bi_in_inst_bi.sum(dim=0)  # (N_local)
+            self.forward_return_dict['meta']['local_bi_in_inst_bi'] = local_bi_in_inst_bi
+
+        # ---
+        local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)
+
+        # concatenate feat of local
+        local_feat = torch.cat((local_global_feat, local_center, local_shape_enc), dim=1)  # (N_local, 6+3*C_inst)
+
+        # use local_feat to predict local_tf of size (N_local, 3, 4)
+        pred_local_transl = self.inst_local_transl(local_feat)  # (N_local, 3)
+        pred_dict['local_transl'] = pred_local_transl
         #
         # pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
         # pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
@@ -431,20 +431,20 @@ class PointAligner(nn.Module):
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
 
-        # # --------------
-        # # locals' transformation
-        # local_bisw = self.forward_return_dict['meta']['local_bisw']
-        # # local_bisw: (N_local,)
-        #
-        # local_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
-        # local_tf = local_tf[local_bisw]  # (N_local, 3, 4)
+        # --------------
+        # locals' transformation
+        local_bisw = self.forward_return_dict['meta']['local_bisw']
+        # local_bisw: (N_local,)
+
+        local_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
+        local_tf = local_tf[local_bisw]  # (N_local, 3, 4)
 
         # format output
         target_dict = {
             'fg': target_fg,
             'inst_assoc': target_inst_assoc,
             'inst_motion_stat': inst_motion_stat,
-            # 'local_tf': local_tf,
+            'local_tf': local_tf,
         }
         return target_dict
 
@@ -511,28 +511,29 @@ class PointAligner(nn.Module):
         loss_inst_mos = self.focal_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
         tb_dict['loss_inst_mos'] = loss_inst_mos.item()
 
-        # # ---
-        # # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
-        #
-        # local_transl = pred_dict['local_transl']  # (N_local, 3)
+        # ---
+        # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
+
+        local_transl = pred_dict['local_transl']  # (N_local, 3)
         # local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
-        #
-        # local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
-        #
-        # # which local are associated with dynamic instances
-        # local_bi_in_inst_bi = self.forward_return_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
-        # local_mos_target = inst_mos_target[local_bi_in_inst_bi]  # (N_local,)
-        # local_mos_mask = local_mos_target == 1  # (N_local,)
-        #
-        # # translation
-        # if torch.any(local_mos_mask):
-        #     loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
-        #                                      dim=-1, reduction='mean')
-        #     tb_dict['loss_local_transl'] = loss_local_transl.item()
-        # else:
-        #     loss_local_transl = 0.0
-        #     tb_dict['loss_local_transl'] = 0.0
-        #
+
+        local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
+
+        # which local are associated with dynamic instances
+        with torch.no_grad():
+            local_bi_in_inst_bi = self.forward_return_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
+            local_mos_target = inst_mos_target[local_bi_in_inst_bi]  # (N_local,)
+            local_mos_mask = local_mos_target == 1  # (N_local,)
+
+        # translation
+        if torch.any(local_mos_mask):
+            loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
+                                             dim=-1, reduction='mean')
+            tb_dict['loss_local_transl'] = loss_local_transl.item()
+        else:
+            loss_local_transl = 0.0
+            tb_dict['loss_local_transl'] = 0.0
+
         # # rotation
         # if torch.any(local_mos_mask):
         #     loss_local_rot = torch.linalg.norm(
@@ -578,7 +579,7 @@ class PointAligner(nn.Module):
         #     loss_recon = 0.0
         #     tb_dict['loss_recon'] = 0.0
 
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos  # + loss_local_transl + loss_local_rot + loss_recon
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos  + loss_local_transl  # + loss_local_rot + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
