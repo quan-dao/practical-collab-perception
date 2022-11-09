@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.ops.deform_conv import DeformConv2dPack
 from functools import partial
 
 
@@ -12,10 +11,9 @@ class ResBlock(nn.Module):
     def __init__(self, n_channels, use_deform_conv=False):
         super().__init__()
         bn2d = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
-        conv2d = nn.Conv2d if not use_deform_conv else DeformConv2dPack
-        self.conv1 = conv2d(n_channels, n_channels, self.kernel_size, padding=self.padding, bias=False)
+        self.conv1 = nn.Conv2d(n_channels, n_channels, self.kernel_size, padding=self.padding, bias=False)
         self.norm1 = bn2d(n_channels)
-        self.conv2 = conv2d(n_channels, n_channels, self.kernel_size, padding=self.padding, bias=False)
+        self.conv2 = nn.Conv2d(n_channels, n_channels, self.kernel_size, padding=self.padding, bias=False)
         self.norm2 = bn2d(n_channels)
 
     def forward(self, x):
@@ -73,13 +71,11 @@ class UNet2D(nn.Module):
         self.up_res3 = ResBlock(ch_up[3], cfg.UP_DEFORM_CONV[3])
 
         self.up4 = nn.Sequential(
-            nn.Conv2d(ch_up[3] + ch_down[0], ch_up[4], 1, bias=False) if not cfg.UP_DEFORM_CONV[4] else
-            DeformConv2dPack(ch_up[3] + ch_down[0], ch_up[4], 1, bias=False),
+            nn.Conv2d(ch_up[3] + ch_down[0], ch_up[4], 1, bias=False),
             norm2d(ch_up[4])
         )
         self.up5 = nn.Sequential(
-            nn.Conv2d(ch_up[4], ch_up[5], 1, bias=False) if not cfg.UP_DEFORM_CONV[5] else
-            DeformConv2dPack(ch_up[4], ch_up[5], 1, bias=False),
+            nn.Conv2d(ch_up[4], ch_up[5], 1, bias=False),
             norm2d(ch_up[5])
         )
 
