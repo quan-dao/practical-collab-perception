@@ -577,7 +577,7 @@ class PointAligner(nn.Module):
         #     loss_recon = 0.0
         #     tb_dict['loss_recon'] = 0.0
 
-        loss = loss_fg  # + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
+        loss = loss_fg  + loss_inst_assoc  # + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
