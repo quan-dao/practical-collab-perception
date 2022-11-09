@@ -165,7 +165,7 @@ class PointAligner(nn.Module):
         backbone_out_c = self.backbone2d.n_output_feat
         # point heads
         self.point_fg_seg = self._make_mlp(backbone_out_c, 1, cfg.get('HEAD_MID_CHANNELS', None))
-        # self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, cfg.get('HEAD_MID_CHANNELS', None))
 
         # ---
         # self.inst_global_mlp = self._make_mlp(backbone_out_c, cfg.INSTANCE_OUT_CHANNELS,
@@ -244,10 +244,10 @@ class PointAligner(nn.Module):
 
         # invoke point heads
         pred_points_fg = self.point_fg_seg(points_feat)  # (N, 1)
-        # pred_points_inst_assoc = self.point_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
+        pred_points_inst_assoc = self.point_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
         pred_dict = {
             'fg': pred_points_fg,  # (N, 1)
-            # 'inst_assoc': pred_points_inst_assoc  # (N, 2)
+            'inst_assoc': pred_points_inst_assoc  # (N, 2)
         }
 
         # ---------------------------------------------------------------
@@ -389,6 +389,7 @@ class PointAligner(nn.Module):
 
         return batch_dict
 
+    @torch.no_grad()
     def assign_target(self, batch_dict):
         """
         Args:
@@ -407,17 +408,17 @@ class PointAligner(nn.Module):
         mask_fg = points[:, -2].long() > -1
         target_fg = mask_fg.long()  # (N,) - use original instance index for foreground seg
 
-        # # --------------
-        # # target of inst_assoc as offset toward mean of points inside each instance
-        # _fg = points[mask_fg]
-        # max_num_inst = batch_dict['instances_tf'].shape[1]
-        # _fg_bi_idx = _fg[:, 0].long() * max_num_inst + _fg[:, -2]
-        # _, _inst_bi_inv_indices = torch.unique(_fg_bi_idx, sorted=True, return_inverse=True)
-        #
-        # inst_mean_xy = torch_scatter.scatter_mean(points[mask_fg, 1: 3], _inst_bi_inv_indices, dim=0)  # (N_inst, 2)
-        # target_inst_assoc = inst_mean_xy[_inst_bi_inv_indices] - points[mask_fg, 1: 3]
-        #
-        # # -------------------------------------------------------
+        # --------------
+        # target of inst_assoc as offset toward mean of points inside each instance
+        _fg = points[mask_fg]
+        max_num_inst = batch_dict['instances_tf'].shape[1]
+        _fg_bi_idx = _fg[:, 0].long() * max_num_inst + _fg[:, -2].long()
+        _, _inst_bi_inv_indices = torch.unique(_fg_bi_idx, sorted=True, return_inverse=True)
+
+        inst_mean_xy = torch_scatter.scatter_mean(points[mask_fg, 1: 3], _inst_bi_inv_indices, dim=0)  # (N_inst, 2)
+        target_inst_assoc = inst_mean_xy[_inst_bi_inv_indices] - points[mask_fg, 1: 3]
+
+        # -------------------------------------------------------
         # # Instance-wise target
         # # use AUGMENTED instance index
         # # -------------------------------------------------------
@@ -441,7 +442,7 @@ class PointAligner(nn.Module):
         # format output
         target_dict = {
             'fg': target_fg,
-            # 'inst_assoc': target_inst_assoc,
+            'inst_assoc': target_inst_assoc,
             # 'inst_motion_stat': inst_motion_stat, 'local_tf': local_tf,
         }
         return target_dict
@@ -486,18 +487,18 @@ class PointAligner(nn.Module):
         loss_fg = self.focal_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
         tb_dict['loss_fg'] = loss_fg.item()
 
-        # # ---
-        # # instance assoc
-        # inst_assoc = pred_dict['inst_assoc']  # (N, 2)
-        # inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
-        # if num_gt_fg > 0:
-        #     loss_inst_assoc = self.l2_loss(inst_assoc[fg_target == 1], inst_assoc_target, dim=1, reduction='mean')
-        #     tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
-        # else:
-        #     loss_inst_assoc = 0.
-        #     tb_dict['loss_inst_assoc'] = 0.
-        #
-        # # -----------------------
+        # ---
+        # instance assoc
+        inst_assoc = pred_dict['inst_assoc']  # (N, 2)
+        inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
+        if num_gt_fg > 0:
+            loss_inst_assoc = self.l2_loss(inst_assoc[fg_target == 1], inst_assoc_target, dim=1, reduction='mean')
+            tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
+        else:
+            loss_inst_assoc = 0.
+            tb_dict['loss_inst_assoc'] = 0.
+
+        # -----------------------
         # # Instance-wise loss
         # # -----------------------
         # # ---
