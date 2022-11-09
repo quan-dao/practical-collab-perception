@@ -532,22 +532,22 @@ class PointAligner(nn.Module):
             logger.info('loss_local_transl has ground truth')
             loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
                                              dim=-1, reduction='mean')
-            tb_dict['loss_local_transl'] = loss_local_transl.item()
         else:
             logger.info('loss_local_transl does not have ground truth')
-            loss_local_transl = 0.0
-            tb_dict['loss_local_transl'] = 0.0
+            loss_local_transl = self.l2_loss(local_transl, torch.clone(local_transl).detach(),
+                                             dim=-1, reduction='mean')
+        tb_dict['loss_local_transl'] = loss_local_transl.item()
 
         # rotation
         if torch.any(local_mos_mask):
             logger.info('loss_local_rot has ground truth')
             loss_local_rot = torch.linalg.norm(
                 local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
-            tb_dict['loss_local_rot'] = loss_local_rot.item()
         else:
             logger.info('loss_local_rot does not have ground truth')
-            loss_local_rot = 0.0
-            tb_dict['loss_local_rot'] = 0.0
+            loss_local_rot = torch.linalg.norm(
+                local_rot_mat - torch.clone(local_rot_mat).detach(), dim=(1, 2), ord='fro').mean()
+        tb_dict['loss_local_rot'] = loss_local_rot.item()
 
         # # ---
         # # Local tf - reconstruction loss
