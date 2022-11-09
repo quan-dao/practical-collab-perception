@@ -484,6 +484,7 @@ class PointAligner(nn.Module):
         # foreground seg
         fg_logit = pred_dict['fg']  # (N, 1)
         fg_target = target_dict['fg']  # (N,)
+        assert torch.all(torch.isfinite(fg_logit))
 
         num_gt_fg = fg_target.sum().item()
         loss_fg = self.focal_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
@@ -519,6 +520,10 @@ class PointAligner(nn.Module):
         local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
 
         local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
+
+        assert torch.all(torch.isfinite(local_transl))
+        assert torch.all(torch.isfinite(local_rot_mat))
+        assert torch.all(torch.isfinite(local_tf_target))
 
         # which local are associated with dynamic instances
         with torch.no_grad():
@@ -585,7 +590,7 @@ class PointAligner(nn.Module):
         #     loss_recon = 0.0
         #     tb_dict['loss_recon'] = 0.0
 
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos  + loss_local_transl  + loss_local_rot  # + loss_recon
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot  # + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
