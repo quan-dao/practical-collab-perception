@@ -177,7 +177,7 @@ def init_dist_slurm():
     torch.cuda.set_device(idr_torch.local_rank)
 
     total_gpus = dist.get_world_size()
-    rank = dist.get_rank()
+    rank = idr_torch.local_rank
     return total_gpus, rank
 
 
