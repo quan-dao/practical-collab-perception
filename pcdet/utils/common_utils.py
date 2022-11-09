@@ -169,7 +169,7 @@ def init_dist_slurm():
     os.environ['MASTER_ADDR'] = hostnames[0]
     os.environ['MASTER_PORT'] = str(12345 + int(min(gpu_ids)))  # to avoid port conflict on the same node
 
-    dist.init_process_group(backend='gloo',
+    dist.init_process_group(backend='nccl',
                             init_method='env://',
                             world_size=idr_torch.size,
                             rank=idr_torch.rank)
