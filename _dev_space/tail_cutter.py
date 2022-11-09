@@ -183,10 +183,10 @@ class PointAligner(nn.Module):
                                                 cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 3 for 3 components of translation vector
 
-        # self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
-        #                                      cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
+                                             cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 4 for 4 components of quaternion
-        # fill_fc_weights(self.inst_local_rot)
+        fill_fc_weights(self.inst_local_rot)
         # ---
         # loss func
         self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
@@ -372,8 +372,8 @@ class PointAligner(nn.Module):
         pred_local_transl = self.inst_local_transl(local_feat)  # (N_local, 3)
         pred_dict['local_transl'] = pred_local_transl
 
-        # pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
-        # pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
+        pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
+        pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
 
         batch_dict.update(pred_dict)
 
@@ -517,7 +517,7 @@ class PointAligner(nn.Module):
         # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
 
         local_transl = pred_dict['local_transl']  # (N_local, 3)
-        # local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
+        local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
 
         local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
 
@@ -543,16 +543,17 @@ class PointAligner(nn.Module):
                                              dim=-1, reduction='mean')
         tb_dict['loss_local_transl'] = loss_local_transl.item()
 
-        # # rotation
-        # if torch.any(local_mos_mask):
-        #     logger.info('loss_local_rot has ground truth')
-        #     loss_local_rot = torch.linalg.norm(
-        #         local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
-        # else:
-        #     logger.info('loss_local_rot does not have ground truth')
-        #     loss_local_rot = torch.linalg.norm(
-        #         local_rot_mat - torch.clone(local_rot_mat).detach(), dim=(1, 2), ord='fro').mean()
-        # tb_dict['loss_local_rot'] = loss_local_rot.item()
+        # rotation
+        if torch.any(local_mos_mask):
+            logger.info('loss_local_rot has ground truth')
+            loss_local_rot = torch.linalg.norm(
+                local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
+        else:
+            logger.info('loss_local_rot does not have ground truth')
+            loss_local_rot = self.l2_loss(local_rot_mat.reshape(-1, 1),
+                                          torch.clone(local_rot_mat).detach().reshape(-1, 1),
+                                          dim=-1, reduction='mean')
+        tb_dict['loss_local_rot'] = loss_local_rot.item()
 
         # # ---
         # # Local tf - reconstruction loss
@@ -590,7 +591,7 @@ class PointAligner(nn.Module):
         #     loss_recon = 0.0
         #     tb_dict['loss_recon'] = 0.0
 
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl # + loss_local_rot  # + loss_recon
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot  # + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
