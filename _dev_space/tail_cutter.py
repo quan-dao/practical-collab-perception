@@ -182,10 +182,10 @@ class PointAligner(nn.Module):
                                                 cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 3 for 3 components of translation vector
 
-        # self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
-        #                                      cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
-        # # out == 4 for 4 components of quaternion
-        # fill_fc_weights(self.inst_local_rot)
+        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
+                                             cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        # out == 4 for 4 components of quaternion
+        fill_fc_weights(self.inst_local_rot)
         # ---
         # loss func
         self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
@@ -370,9 +370,9 @@ class PointAligner(nn.Module):
         # use local_feat to predict local_tf of size (N_local, 3, 4)
         pred_local_transl = self.inst_local_transl(local_feat)  # (N_local, 3)
         pred_dict['local_transl'] = pred_local_transl
-        #
-        # pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
-        # pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
+
+        pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
+        pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
 
         batch_dict.update(pred_dict)
 
@@ -515,7 +515,7 @@ class PointAligner(nn.Module):
         # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
 
         local_transl = pred_dict['local_transl']  # (N_local, 3)
-        # local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
+        local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
 
         local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
 
@@ -534,15 +534,15 @@ class PointAligner(nn.Module):
             loss_local_transl = 0.0
             tb_dict['loss_local_transl'] = 0.0
 
-        # # rotation
-        # if torch.any(local_mos_mask):
-        #     loss_local_rot = torch.linalg.norm(
-        #         local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
-        #     tb_dict['loss_local_rot'] = loss_local_rot.item()
-        # else:
-        #     loss_local_rot = 0.0
-        #     tb_dict['loss_local_rot'] = 0.0
-        #
+        # rotation
+        if torch.any(local_mos_mask):
+            loss_local_rot = torch.linalg.norm(
+                local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
+            tb_dict['loss_local_rot'] = loss_local_rot.item()
+        else:
+            loss_local_rot = 0.0
+            tb_dict['loss_local_rot'] = 0.0
+
         # # ---
         # # Local tf - reconstruction loss
         #
@@ -579,7 +579,7 @@ class PointAligner(nn.Module):
         #     loss_recon = 0.0
         #     tb_dict['loss_recon'] = 0.0
 
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos  + loss_local_transl  # + loss_local_rot + loss_recon
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos  + loss_local_transl  + loss_local_rot  # + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
