@@ -522,7 +522,7 @@ class PointAligner(nn.Module):
         local_tf_target = target_dict['local_tf']  # (N_local, 3, 4)
 
         assert torch.all(torch.isfinite(local_transl))
-        # assert torch.all(torch.isfinite(local_rot_mat))
+        assert torch.all(torch.isfinite(local_rot_mat))
         assert torch.all(torch.isfinite(local_tf_target))
 
         # which local are associated with dynamic instances
@@ -555,43 +555,50 @@ class PointAligner(nn.Module):
                                           dim=-1, reduction='mean')
         tb_dict['loss_local_rot'] = loss_local_rot.item()
 
-        # # ---
-        # # Local tf - reconstruction loss
-        #
-        # inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']
-        # fg_motion = inst_mos_target[inst_bi_inv_indices]  # (N_fg)
-        # fg_motion = fg_motion == 1  # (N_fg)
-        # if torch.any(fg_motion):
-        #     # extract dyn fg points
-        #     aug_fg_mask = batch_dict['points'][:, -1].long() > -1  # (N,) - use aug inst index
-        #     fg = batch_dict['points'][aug_fg_mask]  # (N_fg)
-        #     dyn_fg = fg[fg_motion, 1: 4]  # (N_dyn, 3)
-        #
-        #     # reconstruct with ground truth
-        #     local_bisw_inv_indices = self.forward_return_dict['meta']['local_bisw_inv_indices']
-        #     gt_fg_tf = local_tf_target[local_bisw_inv_indices]  # (N_fg, 3, 4)
-        #     gt_dyn_fg_tf = gt_fg_tf[fg_motion]  # (N_dyn, 3, 4)
-        #
-        #     gt_recon_dyn_fg = torch.matmul(gt_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
-        #                       gt_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
-        #     if debug:
-        #         debug_dict['gt_recon_dyn_fg'] = gt_recon_dyn_fg  # (N_dyn, 3)
-        #
-        #     # reconstruct with prediction
-        #     local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
-        #     pred_fg_tf = local_tf_pred[local_bisw_inv_indices]  # (N_fg, 3, 4)
-        #     pred_dyn_fg_tf = pred_fg_tf[fg_motion]  # (N_dyn, 3, 4)
-        #
-        #     pred_recon_dyn_fg = torch.matmul(pred_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
-        #                         pred_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
-        #
-        #     loss_recon = self.l2_loss(pred_recon_dyn_fg, gt_recon_dyn_fg, dim=-1, reduction='mean')
-        #     tb_dict['loss_recon'] = loss_recon.item()
-        # else:
-        #     loss_recon = 0.0
-        #     tb_dict['loss_recon'] = 0.0
+        # ---
+        # Local tf - reconstruction loss
 
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot  # + loss_recon
+        # get motion mask of foreground
+        inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']  # (N_fg)
+        fg_motion = inst_mos_target[inst_bi_inv_indices] == 1  # (N_fg)
+
+        aug_fg_mask = batch_dict['points'][:, -1].long() > -1  # (N,) - use aug inst index
+        fg = batch_dict['points'][aug_fg_mask]  # (N_fg)
+
+        if torch.any(fg_motion):
+            # extract dyn fg points
+            dyn_fg = fg[fg_motion, 1: 4]  # (N_dyn, 3)
+
+            # reconstruct with ground truth
+            local_bisw_inv_indices = self.forward_return_dict['meta']['local_bisw_inv_indices']
+            gt_fg_tf = local_tf_target[local_bisw_inv_indices]  # (N_fg, 3, 4)
+            gt_dyn_fg_tf = gt_fg_tf[fg_motion]  # (N_dyn, 3, 4)
+
+            gt_recon_dyn_fg = torch.matmul(gt_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
+                              gt_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
+            if debug:
+                debug_dict['gt_recon_dyn_fg'] = gt_recon_dyn_fg  # (N_dyn, 3)
+
+            # reconstruct with prediction
+            local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
+            pred_fg_tf = local_tf_pred[local_bisw_inv_indices]  # (N_fg, 3, 4)
+            pred_dyn_fg_tf = pred_fg_tf[fg_motion]  # (N_dyn, 3, 4)
+
+            pred_recon_dyn_fg = torch.matmul(pred_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
+                                pred_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
+
+            loss_recon = self.l2_loss(pred_recon_dyn_fg, gt_recon_dyn_fg, dim=-1, reduction='mean')
+        else:
+            # there is no moving fg -> dummy loss
+            local_bisw_inv_indices = self.forward_return_dict['meta']['local_bisw_inv_indices']
+            local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
+            pred_fg_tf = local_tf_pred[local_bisw_inv_indices]  # (N_fg, 3, 4)
+            pred_recon_dyn_fg = torch.matmul(pred_fg_tf[:, :, :3], fg[:, 1: 4, None]).squeeze(-1) + \
+                                pred_fg_tf[:, :, -1]  # (N_dyn, 3)
+            loss_recon = self.l2_loss(pred_recon_dyn_fg, torch.clone(pred_recon_dyn_fg).detach(), dim=-1, reduction='mean')
+        tb_dict['loss_recon'] = loss_recon.item()
+
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
