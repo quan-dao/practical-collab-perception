@@ -8,6 +8,7 @@ from kornia.losses.focal import BinaryFocalLossWithLogits
 from torchmetrics.functional import precision_recall
 from sklearn.cluster import DBSCAN
 from _dev_space.unet_2d import UNet2D
+from _dev_space.resnet import PoseResNet
 from _dev_space.instance_centric_tools import quat2mat
 import logging
 
@@ -148,22 +149,27 @@ class PointAligner(nn.Module):
 
         map_net_cfg = cfg.MAP_NET
         if map_net_cfg.ENABLE:
-            map_net_channels = [map_net_cfg.NUM_MAP_LAYERS] + map_net_cfg.CHANNELS
-            map_net_layers = []
-            for ch_idx in range(len(map_net_channels) - 1):
-                is_last_layer = ch_idx == len(map_net_channels) - 2
-                map_net_layers.append(
-                    nn.Conv2d(map_net_channels[ch_idx], map_net_channels[ch_idx + 1], 3, padding=1, bias=is_last_layer)
-                )
-                if not is_last_layer:
-                    map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
-                    map_net_layers.append(nn.ReLU(True))
-            self.map_net = nn.Sequential(*map_net_layers)
+            if map_net_cfg.NAME == 'MapFusion':
+                map_net_channels = [map_net_cfg.NUM_MAP_LAYERS] + map_net_cfg.MAP_FUSION_CHANNELS
+                map_net_layers = []
+                for ch_idx in range(len(map_net_channels) - 1):
+                    is_last_layer = ch_idx == len(map_net_channels) - 2
+                    map_net_layers.append(
+                        nn.Conv2d(map_net_channels[ch_idx], map_net_channels[ch_idx + 1], 3, padding=1, bias=is_last_layer)
+                    )
+                    if not is_last_layer:
+                        map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
+                        map_net_layers.append(nn.ReLU(True))
+                self.map_net = nn.Sequential(*map_net_layers)
+                num_map_features = map_net_cfg.MAP_FUSION_CHANNELS[-1]
+            else:
+                self.map_net = PoseResNet(map_net_cfg, map_net_cfg.NUM_MAP_LAYERS)
+                num_map_features = self.map_net.num_out_features
         else:
             self.map_net = None
 
         if map_net_cfg.ENABLE:
-            self.backbone2d = UNet2D(map_net_cfg.CHANNELS[-1] + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
+            self.backbone2d = UNet2D(num_map_features + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
         else:
             self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
 

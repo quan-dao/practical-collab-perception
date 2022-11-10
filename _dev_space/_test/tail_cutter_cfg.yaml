@@ -56,10 +56,15 @@ MODEL:
 
     MAP_NET:
         ENABLE: True
+        NAME: ResNetFPN  # or MapFusion
         NUM_MAP_LAYERS: 5  # drivable_area, walkway, pedcrossing, carpark_area, lane
-        CHANNELS: [4, 4, 4, 4, 4, 4]
         DROP_PROB: 0.3
         DROP_BLOCK_SIZE: 7
+        MAP_FUSION_CHANNELS: [ 16, 16, 32, 32, 64, 64 ]  # MapFusion style
+        # ResNetFPN
+        NUM_FILTERS: [ 4, 8, 16 ]
+        LAYERS_SIZE: [ 2, 2, 2 ]
+        NUM_UP_FILTERS: [ 8, 4, 4, 4 ]
 
     BEV_BACKBONE:
         NAME: UNET2D
