@@ -611,16 +611,16 @@ class PointAligner(nn.Module):
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
-        # with torch.no_grad():
-        #     pred_fg_prob = sigmoid(fg_logit.detach()).squeeze(-1)  # (N,)
-        #     precision_fg, recall_fg = precision_recall(pred_fg_prob, fg_target, threshold=0.5)
-        #     tb_dict['fg_P'] = precision_fg.item()
-        #     tb_dict['fg_R'] = recall_fg.item()
-        #
-        #     inst_mos_prob = sigmoid(inst_mos_logit.detach()).squeeze(-1)  # (N_inst)
-        #     precision_mos, recall_mos = precision_recall(inst_mos_prob, inst_mos_target, threshold=0.5)
-        #     tb_dict['mos_P'] = precision_mos.item()
-        #     tb_dict['mos_R'] = recall_mos.item()
+        with torch.no_grad():
+            pred_fg_prob = sigmoid(fg_logit.detach()).squeeze(-1)  # (N,)
+            precision_fg, recall_fg = precision_recall(pred_fg_prob, fg_target, threshold=0.5)
+            tb_dict['fg_P'] = precision_fg.item()
+            tb_dict['fg_R'] = recall_fg.item()
+
+            inst_mos_prob = sigmoid(inst_mos_logit.detach()).squeeze(-1)  # (N_inst)
+            precision_mos, recall_mos = precision_recall(inst_mos_prob, inst_mos_target, threshold=0.5)
+            tb_dict['mos_P'] = precision_mos.item()
+            tb_dict['mos_R'] = recall_mos.item()
         out = [loss, tb_dict]
         # if debug:
         #     out.append(debug_dict)
