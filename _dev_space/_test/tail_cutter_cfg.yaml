@@ -82,3 +82,6 @@ MODEL:
     CLUSTER:
         EPS: 1.5
         MIN_POINTS: 3
+
+    LOSS:
+        SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'

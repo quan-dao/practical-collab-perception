@@ -10,7 +10,8 @@ from sklearn.cluster import DBSCAN
 from _dev_space.unet_2d import UNet2D
 from _dev_space.resnet import PoseResNet
 from _dev_space.instance_centric_tools import quat2mat
-import logging
+from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
+from _dev_space.external_drop import DropBlock2d
 
 
 def to_ndarray(x):
@@ -167,6 +168,7 @@ class PointAligner(nn.Module):
                 num_map_features = self.map_net.num_out_features
         else:
             self.map_net = None
+        self.drop_map = DropBlock2d(map_net_cfg.DROP_PROB, map_net_cfg.DROP_BLOCK_SIZE)
 
         if map_net_cfg.ENABLE:
             self.backbone2d = UNet2D(num_map_features + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
@@ -201,7 +203,13 @@ class PointAligner(nn.Module):
         # ---
         self.forward_return_dict = dict()
         # loss func
-        self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
+        if cfg.LOSS.SEGMENTATION_LOSS == 'focal':
+            self.seg_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
+        elif cfg.LOSS.SEGMENTATION_LOSS == 'ce_lovasz':
+            self.seg_loss = CELovaszLoss(num_classes=2)  # binary classification for both fg seg & motion seg
+        else:
+            raise NotImplementedError
+
         self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
 
     @staticmethod
@@ -236,6 +244,7 @@ class PointAligner(nn.Module):
         # concatenate hd_map with bev_img before passing to backbone_2d
         if self.map_net is not None:
             map_img = self.map_net(batch_dict['img_map'])
+            map_img = self.drop_map(map_img)
             bev_img = torch.cat([bev_img, map_img], dim=1)  # (B, C_bev + C_map, H, W)
 
         bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)
@@ -502,19 +511,21 @@ class PointAligner(nn.Module):
         assert torch.all(torch.isfinite(fg_logit))
 
         num_gt_fg = fg_target.sum().item()
-        loss_fg = self.focal_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
+        if self.cfg.LOSS.SEGMENTATION_LOSS == 'focal':
+            loss_fg = self.seg_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
+        else:
+            loss_fg = self.seg_loss(fg_logit, fg_target, tb_dict, loss_name='fg')
         tb_dict['loss_fg'] = loss_fg.item()
 
         # ---
         # instance assoc
         inst_assoc = pred_dict['inst_assoc']  # (N, 2)
-        inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
         if num_gt_fg > 0:
+            inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
             loss_inst_assoc = self.l2_loss(inst_assoc[fg_target == 1], inst_assoc_target, dim=1, reduction='mean')
-            tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
         else:
-            loss_inst_assoc = 0.
-            tb_dict['loss_inst_assoc'] = 0.
+            loss_inst_assoc = self.l2_loss(inst_assoc, torch.clone(inst_assoc).detach(), dim=1, reduction='mean')
+        tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
 
         # -----------------------
         # Instance-wise loss
@@ -525,7 +536,10 @@ class PointAligner(nn.Module):
         inst_mos_target = target_dict['inst_motion_stat']  # (N_inst,)
 
         num_gt_dyn_inst = float(inst_mos_target.sum().item())
-        loss_inst_mos = self.focal_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
+        if self.cfg.LOSS.SEGMENTATION_LOSS == 'focal':
+            loss_inst_mos = self.seg_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
+        else:
+            loss_inst_mos = self.seg_loss(inst_mos_logit, inst_mos_target, tb_dict, loss_name='mos')
         tb_dict['loss_inst_mos'] = loss_inst_mos.item()
 
         # ---
