@@ -55,6 +55,7 @@ MODEL:
         NUM_BEV_FEATURES: 64
 
     MAP_NET:
+        ENABLE: True
         NUM_MAP_LAYERS: 5  # drivable_area, walkway, pedcrossing, carpark_area, lane
         CHANNELS: [4, 4, 4, 4, 4, 4]
         DROP_PROB: 0.3

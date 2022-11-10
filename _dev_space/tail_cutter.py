@@ -5,7 +5,7 @@ import torch_scatter
 from einops import rearrange
 from typing import List
 from kornia.losses.focal import BinaryFocalLossWithLogits
-# from torchmetrics.functional import precision_recall
+from torchmetrics.functional import precision_recall
 from sklearn.cluster import DBSCAN
 from _dev_space.unet_2d import UNet2D
 from _dev_space.instance_centric_tools import quat2mat
@@ -146,21 +146,26 @@ class PointAligner(nn.Module):
             pillar_cfg.NUM_RAW_FEATURES, pillar_cfg.NUM_BEV_FEATURES, pillar_cfg.POINT_CLOUD_RANGE,
             pillar_cfg.VOXEL_SIZE)
 
-        # map_net_cfg = cfg.MAP_NET
-        # map_net_channels = [map_net_cfg.NUM_MAP_LAYERS] + map_net_cfg.CHANNELS
-        # map_net_layers = []
-        # for ch_idx in range(len(map_net_channels) - 1):
-        #     is_last_layer = ch_idx == len(map_net_channels) - 2
-        #     map_net_layers.append(
-        #         nn.Conv2d(map_net_channels[ch_idx], map_net_channels[ch_idx + 1], 3, padding=1, bias=is_last_layer)
-        #     )
-        #     if not is_last_layer:
-        #         map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
-        #         map_net_layers.append(nn.ReLU(True))
-        # self.map_net = nn.Sequential(*map_net_layers)
+        map_net_cfg = cfg.MAP_NET
+        if map_net_cfg.ENABLE:
+            map_net_channels = [map_net_cfg.NUM_MAP_LAYERS] + map_net_cfg.CHANNELS
+            map_net_layers = []
+            for ch_idx in range(len(map_net_channels) - 1):
+                is_last_layer = ch_idx == len(map_net_channels) - 2
+                map_net_layers.append(
+                    nn.Conv2d(map_net_channels[ch_idx], map_net_channels[ch_idx + 1], 3, padding=1, bias=is_last_layer)
+                )
+                if not is_last_layer:
+                    map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
+                    map_net_layers.append(nn.ReLU(True))
+            self.map_net = nn.Sequential(*map_net_layers)
+        else:
+            self.map_net = None
 
-        # self.backbone2d = UNet2D(map_net_channels[-1] + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
-        self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
+        if map_net_cfg.ENABLE:
+            self.backbone2d = UNet2D(map_net_cfg.CHANNELS[-1] + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
+        else:
+            self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
 
         # ----
         backbone_out_c = self.backbone2d.n_output_feat
@@ -188,14 +193,10 @@ class PointAligner(nn.Module):
         # out == 4 for 4 components of quaternion
         fill_fc_weights(self.inst_local_rot)
         # ---
+        self.forward_return_dict = dict()
         # loss func
         self.focal_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
-        # ---
-        # eval metrics
-        # self.avg_precision = BinaryAveragePrecision(thresholds=5)
-
-        self.forward_return_dict = dict()
-        # self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
+        self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
@@ -227,8 +228,9 @@ class PointAligner(nn.Module):
         bev_img = self.pillar_encoder(batch_dict)  # (B, C_bev, H, W), (N, 2)-bev_x, bev_y
 
         # concatenate hd_map with bev_img before passing to backbone_2d
-        # map_img = self.map_net(batch_dict['img_map'])
-        # bev_img = torch.cat([bev_img, map_img], dim=1)  # (B, C_bev + C_map, H, W)
+        if self.map_net is not None:
+            map_img = self.map_net(batch_dict['img_map'])
+            bev_img = torch.cat([bev_img, map_img], dim=1)  # (B, C_bev + C_map, H, W)
 
         bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)
 
@@ -308,10 +310,16 @@ class PointAligner(nn.Module):
             # merge batch_idx, instance_idx & sweep_idx
             fg_bisw_idx = fg_bi_idx * self.cfg.get('NUM_SWEEPS', 10) + fg_sweep_idx
 
+            # --
+            # group foreground points to instance
+            # ---
             inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
             # inst_bi: (N_inst,)
             # inst_bi_inv_indices: (N_fg,)
 
+            # --
+            # group foreground points to local group
+            # ---
             local_bisw, local_bisw_inv_indices = torch.unique(fg_bisw_idx, sorted=True, return_inverse=True)
             # local_bisw: (N_local,)
 
@@ -338,6 +346,7 @@ class PointAligner(nn.Module):
         local_shape_enc = torch_scatter.scatter_max(fg_shape_enc, local_bisw_inv_indices, dim=0)[0]  # (N_local, C_inst)
 
         # ------------
+        # compute instance shape encoding of the local @ target timestep (i.e. local having the largest sweep idx)
         with torch.no_grad():
             # get the max sweep_index of each instance
             inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)

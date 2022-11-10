@@ -119,7 +119,7 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
 
         load_dict_to_gpu(batch_dict)
         batch_dict = model(batch_dict)
-        loss, tb_dict, debug_dict = model.get_training_loss(batch_dict, debug=True)
+        loss, tb_dict = model.get_training_loss(batch_dict, debug=False)
 
         print('loss = ', loss)
         print_dict(tb_dict)
