@@ -88,7 +88,7 @@ MODEL:
         MIN_POINTS: 3
 
     LOSS:
-        SEGMENTATION_LOSS: 'focal'  # or 'ce_lovasz'
+        SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
 
     DEBUG: False
 
