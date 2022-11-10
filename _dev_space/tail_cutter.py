@@ -547,24 +547,24 @@ class PointAligner(nn.Module):
             local_mos_mask = local_mos_target == 1  # (N_local,)
 
         # translation
-        logger = logging.getLogger()
+        # logger = logging.getLogger()
         if torch.any(local_mos_mask):
-            logger.info('loss_local_transl has ground truth')
+            # logger.info('loss_local_transl has ground truth')
             loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
                                              dim=-1, reduction='mean')
         else:
-            logger.info('loss_local_transl does not have ground truth')
+            # logger.info('loss_local_transl does not have ground truth')
             loss_local_transl = self.l2_loss(local_transl, torch.clone(local_transl).detach(),
                                              dim=-1, reduction='mean')
         tb_dict['loss_local_transl'] = loss_local_transl.item()
 
         # rotation
         if torch.any(local_mos_mask):
-            logger.info('loss_local_rot has ground truth')
+            # logger.info('loss_local_rot has ground truth')
             loss_local_rot = torch.linalg.norm(
                 local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
         else:
-            logger.info('loss_local_rot does not have ground truth')
+            # logger.info('loss_local_rot does not have ground truth')
             loss_local_rot = self.l2_loss(local_rot_mat.reshape(-1, 1),
                                           torch.clone(local_rot_mat).detach().reshape(-1, 1),
                                           dim=-1, reduction='mean')
