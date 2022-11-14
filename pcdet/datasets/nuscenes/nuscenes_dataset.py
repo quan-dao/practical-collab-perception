@@ -129,7 +129,7 @@ class NuScenesDataset(DatasetTemplate):
 
         info = copy.deepcopy(self.infos[index])
 
-        num_sweeps = np.random.randint(low=self.dataset_cfg.MIN_SWEEPS, high=self.dataset_cfg.MAX_SWEEPS + 1)
+        num_sweeps = np.random.choice(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)
 
         _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps)
         points = _out['points']  # (N, C)
@@ -145,7 +145,7 @@ class NuScenesDataset(DatasetTemplate):
 
             # keep the first (1 - DROP_PROB)% of closed_bg
             num_kept_closed_bg = int(closed_bg_ids.shape[0] * (1.0 - self.dataset_cfg.DROP_BACKGROUND.DROP_PROB))
-            closed_bg = closed_bg[closed_bg_ids[:num_kept_closed_bg]]
+            closed_bg = closed_bg[closed_bg_ids[:max(num_kept_closed_bg, 100)]]
 
             # concatenate kept closed_bg & points that are not closed_bg
             points = np.concatenate((closed_bg, points[np.logical_not(mask_closed_bg)]), axis=0)

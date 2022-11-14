@@ -10,8 +10,7 @@ DATA_CONFIG:
     USE_HD_MAP: True
     NORMALIZE_LANE_ANGLE: True
 
-    MIN_SWEEPS: 10
-    MAX_SWEEPS: 30
+    POSSIBLE_NUM_SWEEPS: [10, 15, 20, 25]
 
     DROP_BACKGROUND:
         ENABLE: True
@@ -79,7 +78,7 @@ MODEL:
         UP_CHANNELS: [-1, 16, 16, 16, 8, 8]  # [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
         UP_DEFORM_CONV: [-1, False, True, True, True, True]  # dummy-1-2-3-4-5
 
-    NUM_SWEEPS: 10
+    NUM_SWEEPS: 25
     HEAD_MID_CHANNELS: [7]
     INSTANCE_MID_CHANNELS: [7]
     INSTANCE_OUT_CHANNELS: 4
