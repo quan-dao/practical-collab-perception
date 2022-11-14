@@ -30,6 +30,20 @@ class NuScenesDataset(DatasetTemplate):
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
 
+        self.detection_name_to_meta_cls = {
+            'pedestrian': 'ignore',
+            'car': 'car',
+            'motorcycle': 'car',
+            'bicycle': 'car',
+            'bus': 'car',
+            'truck': 'car',
+            'construction_vehicle': 'car',
+            'trailer': 'car',
+            'barrier': 'ignore',
+            'traffic_cone': 'ignore',
+            'ignore': 'ignore',
+        }
+
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
         nuscenes_infos = []
@@ -179,6 +193,11 @@ class NuScenesDataset(DatasetTemplate):
                 'gt_boxes': info['gt_boxes'] if mask is None else info['gt_boxes'][mask]
             })
 
+            # map 'gt_names' to meta name
+            new_gt_names = np.array([self.detection_name_to_meta_cls[info['gt_names'][name_idx]]
+                                     for name_idx in range(info['gt_names'].shape[0])])
+            info['gt_names'] = new_gt_names
+
         data_dict = self.prepare_data(data_dict=input_dict)
 
         if self.dataset_cfg.get('SET_NAN_VELOCITY_TO_ZEROS', False) and 'gt_boxes' in info:
@@ -217,7 +236,8 @@ class NuScenesDataset(DatasetTemplate):
             return 'No ground-truth annotations for evaluation', {}
 
         from nuscenes.eval.detection.config import config_factory
-        from nuscenes.eval.detection.evaluate import NuScenesEval
+        # from nuscenes.eval.detection.evaluate import NuScenesEval
+        from _dev_space.new_nuscenes_eval.my_nuscenes_eval import MyNuScenesEval as NuScenesEval
 
         eval_set_map = {
             'v1.0-mini': 'mini_val',

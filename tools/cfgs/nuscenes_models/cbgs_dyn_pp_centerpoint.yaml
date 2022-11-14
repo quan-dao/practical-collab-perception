@@ -1,15 +1,24 @@
-CLASS_NAMES: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
-              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+CLASS_NAMES: ['car']
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
-    USE_MINI_TRAINVAL: True
+    VERSION: 'v1.0-mini'
+    USE_MINI_TRAINVAL: False
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+    USE_HD_MAP: True
+    NORMALIZE_LANE_ANGLE: False
+    BEV_IMAGE_RESOLUTION: 0.2
+
+    POSSIBLE_NUM_SWEEPS: [10]
+    DROP_BACKGROUND:
+        ENABLE: False
+        DISTANCE_THRESHOLD: 10
+        DROP_PROB: 0.4
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
-        used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'indicator' ],
-        src_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'offset_x', 'offset_y', 'indicator' ],
+        used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp'],
+        src_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx'],
     }
 
     DATA_AUGMENTOR:
@@ -64,37 +73,6 @@ DATA_CONFIG:
 MODEL:
     NAME: CenterPoint
 
-    PC_CORRECTOR:
-        RETURN_OFFSET: True
-        IS_FREEZED: False
-        RETURN_FGR_PROB: True
-        USE_FGR_PROB_AS_RAW_FEAT: False
-        NUM_RAW_POINT_FEATURES: 5
-        MODEL:
-            DEBUG: True
-            CKPT: pretrained_models/bev_seg_caddn_style_fullnusc_ep5.pth
-            VFE:
-                NAME: DynPillarVFE
-                WITH_DISTANCE: False
-                USE_ABSLOTE_XYZ: True
-                USE_NORM: True
-                NUM_FILTERS: [ 64, 64 ]
-            MAP_TO_BEV:
-                NAME: PointPillarScatter
-                NUM_BEV_FEATURES: 64
-            BACKBONE_2D:
-                NAME: PoseResNet
-                NUM_FILTERS: [ 64, 128, 256 ]
-                LAYERS_SIZE: [ 2, 2, 2 ]
-                HEAD_CONV: 64
-                NUM_UP_FILTERS: [ 128, 64, 64 ]
-                BEV_IMG_STRIDE: 2
-                LOSS_WEIGHTS: [ 1.0, 1.0, 1.0, 1.0, 1.0 ]
-                CRT_NUM_BINS: 40
-                CRT_DIR_NUM_BINS: 80
-                CRT_MAX_MAGNITUDE: 15.0
-                GENERATE_TARGET_WHILE_TESTING: False
-
     VFE:
         NAME: DynPillarVFE
         WITH_DISTANCE: False
@@ -120,11 +98,11 @@ MODEL:
 
         CLASS_NAMES_EACH_HEAD: [
             ['car'],
-            ['truck', 'construction_vehicle'],
-            ['bus', 'trailer'],
-            ['barrier'],
-            ['motorcycle', 'bicycle'],
-            ['pedestrian', 'traffic_cone'],
+#            ['truck', 'construction_vehicle'],
+#            ['bus', 'trailer'],
+#            ['barrier'],
+#            ['motorcycle', 'bicycle'],
+#            ['pedestrian', 'traffic_cone'],
         ]
 
         SHARED_CONV_CHANNEL: 64

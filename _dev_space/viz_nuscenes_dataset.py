@@ -13,8 +13,7 @@ np.random.seed(666)
 
 
 def modify_dataset_cfg(cfg, use_hd_map=False):
-    cfg.CLASS_NAMES = ['car', 'truck', 'construction_vehicle', 'bus', 'trailer',
-                       'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+    cfg.CLASS_NAMES = ['car']
 
     cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
         'placeholder',
@@ -34,8 +33,7 @@ def modify_dataset_cfg(cfg, use_hd_map=False):
         cfg.USE_HD_MAP = True
         cfg.NORMALIZE_LANE_ANGLE = True
 
-    cfg.MIN_SWEEPS = 30
-    cfg.MAX_SWEEPS = 30
+    cfg.POSSIBLE_NUM_SWEEPS = [10]
     cfg.DROP_BACKGROUND = edict({
         'ENABLE': True,
         'DISTANCE_THRESHOLD': 10,
@@ -76,6 +74,7 @@ def main(**kwargs):
 
     print_dict(data_dict)
     print('meta: ', data_dict['metadata'])
+    print("gt_boxes' classes: ", data_dict['gt_boxes'][..., -1])
 
     if kwargs.get('show_raw_pointcloud', False):
         print('-----------------------\n'
