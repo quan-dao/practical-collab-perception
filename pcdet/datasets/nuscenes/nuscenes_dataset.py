@@ -154,7 +154,8 @@ class NuScenesDataset(DatasetTemplate):
             'points': points,
             'instances_tf': _out['instances_tf'],
             'frame_id': Path(info['lidar_path']).stem,
-            'metadata': {'token': info['token'], 'num_sweeps': num_sweeps}
+            'metadata': {'token': info['token'], 'num_sweeps': num_sweeps,
+                         'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)}
         }
 
         # ------

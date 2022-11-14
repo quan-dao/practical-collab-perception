@@ -284,13 +284,18 @@ class DatasetTemplate(torch_data.Dataset):
                 elif key in ['instances_tf']:
                     # 1 instances_tf - (N_instances, N_sweeps, 4, 4)
                     max_n_inst = max([inst_tf.shape[0] for inst_tf in val])
-                    num_sweeps = max([inst_tf.shape[1] for inst_tf in val])
-                    batch_instances_tf = np.zeros((batch_size, max_n_inst, num_sweeps, 3, 4))  # remove last row-> save memory
+                    max_num_sweeps = data_dict['metadata'][0]['max_num_sweeps']
+                    batch_instances_tf = np.zeros(
+                        (batch_size, max_n_inst, max_num_sweeps, 3, 4)
+                    )  # remove last row-> save memory
+
                     for b_idx, inst_tf in enumerate(val):
                         # inst_tf - (N_instances, N_sweeps, 4, 4)
                         cur_num_inst, cur_num_sweeps = inst_tf.shape[:2]
                         batch_instances_tf[b_idx, :cur_num_inst, :cur_num_sweeps] = inst_tf[:, :, :3, :]
+
                     ret[key] = batch_instances_tf
+
                 else:
                     ret[key] = np.stack(val, axis=0)
             except:
