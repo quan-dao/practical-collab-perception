@@ -10,6 +10,13 @@ DATA_CONFIG:
     NORMALIZE_LANE_ANGLE: False
     BEV_IMAGE_RESOLUTION: 0.2
 
+    MIN_SWEEPS: 10
+    MAX_SWEEPS: 30
+    DROP_BACKGROUND:
+        ENABLE: True
+        DISTANCE_THRESHOLD: 10
+        DROP_PROB: 0.4
+
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
         used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx' ],
@@ -71,7 +78,7 @@ MODEL:
         UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
         UP_DEFORM_CONV: [-1, False, False, False, False, False]  # dummy-1-2-3-4-5
 
-    NUM_SWEEPS: 10
+    NUM_SWEEPS: 50  # actually == MAX_SWEEPS
     HEAD_MID_CHANNELS: [128]
 
     INSTANCE_MID_CHANNELS: [128]

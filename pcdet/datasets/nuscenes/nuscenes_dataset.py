@@ -129,14 +129,32 @@ class NuScenesDataset(DatasetTemplate):
 
         info = copy.deepcopy(self.infos[index])
 
-        _out = inst_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
-        points = _out['points']
+        num_sweeps = np.random.randint(low=self.dataset_cfg.MIN_SWEEPS, high=self.dataset_cfg.MAX_SWEEPS + 1)
+
+        _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps)
+        points = _out['points']  # (N, C)
+
+        if self.dataset_cfg.DROP_BACKGROUND.ENABLE:
+            dist = np.linalg.norm(points[:, :2], axis=1)
+            mask_closed_bg = np.logical_and(dist < self.dataset_cfg.DROP_BACKGROUND.DISTANCE_THRESHOLD,
+                                            points[:, -2].astype(int) == -1)  # (N,)
+
+            closed_bg = points[mask_closed_bg]
+            closed_bg_ids = np.arange(closed_bg.shape[0])
+            np.random.shuffle(closed_bg_ids)
+
+            # keep the first (1 - DROP_PROB)% of closed_bg
+            num_kept_closed_bg = int(closed_bg_ids.shape[0] * (1.0 - self.dataset_cfg.DROP_BACKGROUND.DROP_PROB))
+            closed_bg = closed_bg[closed_bg_ids[:num_kept_closed_bg]]
+
+            # concatenate kept closed_bg & points that are not closed_bg
+            points = np.concatenate((closed_bg, points[np.logical_not(mask_closed_bg)]), axis=0)
 
         input_dict = {
             'points': points,
             'instances_tf': _out['instances_tf'],
             'frame_id': Path(info['lidar_path']).stem,
-            'metadata': {'token': info['token']}
+            'metadata': {'token': info['token'], 'num_sweeps': num_sweeps}
         }
 
         # ------

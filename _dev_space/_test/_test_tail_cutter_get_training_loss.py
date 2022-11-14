@@ -25,6 +25,12 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
     print('time_data: ', time_data)
 
     print_dict(batch_dict)
+
+    print('--')
+    for metadata in batch_dict['metadata']:
+        print(metadata)
+    print('--')
+
     load_data_to_tensor(batch_dict)
 
     if show_raw_data:

@@ -5,11 +5,18 @@ DATA_CONFIG:
     _BASE_CONFIG_: ../../tools/cfgs/dataset_configs/nuscenes_dataset.yaml
     DATA_PATH: ../../data/nuscenes
     VERSION: 'v1.0-mini'
-    MAX_SWEEPS: 10
     USE_MINI_TRAINVAL: False
     POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
     USE_HD_MAP: True
     NORMALIZE_LANE_ANGLE: True
+
+    MIN_SWEEPS: 10
+    MAX_SWEEPS: 30
+
+    DROP_BACKGROUND:
+        ENABLE: True
+        DISTANCE_THRESHOLD: 10
+        DROP_PROB: 0.3
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,

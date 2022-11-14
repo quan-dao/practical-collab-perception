@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from tools_box import compute_bev_coord, show_pointcloud, get_nuscenes_sensor_pose_in_ego_vehicle, apply_tf
 from viz_tools import viz_boxes, print_dict, show_image_
 import argparse
+from easydict import EasyDict as edict
 
 
 np.random.seed(666)
@@ -32,6 +33,14 @@ def modify_dataset_cfg(cfg, use_hd_map=False):
     if use_hd_map:
         cfg.USE_HD_MAP = True
         cfg.NORMALIZE_LANE_ANGLE = True
+
+    cfg.MIN_SWEEPS = 30
+    cfg.MAX_SWEEPS = 30
+    cfg.DROP_BACKGROUND = edict({
+        'ENABLE': True,
+        'DISTANCE_THRESHOLD': 10,
+        'DROP_PROB': 0.4
+    })
 
 
 def main(**kwargs):
