@@ -78,7 +78,7 @@ MODEL:
         UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
         UP_DEFORM_CONV: [-1, False, False, False, False, False]  # dummy-1-2-3-4-5
 
-    NUM_SWEEPS: 50  # actually == MAX_SWEEPS
+    NUM_SWEEPS: 30  # actually == MAX_SWEEPS
     HEAD_MID_CHANNELS: [128]
 
     INSTANCE_MID_CHANNELS: [128]
