@@ -406,11 +406,11 @@ class PointAligner(nn.Module):
         if self.training:
             self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
 
-        # if self.cfg.get('DEBUG', False) and not self.training:
-        #     batch_dict['xyz_bg'] = batch_dict['points'][torch.logical_not(mask_fg), :4]  # batch_idx, x, y, z
-        #     batch_dict['xyz_fg'] = fg[:, :4]
-        #     batch_dict['fg_inst_idx'] = fg_inst_idx
-        #     batch_dict['forward_meta'] = self.forward_return_dict['meta']
+        if self.cfg.get('DEBUG', False) and not self.training:
+            batch_dict['xyz_bg'] = batch_dict['points'][torch.logical_not(mask_fg), :4]  # batch_idx, x, y, z
+            batch_dict['xyz_fg'] = fg[:, :4]
+            batch_dict['fg_inst_idx'] = fg_inst_idx
+            batch_dict['forward_meta'] = self.forward_return_dict['meta']
 
         return batch_dict
 

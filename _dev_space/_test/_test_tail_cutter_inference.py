@@ -9,6 +9,7 @@ import os
 from pcdet.models.detectors.alginer import Aligner
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
 
 
 def load_params_from_file(model, filename, logger, to_cpu=False):
@@ -59,7 +60,10 @@ def sigmoid(x):
     return y
 
 
-def inference():
+def inference(ckpt_file: str):
+    if not ckpt_file.endswith('.pth'):
+        ckpt_file += '.pth'
+
     cfg_file = './tail_cutter_full.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./dummy_log.txt')
@@ -67,14 +71,14 @@ def inference():
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=2,
                                               dist=False, logger=logger, training=False, total_epochs=1, seed=666)
     iter_dataloader = iter(dataloader)
-    for _ in range(5):
+    for _ in range(20):
         batch_dict = next(iter_dataloader)
 
     print_dict(batch_dict)
     load_data_to_tensor(batch_dict)
 
     model = Aligner(cfg.MODEL, num_class=10, dataset=dataset)
-    load_params_from_file(model, '../from_idris/ckpt/tail_cutter_fatter_head_ep12_nusc4th.pth', logger, to_cpu=True)
+    load_params_from_file(model, f'../from_idris/ckpt/{ckpt_file}', logger, to_cpu=True)
 
     model.eval()
     model.cuda()
@@ -82,11 +86,14 @@ def inference():
     with torch.no_grad():
         batch_dict = model(batch_dict)
 
-    torch.save(batch_dict, 'inference_tail_cutter_ep10_nusc4th.pth')
+    torch.save(batch_dict, f'inference_{ckpt_file}.pth')
 
 
-def display_inference():
-    batch_dict = torch.load('inference_tail_cutter_ep10_nusc4th.pth', map_location=torch.device('cpu'))
+def display_inference(ckpt_file: str):
+    if not ckpt_file.endswith('.pth'):
+        ckpt_file += '.pth'
+
+    batch_dict = torch.load(f'inference_{ckpt_file}.pth', map_location=torch.device('cpu'))
     # print(batch_dict)
     print_dict(batch_dict)
     bg = batch_dict['xyz_bg']
@@ -131,6 +138,7 @@ def display_inference():
     _original_points = torch.cat((cur_bg, cur_fg))
     _original_points_color = _original_points.new_zeros(_original_points.shape[0], 3)
     _original_points_color[cur_bg.shape[0]:, 0] = 1
+    print('showing foreground segmentation')
     show_pointcloud(_original_points[:, 1: 4], _boxes, _original_points_color)
 
     # color by instances
@@ -152,10 +160,15 @@ def display_inference():
     # cur_points = torch.cat([cur_bg, cur_fg])
     cur_points_color = torch.cat((cur_bg_color, cur_fg_colors)).numpy()
 
+    print('showing reconstruction')
     show_pointcloud(cur_points[:, 1:], _boxes, pc_colors=cur_points_color)
 
 
-
 if __name__ == '__main__':
-    inference()
-    display_inference()
+    parser = argparse.ArgumentParser(description='arg parser')
+    parser.add_argument('--ckpt_file', type=str, default=None, help='specify the ckpt')
+    parser.add_argument('--do_inference', action='store_true', default=False, help='')
+    args = parser.parse_args()
+    if args.do_inference:
+        inference(args.ckpt_file)
+    display_inference(args.ckpt_file)
