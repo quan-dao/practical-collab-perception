@@ -192,6 +192,13 @@ class PointAligner(nn.Module):
         self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1,
                                               cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
 
+        self.inst_proposal_gen = self._make_mlp(3 + 2 * cfg.INSTANCE_OUT_CHANNELS, 8,
+                                                cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        # in_ch == 3 + 2 * cfg.INSTANCE_OUT_CHANNELS because
+        # 3 = |centroid of the local @ target time step|
+        # 2 * cfg.INSTANCE_OUT_CHANNELS = |concatenation of feat of local @ target & global|
+        # out_ch == 8 because c_x, c_y, c_z, d_x, d_y, d_z, sin_yaw, cos_yaw
+
         self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
                                                 cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 3 for 3 components of translation vector
@@ -377,6 +384,12 @@ class PointAligner(nn.Module):
         inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
 
         # ------------
+        # generate 3D proposals
+        # ------------
+        proposals = self.inst_proposal_gen(inst_global_feat)  # (N_inst, 8)
+        pred_dict['proposals'] = proposals
+
+        # ------------
         with torch.no_grad():
             # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
             local_bi = local_bisw // self.cfg.get('NUM_SWEEPS', 10)
@@ -455,6 +468,16 @@ class PointAligner(nn.Module):
         inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
+
+        # TODO: target proposal
+        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 7+...)
+        # organize gt_boxes to (N_inst, 7+...)
+        target_boxes = []
+        for b_idx in range(batch_dict['batch_size']):
+            mask_valid_boxes = gt_boxes[b_idx, :, -1].long() > 0
+            cur_boxes = gt_boxes[b_idx, mask_valid_boxes]  # (N_cur_inst, 7+...)
+            target_boxes.append(cur_boxes)
+        target_boxes = torch.cat(target_boxes)  # (N_inst, 7+...)  # TODO: test this in --viz_dataloader context
 
         # --------------
         # locals' transformation

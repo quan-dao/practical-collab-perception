@@ -7,6 +7,7 @@ from tools_box import compute_bev_coord, show_pointcloud, get_nuscenes_sensor_po
 from viz_tools import viz_boxes, print_dict, show_image_
 import argparse
 from easydict import EasyDict as edict
+from tqdm import tqdm
 
 
 np.random.seed(666)
@@ -64,14 +65,46 @@ def main(**kwargs):
             data_dict = next(iter_dataloader)
 
         points = data_dict['points']
-        mask_cur_batch = points[:, 0].astype(int) == batch_idx
-        pc = points[mask_cur_batch, 1:]  # skip batch_idx column
+        gt_boxes = data_dict['gt_boxes']  # (B, N_inst_max, 7+...)
 
-        cur_boxes = data_dict['gt_boxes'][batch_idx]
-        # remove dummy boxes
-        mask_valid_boxes = np.any(np.abs(cur_boxes) > 0, axis=1)
-        cur_boxes = cur_boxes[mask_valid_boxes]
-        gt_boxes = viz_boxes(cur_boxes)
+        # organize gt_boxes to (N_inst, 7+...)
+        target_boxes = []
+        for b_idx in range(data_dict['batch_size']):
+            mask_valid_boxes = gt_boxes[b_idx, :, -1].astype(int) > 0
+            cur_boxes = gt_boxes[b_idx, mask_valid_boxes]  # (N_cur_inst, 7+...)
+            target_boxes.append(cur_boxes)
+        target_boxes = np.concatenate(target_boxes, axis=0)  # (N_inst, 7+...)
+
+        # 1 global group -> 1 color for points & box
+        fg = points[points[:, -2].astype(int) > -1]  # (N_fg, 8)
+        max_num_inst = data_dict['instances_tf'].shape[1]
+        fg_bi = fg[:, 0].astype(int) * max_num_inst + fg[:, -2].astype(int)
+        inst_bi, inst_bi_inv = np.unique(fg_bi, return_inverse=True)
+        # inst_bi: (N_inst,) - does not necessary contain a contiguous sequence of number (i.e., [0, 3, 10, 15] )
+
+        assert inst_bi.shape[0] == target_boxes.shape[0]
+
+        inst_colors = plt.cm.rainbow(np.linspace(0, 1, inst_bi.shape[0]))[:, :3]
+        fg_colors = inst_colors[inst_bi_inv]  # (N_fg, 3)
+
+        # extract current_fg, _target_boxes
+        mask_cur_fg = fg[:, 0].astype(int) == batch_idx
+        cur_fg = fg[mask_cur_fg]  # (N_cur_fg, 8)
+        cur_fg_colors = fg_colors[mask_cur_fg]
+
+        # the following 3 lines only correct if 1-to-1 correspondence between target_boxes & inst_bi
+        inst_batch_idx = inst_bi // max_num_inst  # (N_inst,)
+        cur_target_boxes = target_boxes[inst_batch_idx == batch_idx]  # (N_cur_inst, 7+...)
+        cur_target_boxes_colors = inst_colors[inst_batch_idx == batch_idx]
+
+        bg = points[points[:, -2].astype(int) == -1]  # (N_fg, 8)
+        cur_bg = bg[bg[:, 0].astype(int) == batch_idx]
+        cur_bg_colors = np.zeros((cur_bg.shape[0], 3))
+
+        pc = np.concatenate([cur_bg, cur_fg])[:, 1: 4]
+        pc_colors= np.concatenate([cur_bg_colors, cur_fg_colors])
+        gt_boxes = viz_boxes(cur_target_boxes)
+
 
     print_dict(data_dict)
     print('meta: ', data_dict['metadata'])
@@ -82,7 +115,10 @@ def main(**kwargs):
               'showing EMC accumulated pointcloud')
         # dataset.nusc.render_sample(data_dict['metadata']['token'])
         # plt.show()
-        show_pointcloud(pc[:, :3], boxes=gt_boxes, fgr_mask=pc[:, -2] > -1)
+        if kwargs.get('viz_dataset', False):
+            show_pointcloud(pc[:, :3], boxes=gt_boxes, fgr_mask=pc[:, -2] > -1)
+        else:
+            show_pointcloud(pc, pc_colors=pc_colors, boxes=gt_boxes, boxes_color=cur_target_boxes_colors)
 
     if kwargs.get('show_oracle_pointcloud', False):
         raise NotImplementedError
