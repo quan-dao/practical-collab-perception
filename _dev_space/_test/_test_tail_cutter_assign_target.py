@@ -96,7 +96,7 @@ def main(**kwargs):
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=2,
                                               dist=False, logger=logger, training=False, total_epochs=1, seed=666)
     iter_dataloader = iter(dataloader)
-    for _ in range(5):
+    for _ in range(kwargs.get('chosen_iteration', 5)):
         batch_dict = next(iter_dataloader)
     load_data_to_tensor(batch_dict)
 
@@ -117,6 +117,7 @@ if __name__ == '__main__':
     parser.add_argument('--show_raw_pointcloud', action='store_true', default=False)
     parser.add_argument('--show_target_proposals', action='store_true', default=False)
     parser.add_argument('--print_model', action='store_true', default=False)
+    parser.add_argument('--chosen_iteration', type=int, default=5, help='blah')
     args = parser.parse_args()
     main(**vars(args))
 
