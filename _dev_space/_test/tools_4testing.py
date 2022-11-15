@@ -59,6 +59,8 @@ def load_dict_to_cpu(batch_dict):
     for k, v in batch_dict.items():
         if isinstance(v, torch.Tensor):
             batch_dict[k] = v.detach().cpu()
+        elif isinstance(v, dict):
+            load_dict_to_cpu(v)
 
 
 def show_points_in_batch_dict(batch_dict, batch_idx, points=None, points_color=None):

@@ -380,7 +380,10 @@ class PointAligner(nn.Module):
             corr = corr.long() * torch.arange(local_bisw.shape[0]).unsqueeze(1).to(fg.device)
             corr = corr.sum(dim=0)  # (N_inst)
 
-        inst_target_center_shape = torch.cat((local_center[corr], local_shape_enc[corr]), dim=1)  # (N_inst, 3+C_inst)
+        inst_target_center = local_center[corr]  # (N_inst, 3)
+        self.forward_return_dict['meta']['inst_target_center'] = inst_target_center  # (N_inst, 3)
+
+        inst_target_center_shape = torch.cat((inst_target_center, local_shape_enc[corr]), dim=1)  # (N_inst, 3+C_inst)
         inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
 
         # ------------
@@ -469,15 +472,30 @@ class PointAligner(nn.Module):
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
 
-        # TODO: target proposal
-        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 7+...)
-        # organize gt_boxes to (N_inst, 7+...)
-        target_boxes = []
+        # target proposal
+        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 11) -center (3), size (3), yaw, dummy_v (2), instance_index, class
+        # organize gt_boxes to (N_inst, 11), order is according to inst_bi
+        batch_boxes = []
         for b_idx in range(batch_dict['batch_size']):
             mask_valid_boxes = gt_boxes[b_idx, :, -1].long() > 0
-            cur_boxes = gt_boxes[b_idx, mask_valid_boxes]  # (N_cur_inst, 7+...)
-            target_boxes.append(cur_boxes)
-        target_boxes = torch.cat(target_boxes)  # (N_inst, 7+...)  # TODO: test this in --viz_dataloader context
+            cur_boxes = gt_boxes[b_idx, mask_valid_boxes]  # (?, 11)
+            batch_boxes.append(
+                torch.cat([cur_boxes.new_zeros(cur_boxes.shape[0], 1) + b_idx, cur_boxes], dim=1)
+            )
+        batch_boxes = torch.cat(batch_boxes)  # (N_boxes, 12)  ! N_boxes >= N_inst, don't know why
+        # perhaps because some boxes don't have any points
+        batch_boxes_bi = batch_boxes[:, 0].long() * max_num_inst + batch_boxes[:, -2].long()  # (N_boxes,)
+        # find WHERE inst_bi appears in batch_boxes_bi
+        corr = batch_boxes_bi[:, None] == inst_bi[None, :]  # (N_boxes, N_inst)
+        corr = corr.long() * rearrange(torch.arange(batch_boxes_bi.shape[0]), 'N_boxes -> N_boxes 1').to(corr.device)
+        corr = corr.sum(dim=0)  # (N_inst)
+        batch_boxes = batch_boxes[corr]  # (N_inst, 12) - batch_idx, center(3), size(3), yaw, dummy_v(2), inst_idx, class
+
+        target_proposals = {
+            'offset': batch_boxes[:, 1: 4] - self.forward_return_dict['meta']['inst_target_center'],
+            'size': batch_boxes[:, 4: 7],
+            'ori': torch.stack([torch.sin(batch_boxes[:, 7]), torch.cos(batch_boxes[:, 7])], dim=1)
+        }
 
         # --------------
         # locals' transformation
@@ -493,6 +511,7 @@ class PointAligner(nn.Module):
             'inst_assoc': target_inst_assoc,
             'inst_motion_stat': inst_motion_stat,
             'local_tf': local_tf,
+            'proposals': target_proposals
         }
         return target_dict
 

@@ -177,7 +177,9 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                     chosen_pose_idx = pose_idx
                     break
             yaw = np.arctan2(_poses[chosen_pose_idx][1, 0], _poses[chosen_pose_idx][0, 0])
-            instances_last_box.append([*_poses[chosen_pose_idx][:3, -1].tolist(), *_size, yaw])
+            instances_last_box.append(
+                [*_poses[chosen_pose_idx][:3, -1].tolist(), *_size, yaw, 0, 0, _idx]
+            )  # c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, instance_index
         instances_last_box = np.array(instances_last_box).astype(float)
         out['instances_last_box'] = instances_last_box
 
