@@ -2,6 +2,8 @@ import numpy as np
 import numpy.linalg as LA
 from nuscenes.nuscenes import NuScenes
 from _dev_space.tools_box import apply_tf, tf, get_sweeps_token, get_nuscenes_sensor_pose_in_global
+from pcdet.datasets.nuscenes.nuscenes_utils import quaternion_yaw
+from pyquaternion import Quaternion
 
 
 def get_sample_data_point_cloud(nusc: NuScenes, sample_data_token: str, time_lag: float = None, sweep_idx: int = None) \
@@ -39,12 +41,18 @@ def find_points_in_box(points: np.ndarray, target_from_box: np.ndarray, dxdydz: 
 
 
 def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
-                            center_radius=2.0, in_box_tolerance=1e-2) -> dict:
+                            center_radius=2.0, in_box_tolerance=1e-2,
+                            return_instances_last_box=False,
+                            pointcloud_range=None) -> dict:
     """
     Returns:
-        'points' (np.ndarray): (N, 7) - x, y, z, intensity, time-lag, sweep_idx, instance_idx
-        'instances' (list): [[target_from_inst0@-10, ..., target_from_inst0@0]]
-        'instances_sweep_indices' (list): [[inst0_sweep_idxFirst, ..., inst0_sweep_idxFinal]]
+        {
+            'points' (np.ndarray): (N, 7) - x, y, z, intensity, time-lag, sweep_idx, instance_idx
+            'instances' (list): [[target_from_inst0@-10, ..., target_from_inst0@0]]
+            'instances_sweep_indices' (list): [[inst0_sweep_idxFirst, ..., inst0_sweep_idxFinal]]
+        }
+        return_instances_last_box:
+        pointcloud_range:
     """
     sample_rec = nusc.get('sample', sample_token)
     target_sd_token = sample_rec['data']['LIDAR_TOP']
@@ -56,6 +64,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
     inst_idx = 0
     instances = list()  # for each instance, store list of poses
     instances_sweep_indices = list()  # for each instance, store list of sweep index
+    instances_size = list()  # for each instance, store its sizes (dx, dy ,dz) == l, w, h
     all_points = []
 
     for sd_token, time_lag, s_idx in sd_tokens_times:
@@ -92,6 +101,8 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 inst_idx += 1
                 instances.append([target_from_box])
                 instances_sweep_indices.append([s_idx])
+                # store size
+                instances_size.append([box.wlh[1], box.wlh[0], box.wlh[2]])
             else:
                 cur_instance_idx = inst_token_2_index[inst_token]
                 instances[cur_instance_idx].append(target_from_box)
@@ -144,12 +155,31 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         for sw_i, pose in zip(inst_sweep_ids, inst_poses):
             instances_tf[inst_idx, sw_i] = inst_poses[-1] @ LA.inv(pose)
 
-    return {
+    out = {
         'points': all_points,
         'instances_tf': instances_tf,
         # 'instances': instances,
         # 'instances_sweep_indices': instances_sweep_indices
     }
+
+    if return_instances_last_box:
+        assert pointcloud_range is not None
+        if not isinstance(pointcloud_range, np.ndarray):
+            pointcloud_range = np.array(pointcloud_range)
+        instances_last_box = []
+        for _idx, (_size, _poses) in enumerate(zip(instances_size, instances)):
+            # find the pose that has center inside pointclud range & is closest to the target time step
+            # if couldn't find any, take the 1st pose (i.e. the furthest into the past)
+            for pose_idx in range(-1, -len(_poses), -1):
+                if np.all(np.logical_and(_poses[pose_idx][:3, -1] >= pointcloud_range[:3],
+                                         _poses[pose_idx][:3, -1] < pointcloud_range[3:] -1e-3)):
+                    break
+            yaw = np.arctan2(_poses[pose_idx][1, 0], _poses[pose_idx][0, 0])
+            instances_last_box.append([*_poses[pose_idx][:3, -1].tolist(), *_size, yaw])
+        instances_last_box = np.array(instances_last_box).astype(float)
+        out['instances_last_box'] = instances_last_box
+
+    return out
 
 
 

@@ -39,6 +39,7 @@ def modify_dataset_cfg(cfg, use_hd_map=False):
         'DISTANCE_THRESHOLD': 10,
         'DROP_PROB': 0.4
     })
+    cfg.PRED_VELOCITY = False
 
 
 def main(**kwargs):
@@ -79,6 +80,8 @@ def main(**kwargs):
     if kwargs.get('show_raw_pointcloud', False):
         print('-----------------------\n'
               'showing EMC accumulated pointcloud')
+        # dataset.nusc.render_sample(data_dict['metadata']['token'])
+        # plt.show()
         show_pointcloud(pc[:, :3], boxes=gt_boxes, fgr_mask=pc[:, -2] > -1)
 
     if kwargs.get('show_oracle_pointcloud', False):

@@ -145,7 +145,8 @@ class NuScenesDataset(DatasetTemplate):
 
         num_sweeps = np.random.choice(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)
 
-        _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps)
+        _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
+                                       pointcloud_range=self.point_cloud_range)
         points = _out['points']  # (N, C)
 
         if self.dataset_cfg.DROP_BACKGROUND.ENABLE:
@@ -169,8 +170,14 @@ class NuScenesDataset(DatasetTemplate):
             'instances_tf': _out['instances_tf'],
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token'], 'num_sweeps': num_sweeps,
-                         'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)}
+                         'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)},
         }
+
+        # overwrite gt_boxes & gt_names
+        input_dict.update({
+            'gt_boxes': _out['instances_last_box'],
+            'gt_names': np.tile(['car'], _out['instances_last_box'].shape[0])
+        })
 
         # ------
         # get HD Map
@@ -182,22 +189,7 @@ class NuScenesDataset(DatasetTemplate):
             except:
                 input_dict['img_map'] = np.zeros((5, 512, 512))  # in case map_file is corrupted
 
-        if 'gt_boxes' in info:
-            if self.dataset_cfg.get('FILTER_MIN_POINTS_IN_GT', False):
-                mask = (info['num_lidar_pts'] > self.dataset_cfg.FILTER_MIN_POINTS_IN_GT - 1)
-            else:
-                mask = None
-
-            input_dict.update({
-                'gt_names': info['gt_names'] if mask is None else info['gt_names'][mask],
-                'gt_boxes': info['gt_boxes'] if mask is None else info['gt_boxes'][mask]
-            })
-
-            # map 'gt_names' to meta name
-            new_gt_names = np.array([self.detection_name_to_meta_cls[info['gt_names'][name_idx]]
-                                     for name_idx in range(info['gt_names'].shape[0])])
-            info['gt_names'] = new_gt_names
-
+        # data augmentation & other stuff
         data_dict = self.prepare_data(data_dict=input_dict)
 
         if self.dataset_cfg.get('SET_NAN_VELOCITY_TO_ZEROS', False) and 'gt_boxes' in info:
