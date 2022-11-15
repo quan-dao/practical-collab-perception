@@ -390,7 +390,7 @@ class PointAligner(nn.Module):
         # generate 3D proposals
         # ------------
         proposals = self.inst_proposal_gen(inst_global_feat)  # (N_inst, 8)
-        pred_dict['proposals'] = proposals
+        pred_dict['proposals'] = proposals  # (N_inst, 8)
 
         # ------------
         with torch.no_grad():
@@ -669,7 +669,26 @@ class PointAligner(nn.Module):
             loss_recon = self.l2_loss(pred_recon_dyn_fg, torch.clone(pred_recon_dyn_fg).detach(), dim=-1, reduction='mean')
         tb_dict['loss_recon'] = loss_recon.item()
 
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
+        # add proposals loss
+        pred_proposals = pred_dict['proposals']  # (N_inst, 8)
+        target_proposals = target_dict['proposals']
+
+        loss_prop_offset = self.l2_loss(pred_proposals[:, :3], target_proposals['offset'], reduction='mean')
+        tb_dict['loss_prop_offset'] = loss_prop_offset.item()
+
+        loss_prop_size = self.l2_loss(pred_proposals[:, 3: 6], target_proposals['size'], reduction='mean')
+        tb_dict['loss_prop_size'] = loss_prop_size.item()
+
+        loss_prop_ori = self.l2_loss(pred_proposals[:, 6:], target_proposals['ori'], reduction='mean')
+        tb_dict['loss_prop_ori'] = loss_prop_ori.item()
+
+        loss_prop = loss_prop_offset + loss_prop_size + loss_prop_ori
+        tb_dict['loss_prop'] = loss_prop.item()
+
+        # --------------
+        # total loss
+        # --------------
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon + loss_prop
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
