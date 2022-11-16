@@ -166,7 +166,8 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         assert pointcloud_range is not None
         if not isinstance(pointcloud_range, np.ndarray):
             pointcloud_range = np.array(pointcloud_range)
-        instances_last_box = []
+        instances_last_box = np.zeros((len(instances), 10))
+        # 10 == c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, instance_index
         for _idx, (_size, _poses) in enumerate(zip(instances_size, instances)):
             # find the pose that has center inside pointclud range & is closest to the target time step
             # if couldn't find any, take the 1st pose (i.e. the furthest into the past)
@@ -177,10 +178,10 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                     chosen_pose_idx = pose_idx
                     break
             yaw = np.arctan2(_poses[chosen_pose_idx][1, 0], _poses[chosen_pose_idx][0, 0])
-            instances_last_box.append(
-                [*_poses[chosen_pose_idx][:3, -1].tolist(), *_size, yaw, 0, 0, _idx]
-            )  # c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, instance_index
-        instances_last_box = np.array(instances_last_box).astype(float)
+            instances_last_box[_idx, :3] = _poses[chosen_pose_idx][:3, -1]
+            instances_last_box[_idx, 3: 6] = np.array(_size)
+            instances_last_box[_idx, 6] = yaw
+            instances_last_box[_idx, 9] = _idx
         out['instances_last_box'] = instances_last_box
 
     return out

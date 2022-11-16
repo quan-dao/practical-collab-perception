@@ -183,7 +183,8 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict=data_dict
         )
 
-        if self.training and not np.any(data_dict['points'][:, -2].astype(int) > -1):
+        has_gt = np.any(data_dict['points'][:, -2].astype(int) > -1) & (data_dict['gt_boxes'].shape[0] > 0)
+        if self.training and not has_gt:
             new_index = np.random.randint(self.__len__())
             return self.__getitem__(new_index)
 

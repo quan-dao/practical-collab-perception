@@ -346,6 +346,7 @@ class PointAligner(nn.Module):
             # local_bisw: (N_local,)
 
             self.forward_return_dict['meta'] = {
+                'max_num_inst': max_num_inst,
                 'inst_bi': inst_bi, 'inst_bi_inv_indices': inst_bi_inv_indices,
                 'local_bisw': local_bisw, 'local_bisw_inv_indices': local_bisw_inv_indices
             }
@@ -474,27 +475,14 @@ class PointAligner(nn.Module):
 
         # target proposal
         gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 11) -center (3), size (3), yaw, dummy_v (2), instance_index, class
-        # organize gt_boxes to (N_inst, 11), order is according to inst_bi
-        batch_boxes = []
-        for b_idx in range(batch_dict['batch_size']):
-            mask_valid_boxes = gt_boxes[b_idx, :, -1].long() > 0
-            cur_boxes = gt_boxes[b_idx, mask_valid_boxes]  # (?, 11)
-            batch_boxes.append(
-                torch.cat([cur_boxes.new_zeros(cur_boxes.shape[0], 1) + b_idx, cur_boxes], dim=1)
-            )
-        batch_boxes = torch.cat(batch_boxes)  # (N_boxes, 12)  ! N_boxes >= N_inst, don't know why
-        # perhaps because some boxes don't have any points
-        batch_boxes_bi = batch_boxes[:, 0].long() * max_num_inst + batch_boxes[:, -2].long()  # (N_boxes,)
-        # find WHERE inst_bi appears in batch_boxes_bi
-        corr = batch_boxes_bi[:, None] == inst_bi[None, :]  # (N_boxes, N_inst)
-        corr = corr.long() * rearrange(torch.arange(batch_boxes_bi.shape[0]), 'N_boxes -> N_boxes 1').to(corr.device)
-        corr = corr.sum(dim=0)  # (N_inst)
-        batch_boxes = batch_boxes[corr]  # (N_inst, 12) - batch_idx, center(3), size(3), yaw, dummy_v(2), inst_idx, class
+        assert gt_boxes.shape[1] == instances_tf.shape[1], f"{gt_boxes.shape[1]} != {instances_tf.shape[1]}"
+        batch_boxes = rearrange(gt_boxes, 'B N_inst_max C -> (B N_inst_max) C')
+        batch_boxes = batch_boxes[inst_bi]  # (N_inst, 11)
 
         target_proposals = {
-            'offset': batch_boxes[:, 1: 4] - self.forward_return_dict['meta']['inst_target_center'],
-            'size': batch_boxes[:, 4: 7],
-            'ori': torch.stack([torch.sin(batch_boxes[:, 7]), torch.cos(batch_boxes[:, 7])], dim=1)
+            'offset': batch_boxes[:, :3] - self.forward_return_dict['meta']['inst_target_center'],
+            'size': batch_boxes[:, 3: 6],
+            'ori': torch.stack([torch.sin(batch_boxes[:, 6]), torch.cos(batch_boxes[:, 6])], dim=1)
         }
 
         # --------------
@@ -705,6 +693,54 @@ class PointAligner(nn.Module):
         out = [loss, tb_dict]
         # if debug:
         #     out.append(debug_dict)
+        return out
+
+    @torch.no_grad()
+    def generate_predicted_boxes(self, batch_dict: dict, pred_dict: dict) -> List[dict]:
+        """
+        Element i-th of the returned List represents predicted boxes for the sample i-th in the batch
+        Args:
+            pred_dict:
+            {
+                'proposals': (N_inst, 8) - offset_x, offset_y, offset_z, dx, dy, dz, sin_yaw, cos_yaw
+                'fg': (N_points, 1) - predicted foreground logit (not activated yet) for every point
+            }
+
+            batch_dict:
+            {
+                'batch_size'
+                'points': (N_points, 9)
+            }
+        """
+        # decode predicted proposals
+        # TODO: test this function by pretending predicted proposals == target proposals
+        # what to test: order in proposals == order in inst_bi
+        pred_proposals = pred_dict['proposals']  # (N_inst, 8)
+        center = self.forward_return_dict['meta']['inst_target_center'] + pred_proposals[:, :3]
+        size = pred_proposals[:, 3: 6]
+        yaw = torch.atan2(pred_proposals[:, 6], pred_proposals[:, 7])
+        pred_boxes = torch.cat([center, size, yaw[:, None]], dim=1)  # (N_inst, 7)
+
+        # compute boxes' score by averaging foreground score, using inst_bi_inv_indices
+        fg_prob = sigmoid(pred_dict['fg'])  # (N_points, 1)
+        pred_scores = torch_scatter.scatter_mean(fg_prob, self.forward_return_dict['meta']['inst_bi_inv_indices'],
+                                                 dim=0)  # (N_inst, 1)
+
+        # separate pred_boxes accodring to batch index
+        inst_bi = self.forward_return_dict['meta']['inst_bi']
+        max_num_inst = self.forward_return_dict['meta']['max_num_inst']
+        inst_batch_idx = inst_bi // max_num_inst  # (N_inst,)
+
+        out = []
+        for b_idx in range(batch_dict['batch_size']):
+            cur_boxes = pred_boxes[inst_batch_idx == b_idx]
+            cur_scores = rearrange(pred_scores[inst_batch_idx == b_idx], 'N_cur_inst 1 -> N_cur_inst')
+            cur_labels = cur_boxes.new_zeros(cur_boxes.shape[0])
+            out.append({
+                'pred_boxes': cur_boxes,
+                'pred_scores': cur_scores,
+                'pred_labels': cur_labels
+            })
         return out
 
 
