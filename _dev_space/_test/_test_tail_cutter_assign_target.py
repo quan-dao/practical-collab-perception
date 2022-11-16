@@ -87,6 +87,31 @@ def _show_target_proposals(model, batch_dict, chosen_batch_idx):
                     boxes_color=cur_target_boxes_colors)
 
 
+def _show_predicted_boxes(model, batch_dict, chosen_batch_idx):
+    # invoke forward pass in training mode
+    load_dict_to_gpu(batch_dict)
+    model.cuda()
+    model.train()
+    batch_dict = model(batch_dict)
+
+    pred_dict = model.generate_predicted_boxes(batch_dict['batch_size'], debug=True, batch_dict=batch_dict)
+
+    # move stuff to cpu
+    load_dict_to_cpu(batch_dict)
+    load_dict_to_cpu(model.forward_return_dict)
+    for b_idx in range(batch_dict['batch_size']):
+        load_dict_to_cpu(pred_dict[b_idx])
+
+    # ---
+    # viz
+    # ---
+    pred_boxes = pred_dict[chosen_batch_idx]['pred_boxes']
+    points = batch_dict['points']
+    mask_cur = points[:, 0].long() == chosen_batch_idx
+    cur_points = points[mask_cur]
+    show_pointcloud(cur_points[:, 1: 4], fgr_mask=cur_points[:, -2] > -1, boxes=viz_boxes(pred_boxes))
+
+
 def main(**kwargs):
     chosen_batch_idx = kwargs.get('chosen_batch_idx', 1)
     cfg_file = './tail_cutter_cfg.yaml'
@@ -108,8 +133,11 @@ def main(**kwargs):
         print('showing raw point cloud')
         _show_point_cloud(batch_dict, chosen_batch_idx)
 
-    if kwargs.get('show_target_proposals'):
+    if kwargs.get('show_target_proposals', False):
         _show_target_proposals(model, batch_dict, chosen_batch_idx)
+
+    if kwargs.get('test_generate_predicted_boxes', False):
+        _show_predicted_boxes(model, batch_dict, chosen_batch_idx)
 
 
 if __name__ == '__main__':
@@ -118,6 +146,7 @@ if __name__ == '__main__':
     parser.add_argument('--show_target_proposals', action='store_true', default=False)
     parser.add_argument('--print_model', action='store_true', default=False)
     parser.add_argument('--chosen_iteration', type=int, default=5, help='blah')
+    parser.add_argument('--test_generate_predicted_boxes', action='store_true', default=False)
     args = parser.parse_args()
     main(**vars(args))
 

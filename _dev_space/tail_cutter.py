@@ -429,6 +429,10 @@ class PointAligner(nn.Module):
             batch_dict['fg_inst_idx'] = fg_inst_idx
             batch_dict['forward_meta'] = self.forward_return_dict['meta']
 
+        if not self.training:
+            pred_dict = self.generate_predicted_boxes(batch_dict['batch_size'])
+            batch_dict['final_box_dicts'] = pred_dict
+
         return batch_dict
 
     @torch.no_grad()
@@ -696,34 +700,39 @@ class PointAligner(nn.Module):
         return out
 
     @torch.no_grad()
-    def generate_predicted_boxes(self, batch_dict: dict, pred_dict: dict) -> List[dict]:
+    def generate_predicted_boxes(self, batch_size: int, debug=False, batch_dict=None) -> List[dict]:
         """
         Element i-th of the returned List represents predicted boxes for the sample i-th in the batch
         Args:
-            pred_dict:
-            {
-                'proposals': (N_inst, 8) - offset_x, offset_y, offset_z, dx, dy, dz, sin_yaw, cos_yaw
-                'fg': (N_points, 1) - predicted foreground logit (not activated yet) for every point
-            }
-
-            batch_dict:
-            {
-                'batch_size'
-                'points': (N_points, 9)
-            }
+            batch_size:
+            debug: to use target_proposals as pred_proposals
+            batch_dict: only necessary for debugging
         """
+        pred_dict = self.forward_return_dict['pred_dict']
+
         # decode predicted proposals
-        # TODO: test this function by pretending predicted proposals == target proposals
-        # what to test: order in proposals == order in inst_bi
-        pred_proposals = pred_dict['proposals']  # (N_inst, 8)
-        center = self.forward_return_dict['meta']['inst_target_center'] + pred_proposals[:, :3]
-        size = pred_proposals[:, 3: 6]
-        yaw = torch.atan2(pred_proposals[:, 6], pred_proposals[:, 7])
+        if not debug:
+            pred_proposals = pred_dict['proposals']  # (N_inst, 8)
+            center = self.forward_return_dict['meta']['inst_target_center'] + pred_proposals[:, :3]
+            size = pred_proposals[:, 3: 6]
+            yaw = torch.atan2(pred_proposals[:, 6], pred_proposals[:, 7])
+        else:
+            target_dict = self.forward_return_dict['target_dict']
+            target_proposals = target_dict['proposals']
+            center = self.forward_return_dict['meta']['inst_target_center'] + target_proposals['offset']
+            size = target_proposals['size']
+            yaw = torch.atan2(target_proposals['ori'][:, 0], target_proposals['ori'][:, 1])
+
         pred_boxes = torch.cat([center, size, yaw[:, None]], dim=1)  # (N_inst, 7)
 
         # compute boxes' score by averaging foreground score, using inst_bi_inv_indices
         fg_prob = sigmoid(pred_dict['fg'])  # (N_points, 1)
-        pred_scores = torch_scatter.scatter_mean(fg_prob, self.forward_return_dict['meta']['inst_bi_inv_indices'],
+        if not debug:
+            mask_fg = rearrange(fg_prob, 'N 1 -> N') > self.cfg.FG_THRESH
+        else:
+            mask_fg = batch_dict['points'][:, -1].long() > -1
+        pred_scores = torch_scatter.scatter_mean(fg_prob[mask_fg],
+                                                 self.forward_return_dict['meta']['inst_bi_inv_indices'],
                                                  dim=0)  # (N_inst, 1)
 
         # separate pred_boxes accodring to batch index
@@ -732,10 +741,10 @@ class PointAligner(nn.Module):
         inst_batch_idx = inst_bi // max_num_inst  # (N_inst,)
 
         out = []
-        for b_idx in range(batch_dict['batch_size']):
+        for b_idx in range(batch_size):
             cur_boxes = pred_boxes[inst_batch_idx == b_idx]
             cur_scores = rearrange(pred_scores[inst_batch_idx == b_idx], 'N_cur_inst 1 -> N_cur_inst')
-            cur_labels = cur_boxes.new_zeros(cur_boxes.shape[0])
+            cur_labels = cur_boxes.new_ones(cur_boxes.shape[0])
             out.append({
                 'pred_boxes': cur_boxes,
                 'pred_scores': cur_scores,
