@@ -322,6 +322,8 @@ class PointAligner(nn.Module):
             fg_batch_idx = fg_batch_idx[valid_fg]  # (N_fg_valid,)
             fg_inst_idx = fg_inst_idx[valid_fg]  # (N_fg_valid,)
             fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
+            fg_prob = sigmoid(pred_points_fg)[mask_fg]
+            fg_prob = fg_prob[valid_fg]  # (N_fg_valid, 1)
 
         with torch.no_grad():
             fg_sweep_idx = fg[:, -3].long()
@@ -350,6 +352,8 @@ class PointAligner(nn.Module):
                 'inst_bi': inst_bi, 'inst_bi_inv_indices': inst_bi_inv_indices,
                 'local_bisw': local_bisw, 'local_bisw_inv_indices': local_bisw_inv_indices
             }
+            if not self.training:
+                self.forward_return_dict['meta']['fg_prob'] = fg_prob
 
         # ------------
         # compute instance global feature
@@ -726,12 +730,14 @@ class PointAligner(nn.Module):
         pred_boxes = torch.cat([center, size, yaw[:, None]], dim=1)  # (N_inst, 7)
 
         # compute boxes' score by averaging foreground score, using inst_bi_inv_indices
-        fg_prob = sigmoid(pred_dict['fg'])  # (N_points, 1)
         if not debug:
-            mask_fg = rearrange(fg_prob, 'N 1 -> N') > self.cfg.FG_THRESH
+            fg_prob = self.forward_return_dict['meta']['fg_prob']
         else:
+            assert self.training
+            fg_prob = sigmoid(pred_dict['fg'])  # (N_points, 1)
             mask_fg = batch_dict['points'][:, -1].long() > -1
-        pred_scores = torch_scatter.scatter_mean(fg_prob[mask_fg],
+            fg_prob = fg_prob[mask_fg]
+        pred_scores = torch_scatter.scatter_mean(fg_prob,
                                                  self.forward_return_dict['meta']['inst_bi_inv_indices'],
                                                  dim=0)  # (N_inst, 1)
 
@@ -744,7 +750,7 @@ class PointAligner(nn.Module):
         for b_idx in range(batch_size):
             cur_boxes = pred_boxes[inst_batch_idx == b_idx]
             cur_scores = rearrange(pred_scores[inst_batch_idx == b_idx], 'N_cur_inst 1 -> N_cur_inst')
-            cur_labels = cur_boxes.new_ones(cur_boxes.shape[0])
+            cur_labels = cur_boxes.new_ones(cur_boxes.shape[0]).long()
             out.append({
                 'pred_boxes': cur_boxes,
                 'pred_scores': cur_scores,
