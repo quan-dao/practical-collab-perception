@@ -322,8 +322,8 @@ class PointAligner(nn.Module):
             fg_batch_idx = fg_batch_idx[valid_fg]  # (N_fg_valid,)
             fg_inst_idx = fg_inst_idx[valid_fg]  # (N_fg_valid,)
             fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
-            fg_prob = sigmoid(pred_points_fg)[mask_fg]
-            fg_prob = fg_prob[valid_fg]  # (N_fg_valid, 1)
+            fg_prob = sigmoid(pred_points_fg)[mask_fg]  # (N_fg_valid, 1)
+            fg_prob = fg_prob[valid_fg]
 
         with torch.no_grad():
             fg_sweep_idx = fg[:, -3].long()
@@ -353,7 +353,12 @@ class PointAligner(nn.Module):
                 'local_bisw': local_bisw, 'local_bisw_inv_indices': local_bisw_inv_indices
             }
             if not self.training:
-                self.forward_return_dict['meta']['fg_prob'] = fg_prob
+                self.forward_return_dict['foreground'] = {
+                    'fg': fg, # (N_fg_valid, 6[+2]) - x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                    'fg_prob': fg_prob,  # (N_fg_valid, 1)
+                    'fg_inst_idx': fg_inst_idx,  # (N_fg_valid,)
+                    'bg': batch_dict['points'][torch.logical_not(mask_fg)],  # (N_bg, 6[+2])
+                }
 
         # ------------
         # compute instance global feature
@@ -420,18 +425,10 @@ class PointAligner(nn.Module):
         pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
         pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
 
-        batch_dict.update(pred_dict)
-
-        # for update forward_return_dict with prediction & target computing loss
+        # update forward_return_dict with prediction & target for computing loss
         self.forward_return_dict['pred_dict'] = pred_dict
         if self.training:
             self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
-
-        if self.cfg.get('DEBUG', False) and not self.training:
-            batch_dict['xyz_bg'] = batch_dict['points'][torch.logical_not(mask_fg), :4]  # batch_idx, x, y, z
-            batch_dict['xyz_fg'] = fg[:, :4]
-            batch_dict['fg_inst_idx'] = fg_inst_idx
-            batch_dict['forward_meta'] = self.forward_return_dict['meta']
 
         if not self.training:
             pred_dict = self.generate_predicted_boxes(batch_dict['batch_size'])
@@ -731,7 +728,7 @@ class PointAligner(nn.Module):
 
         # compute boxes' score by averaging foreground score, using inst_bi_inv_indices
         if not debug:
-            fg_prob = self.forward_return_dict['meta']['fg_prob']
+            fg_prob = self.forward_return_dict['foreground']['fg_prob']
         else:
             assert self.training
             fg_prob = sigmoid(pred_dict['fg'])  # (N_points, 1)
@@ -756,6 +753,55 @@ class PointAligner(nn.Module):
                 'pred_scores': cur_scores,
                 'pred_labels': cur_labels
             })
+        return out
+
+    def correct_point_cloud(self, **kwargs):
+        """
+        To be invoked after forward
+        """
+        pred_dict = self.forward_return_dict['pred_dict']
+        fg = self.forward_return_dict['foreground']['fg']  # (N_fg, 6[+2]) - x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+
+        # get motion mask of foreground to find dynamic foreground
+        inst_motion_stat = sigmoid(pred_dict['inst_motion_stat'][:, 0]) > 0.5
+        inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']  # (N_fg)
+        fg_motion_mask = inst_motion_stat[inst_bi_inv_indices] == 1  # (N_fg)
+
+        if torch.any(fg_motion_mask):
+            # only perform correction if there are some dynamic foreground points
+            dyn_fg = fg[fg_motion_mask, 1: 4]  # (N_dyn, 3)
+
+            local_tf = torch.cat([
+                pred_dict['local_rot'],
+                rearrange(pred_dict['local_transl'], 'N_local C -> N_local C 1', C=3)
+            ], dim=-1)  # (N_local, 3, 4)
+
+            # pair local_tf to foreground
+            fg_tf = local_tf[self.forward_return_dict['meta']['local_bisw_inv_indices']]  # (N_fg, 3, 4)
+
+            # extract local_tf of dyn_fg
+            dyn_fg_tf = fg_tf[fg_motion_mask]  # (N_dyn, 3, 4)
+
+            # apply transformation on dyn_fg
+            dyn_fg = torch.matmul(dyn_fg_tf[:, :, :3], dyn_fg.unsqueeze(-1)).squeeze(-1) + dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
+
+            # overwrite coordinate of dynamic foreground with dyn_fg (computed above)
+            fg[fg_motion_mask, 1: 4] = dyn_fg
+
+        # assemble output
+        out = {
+            'corrected_fg': fg,  # (N_fg, 6[+2])
+            'bg': self.forward_return_dict['foreground']['bg']  # (N_fg, 6[+2])
+        }
+        if kwargs.get('return_instance_index', False):
+            out['fg_inst_idx'] = self.forward_return_dict['foreground']['fg_inst_idx']
+
+        if kwargs.get('return_motion_mask', False):
+            out['fg_motion_mask'] = fg_motion_mask
+
+        if kwargs.get('return_foreground_prob', False):
+            out['fg_prob'] = self.forward_return_dict['foreground']['fg_prob']
+
         return out
 
 

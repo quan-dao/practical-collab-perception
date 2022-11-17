@@ -1,3 +1,5 @@
+import torch
+
 from .detector3d_template import Detector3DTemplate
 from _dev_space.tail_cutter import PointAligner
 import logging
@@ -39,3 +41,10 @@ class Aligner(Detector3DTemplate):
             )
 
         return final_pred_dict, recall_dict
+
+    def correct_point_cloud(self, **kwargs):
+        if not self.training:
+            with torch.no_grad():
+                return self.aligner.correct_point_cloud(**kwargs)
+        else:
+            return self.aligner.correct_point_cloud(**kwargs)
