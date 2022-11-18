@@ -440,9 +440,9 @@ class PointAligner(nn.Module):
             correction_dict = self.correct_point_cloud()
 
             batch_dict['2nd_stage_input'] = {
-                'pred_boxes': pred_boxes.detach(),
-                'points': correction_dict['corrected_fg'],  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-                'points_feat': fg_feat.detach(),  # (N_fg, C_bev)
+                'pred_boxes': pred_boxes.detach(),  # (N_inst, 7)
+                'fg': correction_dict['corrected_fg'],  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
                 'meta': self.forward_return_dict['meta'],
                 'inst_global_feat': inst_global_feat.detach()  # (N_inst, 3+2*C_inst)
             }
