@@ -219,6 +219,7 @@ class PointAligner(nn.Module):
 
         self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
         self.has_2nd_stage = cfg.get('HAS_2ND_STAGE', False)
+        self.num_instance_features = cfg.INSTANCE_OUT_CHANNELS
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):

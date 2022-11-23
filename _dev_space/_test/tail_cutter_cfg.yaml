@@ -83,11 +83,21 @@ MODEL:
     INSTANCE_MID_CHANNELS: [7]
     INSTANCE_OUT_CHANNELS: 4
     INSTANCE_HEAD_USE_DROPOUT: True
+
     TARGET_CONFIG:
         MOTION_THRESH: 0.5
+
     CLUSTER:
         EPS: 1.5
         MIN_POINTS: 3
 
     LOSS:
         SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
+
+    HAS_2ND_STAGE: True
+
+    ALIGNER_HEAD:
+        ATTENTION:
+            NUM_FEATURES: 4
+            NUM_HEADS: 2
+            NUM_LAYERS: 2

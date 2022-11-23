@@ -1,12 +1,47 @@
 import torch
 import torch.nn as nn
 from einops import rearrange
+from _dev_space.non_batching_attention import MultiHeadAttention
 
 
 class AlignerHead(nn.Module):
-    def __init__(self):
+    def __init__(self, model_cfg, num_bev_features: int, num_instace_features: int):
         super().__init__()
-        # TODO
+        self.cfg = model_cfg
+        attn_cfg = model_cfg.ATTENTION
+
+        self.encoder_fg = self._make_mlp(num_bev_features + 27, [attn_cfg.NUM_FEATURES])
+        # + 27 due to the use of position encoding
+
+        self.encoder_inst = self._make_mlp(3 + 2 * num_instace_features, [attn_cfg.NUM_FEATURES])
+        # 3 for location of center of target local
+        # 2 * NUM_BEV_FEATURES = cat[(target local feat, inst global feat)]
+
+        self.attention_stack = nn.ModuleList([
+            MultiHeadAttention(attn_cfg.NUM_HEADS, attn_cfg.NUM_FEATURES) for _ in range(attn_cfg.NUM_LAYERS)
+        ])
+
+        self.decoder_inst = self._make_mlp(attn_cfg.NUM_FEATURES, [*model_cfg.get('DECODER_MID_CHANNELS', []), 8])
+        # following residual coder: delta_x, delta_y, delta_z, delta_dx, delta_dy, delta_dz, diff_sin, diff_cos
+
+        self.forward_return_dict = dict()
+
+    @staticmethod
+    def _make_mlp(channels_in: int, channels: list):
+        """
+        Args:
+            channels_in: number of channels of input
+            channels: [Hidden_0, ..., Hidden_N, Out]
+        """
+        layers = []
+        channels = [channels_in] + channels
+        for c_idx in range(len(channels) - 1):
+            is_last_layer = c_idx == (len(channels) - 2)
+            layers.append(nn.Linear(channels[c_idx], channels[c_idx + 1], bias=is_last_layer))
+            if not is_last_layer:
+                layers.append(nn.BatchNorm1d(channels[c_idx + 1], eps=1e-3, momentum=0.01))
+                layers.append(nn.ReLU(True))
+        return nn.Sequential(*layers)
 
     @staticmethod
     def generate_corners(boxes: torch.Tensor) -> torch.Tensor:
@@ -66,4 +101,95 @@ class AlignerHead(nn.Module):
         )
         return fg_pos_embed
 
+    def forward(self, batch_dict):
+        input_dict = batch_dict['2nd_stage_input']
+
+        # Prepare input for stack of attention layers
+        fg_pos_embedding = self.compute_position_embedding(input_dict)  # (N_fg, 27)
+        fg_feat = torch.cat([input_dict['fg_feat'], fg_pos_embedding], dim=1)  # (N_fg, C_bev + 27)
+        fg_feat = self.encoder_fg(fg_feat)  # (N_fg, C_attn)
+        inst_feat = self.encoder_inst(input_dict['inst_global_feat'])  # (N_inst, C_attn)
+        indices_inst2fg = input_dict['meta']['inst_bi_inv_indices']  # (N_fg)
+
+        # Invoke attention stack
+        for attn_layer in self.attention_stack:
+            inst_feat = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)  # (N_inst, C_attn)
+
+        # Decode final inst_feat to get refinement vector
+        inst_refinement = self.decoder_inst(inst_feat)  # (N_inst, 8)
+
+        if self.training:
+            self.forward_return_dict['target'] = self.assign_target(batch_dict)
+
+        return batch_dict
+
+    @torch.no_grad()
+    def assign_target(self, batch_dict):
+        input_dict = batch_dict['2nd_stage_input']
+        pred_boxes = input_dict['pred_boxes']  # (N_inst, 7) - center (3), size (3), yaw
+
+        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 11) -center (3), size (3), yaw, dummy_v (2), instance_index, class
+        gt_boxes = rearrange(gt_boxes, 'B N_inst_max C -> (B N_inst_max) C')
+        gt_boxes = gt_boxes[input_dict['meta']['inst_bi']]  # (N_inst, 11)
+
+        # map gt_boxes to pred_boxes
+        pred_cos, pred_sin = torch.cos(pred_boxes[:, -1]), torch.sin(pred_boxes[:, -1])
+        zeros, ones = pred_boxes.new_zeros(pred_boxes.shape[0]), pred_boxes.new_ones(pred_boxes.shape[0])
+        pred_rot_inv = rearrange([
+            pred_cos,    pred_sin,  zeros,
+            -pred_sin,   pred_cos,  zeros,
+            zeros,       zeros,     ones
+        ], '(r c) N_inst -> N_inst r c', r=3, c=3)
+
+        gt_cos, gt_sin = torch.cos(gt_boxes[:, 6]), torch.sin(gt_boxes[:, 6])
+        zeros, ones = gt_boxes.new_zeros(gt_boxes.shape[0]), gt_boxes.new_ones(gt_boxes.shape[0])
+        gt_rot = rearrange([
+            gt_cos,     -gt_sin,     zeros,
+            gt_sin,      gt_cos,     zeros,
+            zeros,        zeros,      ones
+        ], '(r c) N_inst -> N_inst r c', r=3, c=3)
+
+        rot_gt_in_pred = torch.einsum('nij, njk -> nik', pred_rot_inv, gt_rot)
+        transl_gt_in_pred = torch.einsum('nij, nj -> ni', pred_rot_inv, gt_boxes[:, :3] - pred_boxes[:, :3])
+
+        # residual coder
+        diagonal = torch.sqrt(torch.square(pred_boxes[3: 5]).sum(dim=1))
+        target_transl_xy = transl_gt_in_pred[:, :2] / torch.clamp_min(diagonal, min=1e-2)  # (N_inst, 2)
+        target_transl_z = rearrange(transl_gt_in_pred[:, 2] / torch.clamp_min(pred_boxes[:, 5], min=1e-2),
+                                    'N_inst -> N_inst 1')
+        target_size = torch.log(gt_boxes[:, 3: 6] / torch.clamp_min(pred_boxes[:, 3: 6], min=1e-2))  # (N_inst, 3)
+        target_ori = rot_gt_in_pred[:, :2, 0]  # (N_inst, 2) - (cos, sin)
+
+        target_dict = {
+            'boxes_refinement': torch.cat([target_transl_xy, target_transl_z, target_size, target_ori], dim=1)
+        }
+        return target_dict  # TODO test this
+
+    @staticmethod
+    @torch.no_grad()
+    def decode_boxes_refinement(boxes: torch.Tensor, refinement: torch.Tensor):
+        """
+        Reconstruct rot_gt_in_pred & transl_gt_in_pred -> ^{pred} T_{pred'}
+        """
+        diagonal = torch.sqrt(torch.square(boxes[3: 5]).sum(dim=1))
+        transl_xy = refinement[:, :2] * diagonal  # (N_inst, 2)
+        transl_z = rearrange(refinement[:, 2] * boxes[:, 5], 'N_inst -> N_inst 1')
+        transl = torch.cat([transl_xy, transl_z], dim=1)
+
+        cos, sin = torch.cos(boxes[:, 6]), torch.sin(boxes[:, 6])
+        zeros, ones = boxes.new_zeros(boxes.shape[0]), boxes.new_ones(boxes.shape[0])
+        rot_box = rearrange([
+            cos,     -sin,   zeros,
+            sin,      cos,   zeros,
+            zeros,  zeros,   ones
+        ], '(r c) N_inst -> N_inst r c', r=3, c=3)
+
+        new_xyz = torch.einsum('Nij, Nj -> Ni', rot_box, transl) + boxes[:, :3]
+
+        new_yaw = boxes[:, 6] + torch.atan2(refinement[:, -1], refinement[:, -2])
+        new_yaw = torch.atan2(torch.sin(new_yaw), torch.cos(new_yaw))
+
+        new_sizes = torch.exp(refinement[:, 3: 6]) * boxes[:, 3: 6]
+
+        return torch.cat([new_xyz, new_sizes, rearrange(new_yaw, 'N_inst -> N_inst 1')], dim=1)
 

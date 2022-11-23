@@ -2,6 +2,7 @@ import torch
 
 from .detector3d_template import Detector3DTemplate
 from _dev_space.tail_cutter import PointAligner
+from _dev_space.tail_cutter_heads import AlignerHead
 import logging
 
 
@@ -9,9 +10,12 @@ class Aligner(Detector3DTemplate):
     def __init__(self, model_cfg, num_class, dataset):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
         self.aligner = PointAligner(model_cfg)
+        self.det_head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.backbone2d.n_output_feat,
+                                    self.aligner.num_instance_features)
 
     def forward(self, batch_dict):
         batch_dict = self.aligner(batch_dict)
+        batch_dict = self.det_head(batch_dict)
 
         if self.training:
             loss, tb_dict = self.aligner.get_training_loss(batch_dict)
