@@ -18,8 +18,11 @@ class Aligner(Detector3DTemplate):
         batch_dict = self.det_head(batch_dict)
 
         if self.training:
-            loss, tb_dict = self.aligner.get_training_loss(batch_dict)
+            loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict)
+            loss_head, tb_dict = self.det_head.get_training_loss(tb_dict)
+            loss = loss_aligner + loss_head
             ret_dict = {'loss': loss}
+            tb_dict['loss_total'] = loss.item()
             return ret_dict, tb_dict, {}
         else:
             if self.model_cfg.get('DEBUG', False):

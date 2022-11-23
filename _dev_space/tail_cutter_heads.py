@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange
+from typing import List
 from _dev_space.non_batching_attention import MultiHeadAttention
 
 
@@ -112,16 +113,29 @@ class AlignerHead(nn.Module):
         indices_inst2fg = input_dict['meta']['inst_bi_inv_indices']  # (N_fg)
 
         # Invoke attention stack
-        for attn_layer in self.attention_stack:
+        for i, attn_layer in enumerate(self.attention_stack):
             inst_feat = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)  # (N_inst, C_attn)
 
         # Decode final inst_feat to get refinement vector
         inst_refinement = self.decoder_inst(inst_feat)  # (N_inst, 8)
+        self.forward_return_dict['pred'] = {'boxes_refinement': inst_refinement}
 
         if self.training:
             self.forward_return_dict['target'] = self.assign_target(batch_dict)
+        else:
+            batch_dict['final_box_dicts'] = self.generate_predicted_boxes(batch_dict['batch_size'])
 
         return batch_dict
+
+    def get_training_loss(self, tb_dict: dict = None):
+        if tb_dict is None:
+            tb_dict = dict()
+
+        pred_box_refine = self.forward_return_dict['pred']['boxes_refinement']  # (N_inst, 8)
+        target_box_refine = self.forward_return_dict['target']['boxes_refinement']  # (N_inst, 8)
+        loss_box_refine = nn.functional.smooth_l1_loss(pred_box_refine, target_box_refine, reduction='mean')
+        tb_dict['loss_box_refine'] = loss_box_refine.item()
+        return loss_box_refine, tb_dict
 
     @torch.no_grad()
     def assign_target(self, batch_dict):
@@ -156,7 +170,7 @@ class AlignerHead(nn.Module):
         target_dict = {
             'boxes_refinement': torch.cat([target_transl_xy, target_transl_z, target_size, target_ori], dim=1)
         }
-        return target_dict  # TODO test this
+        return target_dict
 
     @staticmethod
     @torch.no_grad()
@@ -186,3 +200,41 @@ class AlignerHead(nn.Module):
 
         return torch.cat([new_xyz, new_sizes, rearrange(new_yaw, 'N_inst -> N_inst 1')], dim=1)
 
+    @torch.no_grad()
+    def generate_predicted_boxes(self, batch_size: int, batch_dict) -> List[dict]:
+        """
+        Element i-th of the returned List represents predicted boxes for the sample i-th in the batch
+        Args:
+            batch_size:
+            batch_dict
+        """
+        input_dict = batch_dict['2nd_stage_input']
+        pred_boxes = input_dict['pred_boxes']  # (N_inst, 7) - center (3), size (3), yaw
+
+        # decode predicted proposals
+        pred_boxes = self.decode_boxes_refinement(pred_boxes, self.forward_return_dict['boxes_refinement'])  # (N_inst, 7)
+
+        # TODO: compute boxes' score by weighted sum foreground score, weight come from attention matrix
+        # fg_prob = self.forward_return_dict['foreground']['fg_prob']
+        #
+        # pred_scores = torch_scatter.scatter_mean(fg_prob,
+        #                                          self.forward_return_dict['meta']['inst_bi_inv_indices'],
+        #                                          dim=0)  # (N_inst, 1)
+        pred_scores = pred_boxes.new_ones(pred_boxes.shape[0], 1)
+
+        # separate pred_boxes accodring to batch index
+        inst_bi = self.forward_return_dict['meta']['inst_bi']
+        max_num_inst = self.forward_return_dict['meta']['max_num_inst']
+        inst_batch_idx = inst_bi // max_num_inst  # (N_inst,)
+
+        out = []
+        for b_idx in range(batch_size):
+            cur_boxes = pred_boxes[inst_batch_idx == b_idx]
+            cur_scores = rearrange(pred_scores[inst_batch_idx == b_idx], 'N_cur_inst 1 -> N_cur_inst')
+            cur_labels = cur_boxes.new_ones(cur_boxes.shape[0]).long()
+            out.append({
+                'pred_boxes': cur_boxes,
+                'pred_scores': cur_scores,
+                'pred_labels': cur_labels
+            })
+        return out
