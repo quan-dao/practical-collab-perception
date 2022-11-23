@@ -42,6 +42,11 @@ def multi_head_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, indi
     q_for_k = q[:, indices_q2k]  # (head, N_k, k)
     attn_logits = torch.sum(q_for_k * k, dim=2) / np.sqrt(n_ch)  # (head, N_k)
 
+    # trick for numerical stability
+    attn_logits_max = torch_scatter.scatter_max(attn_logits,
+                                                rearrange(indices_q2k, 'N_k -> 1 N_k'), dim=1)[0]  # (head, N_q)
+    attn_logits = attn_logits - attn_logits_max[:, indices_q2k]  # (head, N_k)
+
     # convert attention logits to attention weight
     exp = torch.exp(attn_logits)  # (head, N_k)
     sum_exp = torch_scatter.scatter_sum(exp, rearrange(indices_q2k, 'N_k -> 1 N_k'), dim=1)  # (head, N_q)
