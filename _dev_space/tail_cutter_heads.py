@@ -141,24 +141,17 @@ class AlignerHead(nn.Module):
             zeros,       zeros,     ones
         ], '(r c) N_inst -> N_inst r c', r=3, c=3)
 
-        gt_cos, gt_sin = torch.cos(gt_boxes[:, 6]), torch.sin(gt_boxes[:, 6])
-        zeros, ones = gt_boxes.new_zeros(gt_boxes.shape[0]), gt_boxes.new_ones(gt_boxes.shape[0])
-        gt_rot = rearrange([
-            gt_cos,     -gt_sin,     zeros,
-            gt_sin,      gt_cos,     zeros,
-            zeros,        zeros,      ones
-        ], '(r c) N_inst -> N_inst r c', r=3, c=3)
-
-        rot_gt_in_pred = torch.einsum('nij, njk -> nik', pred_rot_inv, gt_rot)
         transl_gt_in_pred = torch.einsum('nij, nj -> ni', pred_rot_inv, gt_boxes[:, :3] - pred_boxes[:, :3])
 
         # residual coder
-        diagonal = torch.sqrt(torch.square(pred_boxes[3: 5]).sum(dim=1))
+        diagonal = torch.sqrt(torch.square(pred_boxes[:, 3: 5]).sum(dim=1, keepdim=True))
         target_transl_xy = transl_gt_in_pred[:, :2] / torch.clamp_min(diagonal, min=1e-2)  # (N_inst, 2)
         target_transl_z = rearrange(transl_gt_in_pred[:, 2] / torch.clamp_min(pred_boxes[:, 5], min=1e-2),
                                     'N_inst -> N_inst 1')
         target_size = torch.log(gt_boxes[:, 3: 6] / torch.clamp_min(pred_boxes[:, 3: 6], min=1e-2))  # (N_inst, 3)
-        target_ori = rot_gt_in_pred[:, :2, 0]  # (N_inst, 2) - (cos, sin)
+        target_ori = torch.stack([
+            torch.cos(-pred_boxes[:, -1] + gt_boxes[:, 6]), torch.sin(-pred_boxes[:, -1] + gt_boxes[:, 6])
+        ], dim=1)  # (N_inst, 2) - (cos, sin)
 
         target_dict = {
             'boxes_refinement': torch.cat([target_transl_xy, target_transl_z, target_size, target_ori], dim=1)
@@ -171,7 +164,7 @@ class AlignerHead(nn.Module):
         """
         Reconstruct rot_gt_in_pred & transl_gt_in_pred -> ^{pred} T_{pred'}
         """
-        diagonal = torch.sqrt(torch.square(boxes[3: 5]).sum(dim=1))
+        diagonal = torch.sqrt(torch.square(boxes[:, 3: 5]).sum(dim=1, keepdim=True))
         transl_xy = refinement[:, :2] * diagonal  # (N_inst, 2)
         transl_z = rearrange(refinement[:, 2] * boxes[:, 5], 'N_inst -> N_inst 1')
         transl = torch.cat([transl_xy, transl_z], dim=1)
@@ -184,7 +177,7 @@ class AlignerHead(nn.Module):
             zeros,  zeros,   ones
         ], '(r c) N_inst -> N_inst r c', r=3, c=3)
 
-        new_xyz = torch.einsum('Nij, Nj -> Ni', rot_box, transl) + boxes[:, :3]
+        new_xyz = torch.einsum('nij, nj -> ni', rot_box, transl) + boxes[:, :3]
 
         new_yaw = boxes[:, 6] + torch.atan2(refinement[:, -1], refinement[:, -2])
         new_yaw = torch.atan2(torch.sin(new_yaw), torch.cos(new_yaw))
