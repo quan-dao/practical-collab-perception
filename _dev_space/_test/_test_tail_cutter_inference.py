@@ -81,8 +81,6 @@ def inference(ckpt_file: str, target_batch_idx=5, **kwargs):
     load_dict_to_gpu(batch_dict)
     with torch.no_grad():
         batch_dict = model(batch_dict)
-        correction_dict = model.correct_point_cloud(**kwargs)
-        batch_dict['correction_dict'] = correction_dict
 
     torch.save(batch_dict, f'inference_{ckpt_file}.pth')
 
@@ -110,57 +108,57 @@ def display_inference(ckpt_file: str, **kwargs):
 
         show_pointcloud(cur_points[:, 1: 4], fgr_mask=cur_points[:, -2] > -1, boxes=viz_boxes(cur_gt_boxes))
 
-    if kwargs.get('show_corrected_point_cloud', False):
-        correction_dict = batch_dict['correction_dict']
+    out_stage1 = batch_dict['2nd_stage_input']
+    print_dict(out_stage1)
 
-        bg = correction_dict['bg']  # (N_bg, 6[+2])
-        bg = bg[bg[:, 0].long() == chosen_batch_idx]
+    bg = out_stage1['bg']  # (N_bg, 6[+2])
+    bg = bg[bg[:, 0].long() == chosen_batch_idx]
 
-        fg = correction_dict['corrected_fg']  # (N_fg, 6[+2])
-        mask_cur_fg = fg[:, 0].long() == chosen_batch_idx
+    fg = out_stage1['fg']  # (N_fg, 6[+2])
+    mask_cur_fg = fg[:, 0].long() == chosen_batch_idx
 
-        fg = fg[mask_cur_fg]
-        fg_inst_idx = correction_dict['fg_inst_idx'][mask_cur_fg]
-        fg_motion_mask = correction_dict['fg_motion_mask'][mask_cur_fg]
+    fg = fg[mask_cur_fg]
+    fg_inst_idx = out_stage1['fg_inst_idx'][mask_cur_fg]
+    fg_motion_mask = out_stage1['fg_motion_mask'][mask_cur_fg]
 
-        # assign color to points
-        color_bg = torch.tensor([0, 0, 0]).repeat(bg.shape[0], 1)
-        color_fg = torch.tensor([1, 0, 0]).repeat(fg.shape[0], 1)
+    # assign color to points
+    color_bg = torch.tensor([0, 0, 0]).repeat(bg.shape[0], 1)
+    color_fg = torch.tensor([1, 0, 0]).repeat(fg.shape[0], 1)
 
-        unq_inst_idx, inv_unq_inst_idx = torch.unique(fg_inst_idx, sorted=True, return_inverse=True)
-        inst_colors = torch.from_numpy(plt.cm.rainbow(np.linspace(0, 1, unq_inst_idx.shape[0])))[:, :3]
-        color_fg_by_inst = inst_colors[inv_unq_inst_idx]
+    unq_inst_idx, inv_unq_inst_idx = torch.unique(fg_inst_idx, sorted=True, return_inverse=True)
+    inst_colors = torch.from_numpy(plt.cm.rainbow(np.linspace(0, 1, unq_inst_idx.shape[0])))[:, :3]
+    color_fg_by_inst = inst_colors[inv_unq_inst_idx]
 
-        color_fg_by_motion = torch.clone(color_fg)  # red for dynamic fg
-        color_fg_by_motion[torch.logical_not(fg_motion_mask)] = torch.tensor([0, 1, 0])  # green for static fg
+    color_fg_by_motion = torch.clone(color_fg)  # red for dynamic fg
+    color_fg_by_motion[torch.logical_not(fg_motion_mask)] = torch.tensor([0, 1, 0])  # green for static fg
 
-        gt_boxes = batch_dict['gt_boxes']  # (B, N_box_max, 7+..)
-        cur_gt_boxes = gt_boxes[chosen_batch_idx]
-        mask_valid_boxes = cur_gt_boxes[:, -1] > 0
-        cur_gt_boxes = cur_gt_boxes[mask_valid_boxes, :7]  # (N_gt_boxes, 7+...)
-        color_gt_boxes = torch.tensor([0, 1, 0]).repeat(cur_gt_boxes.shape[0], 1)  # green for g.t
+    gt_boxes = batch_dict['gt_boxes']  # (B, N_box_max, 7+..)
+    cur_gt_boxes = gt_boxes[chosen_batch_idx]
+    mask_valid_boxes = cur_gt_boxes[:, -1] > 0
+    cur_gt_boxes = cur_gt_boxes[mask_valid_boxes, :7]  # (N_gt_boxes, 7+...)
+    color_gt_boxes = torch.tensor([0, 1, 0]).repeat(cur_gt_boxes.shape[0], 1)  # green for g.t
 
-        final_box_dicts = batch_dict['final_box_dicts']  # List of dict
-        cur_pred_boxes = final_box_dicts[chosen_batch_idx]['pred_boxes']  # (N_pred_boxes, 7+...)
-        color_pred_boxes = torch.tensor([1, 0, 0]).repeat(cur_pred_boxes.shape[0], 1)  # red for predict
+    final_box_dicts = batch_dict['final_box_dicts']  # List of dict
+    cur_pred_boxes = final_box_dicts[chosen_batch_idx]['pred_boxes']  # (N_pred_boxes, 7+...)
+    color_pred_boxes = torch.tensor([1, 0, 0]).repeat(cur_pred_boxes.shape[0], 1)  # red for predict
 
-        # format visualization input
-        viz_points = torch.cat([bg, fg])[:, 1: 4]
-        viz_color_points = torch.cat([color_bg, color_fg])
-        viz_color_points_by_inst = torch.cat([color_bg, color_fg_by_inst])
-        viz_color_points_by_motion = torch.cat([color_bg, color_fg_by_motion])
+    # format visualization input
+    viz_points = torch.cat([bg, fg])[:, 1: 4]
+    viz_color_points = torch.cat([color_bg, color_fg])
+    viz_color_points_by_inst = torch.cat([color_bg, color_fg_by_inst])
+    viz_color_points_by_motion = torch.cat([color_bg, color_fg_by_motion])
 
-        viz_bboxes = viz_boxes(torch.cat([cur_gt_boxes, cur_pred_boxes]).numpy())
-        viz_color_bboxes = torch.cat([color_gt_boxes, color_pred_boxes])
+    viz_bboxes = viz_boxes(torch.cat([cur_gt_boxes, cur_pred_boxes]).numpy())
+    viz_color_bboxes = torch.cat([color_gt_boxes, color_pred_boxes])
 
-        logger.info('showing foreground seg')
-        show_pointcloud(viz_points, viz_bboxes, viz_color_points, boxes_color=viz_color_bboxes)
+    logger.info('showing foreground seg')
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points, boxes_color=viz_color_bboxes)
 
-        logger.info('showing instance seg')
-        show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_inst, boxes_color=viz_color_bboxes)
+    logger.info('showing instance seg')
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_inst, boxes_color=viz_color_bboxes)
 
-        logger.info('showing motion seg')
-        show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_motion, boxes_color=viz_color_bboxes)
+    logger.info('showing motion seg')
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_motion, boxes_color=viz_color_bboxes)
 
 
 if __name__ == '__main__':
@@ -168,11 +166,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_file', type=str, default=None, help='specify the ckpt')
     parser.add_argument('--do_inference', action='store_true', default=False, help='')
     parser.add_argument('--target_batch_idx', type=int, default=5, help='')
-    parser.add_argument('--return_instance_index', action='store_true', default=True)
-    parser.add_argument('--return_motion_mask', action='store_true', default=True)
-    parser.add_argument('--return_foreground_prob', action='store_true', default=True)
     parser.add_argument('--show_raw_point_cloud', action='store_true', default=False)
-    parser.add_argument('--show_corrected_point_cloud', action='store_true', default=True)
     args = parser.parse_args()
     if args.do_inference:
         inference(**vars(args))

@@ -359,12 +359,6 @@ class PointAligner(nn.Module):
         self.forward_return_dict['foreground'] = {
             'fg': fg, # (N_fg_valid, 6[+2]) - x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
         }
-        if not self.training:
-            self.forward_return_dict['foreground'].update({
-                'fg_prob': fg_prob,  # (N_fg_valid, 1)
-                'fg_inst_idx': fg_inst_idx,  # (N_fg_valid,)
-                'bg': batch_dict['points'][torch.logical_not(mask_fg)],  # (N_bg, 6[+2])
-            })
 
         # ------------
         # compute instance global feature
@@ -438,15 +432,20 @@ class PointAligner(nn.Module):
 
         if self.has_2nd_stage:
             pred_boxes = self.decode_proposals()  # (N_inst, 7)
-            correction_dict = self.correct_point_cloud()
+            fg_motion_mask = self.correct_point_cloud_()
 
             batch_dict['2nd_stage_input'] = {
                 'pred_boxes': pred_boxes.detach(),  # (N_inst, 7)
-                'fg': correction_dict['corrected_fg'],  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-                'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
                 'meta': self.forward_return_dict['meta'],
-                'inst_global_feat': inst_global_feat.detach()  # (N_inst, 3+2*C_inst)
+                'inst_global_feat': inst_global_feat.detach(),  # (N_inst, 3+2*C_inst)
+                'fg': self.forward_return_dict['foreground']['fg'],  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
+                'fg_prob': fg_prob,  # (N_fg_valid, 1)
+                'fg_inst_idx': fg_inst_idx,  # (N_fg_valid,)
             }
+            if not self.training:
+                batch_dict['2nd_stage_input']['fg_motion_mask'] = fg_motion_mask
+                batch_dict['2nd_stage_input']['bg'] = batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
         else:
             # for backward compability
             if not self.training:
@@ -778,9 +777,9 @@ class PointAligner(nn.Module):
             })
         return out
 
-    def correct_point_cloud(self, **kwargs):
+    def correct_point_cloud_(self):
         """
-        To be invoked after forward
+        Overwrite self.forward_return_dict['foreground']['fg']
         """
         pred_dict = self.forward_return_dict['pred_dict']
         fg = self.forward_return_dict['foreground']['fg']  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
@@ -811,22 +810,7 @@ class PointAligner(nn.Module):
             # overwrite coordinate of dynamic foreground with dyn_fg (computed above)
             fg[fg_motion_mask, 1: 4] = dyn_fg
 
-        # assemble output
-        out = {
-            'corrected_fg': fg,  # (N_fg, 6[+2])
-        }
-        if not self.training:
-            out['bg'] = self.forward_return_dict['foreground']['bg']  # (N_bg, 7[+2])
-            if kwargs.get('return_instance_index', False):
-                out['fg_inst_idx'] = self.forward_return_dict['foreground']['fg_inst_idx']
-
-            if kwargs.get('return_motion_mask', False):
-                out['fg_motion_mask'] = fg_motion_mask
-
-            if kwargs.get('return_foreground_prob', False):
-                out['fg_prob'] = self.forward_return_dict['foreground']['fg_prob']
-
-        return out
+        return fg_motion_mask
 
 
 def sigmoid(x):

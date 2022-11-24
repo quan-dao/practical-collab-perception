@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 from typing import List
+import logging
 from _dev_space.non_batching_attention import MultiHeadAttention
 
 
@@ -123,7 +124,7 @@ class AlignerHead(nn.Module):
         if self.training:
             self.forward_return_dict['target'] = self.assign_target(batch_dict)
         else:
-            batch_dict['final_box_dicts'] = self.generate_predicted_boxes(batch_dict['batch_size'])
+            batch_dict['final_box_dicts'] = self.generate_predicted_boxes(batch_dict['batch_size'], batch_dict)
 
         return batch_dict
 
@@ -209,10 +210,13 @@ class AlignerHead(nn.Module):
             batch_dict
         """
         input_dict = batch_dict['2nd_stage_input']
-        pred_boxes = input_dict['pred_boxes']  # (N_inst, 7) - center (3), size (3), yaw
 
         # decode predicted proposals
-        pred_boxes = self.decode_boxes_refinement(pred_boxes, self.forward_return_dict['boxes_refinement'])  # (N_inst, 7)
+        pred_boxes = self.decode_boxes_refinement(input_dict['pred_boxes'], self.forward_return_dict['pred']['boxes_refinement'])  # (N_inst, 7)
+        if self.cfg.get('DEBUG_NOT_APPLYING_REFINEMENT', False):
+            logger = logging.getLogger()
+            logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
+            pred_boxes = input_dict['pred_boxes']
 
         # TODO: compute boxes' score by weighted sum foreground score, weight come from attention matrix
         # fg_prob = self.forward_return_dict['foreground']['fg_prob']
@@ -223,8 +227,8 @@ class AlignerHead(nn.Module):
         pred_scores = pred_boxes.new_ones(pred_boxes.shape[0], 1)
 
         # separate pred_boxes accodring to batch index
-        inst_bi = self.forward_return_dict['meta']['inst_bi']
-        max_num_inst = self.forward_return_dict['meta']['max_num_inst']
+        inst_bi = input_dict['meta']['inst_bi']
+        max_num_inst = input_dict['meta']['max_num_inst']
         inst_batch_idx = inst_bi // max_num_inst  # (N_inst,)
 
         out = []
