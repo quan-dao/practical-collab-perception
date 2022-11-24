@@ -51,6 +51,7 @@ DATA_CONFIG:
 
 MODEL:
     NAME: Aligner
+    DEBUG: False
 
     PILLAR_ENCODER:
         POINT_CLOUD_RANGE: [ -51.2, -51.2, -5.0, 51.2, 51.2, 3.0 ]
@@ -95,7 +96,15 @@ MODEL:
     LOSS:
         SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
 
-    DEBUG: False
+    FREEZE_1ST_STAGE: True
+    REAL_INFERENCE: False
+    HAS_2ND_STAGE: True
+    ALIGNER_HEAD:
+        ATTENTION:
+            NUM_FEATURES: 256
+            NUM_HEADS: 8
+            NUM_LAYERS: 4
+        DEBUG_NOT_APPLYING_REFINEMENT: False
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
