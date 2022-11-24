@@ -10,20 +10,43 @@ class Aligner(Detector3DTemplate):
     def __init__(self, model_cfg, num_class, dataset):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
         self.aligner = PointAligner(model_cfg)
+        if model_cfg.get('FREEZE_1ST_STAGE', False):
+            self.aligner.eval()
+            for param in self.aligner.parameters():
+                param.requires_grad = False
         self.det_head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.backbone2d.n_output_feat,
                                     self.aligner.num_instance_features)
 
     def forward(self, batch_dict):
-        batch_dict = self.aligner(batch_dict)
+        if self.model_cfg.get('FREEZE_1ST_STAGE', False):
+            self.aligner.eval()
+            with torch.no_grad():
+                batch_dict = self.aligner(batch_dict)
+        else:
+            batch_dict = self.aligner(batch_dict)
+
         batch_dict = self.det_head(batch_dict)
 
         if self.training:
-            loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict)
+            tb_dict = dict()
+            if self.aligner.training:
+                loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict)
+
             loss_head, tb_dict = self.det_head.get_training_loss(tb_dict)
-            loss = loss_aligner + loss_head
+
+            if self.aligner.training:
+                loss = loss_aligner + loss_head
+            else:
+                loss = loss_head
+
             ret_dict = {'loss': loss}
             tb_dict['loss_total'] = loss.item()
-            return ret_dict, tb_dict, {}
+            if self.model_cfg.get('DEBUG', False):
+                logger = logging.getLogger()
+                logger.warning('during training, DEBUG flag is on, return batch_dict together with ret_dict & tb_dict')
+                return ret_dict, tb_dict, {}, batch_dict
+            else:
+                return ret_dict, tb_dict, {}
         else:
             if self.model_cfg.get('DEBUG', False):
                 logger = logging.getLogger()

@@ -281,8 +281,9 @@ class PointAligner(nn.Module):
         # INSTANCE stuff
         # ---------------------------------------------------------------
 
-        if self.training:
-            # use AUGMENTED instance index
+        if self.training or not self.cfg.REAL_INFERENCE:
+            # Training 1st stage or Freeze 1st stage to train 2nd stage
+            # ==> use AUGMENTED instance index
             mask_fg = batch_dict['points'][:, -1].long() > -1
             fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
             fg_inst_idx = fg[:, -1].long()  # (N_fg,)
@@ -291,9 +292,10 @@ class PointAligner(nn.Module):
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
             fg_prob = sigmoid(pred_points_fg.detach())[mask_fg]  # (N_fg_valid, 1)
         else:
-            if self.cfg.get('FG_THRESH', None) is not None:
+            if self.cfg.get('FG_THRESH', 0.5) > 0:
                 mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.FG_THRESH
             else:
+                # use ground truth foreground
                 mask_fg = batch_dict['points'][:, -2] > -1
             fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
             fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
@@ -438,9 +440,9 @@ class PointAligner(nn.Module):
                 'pred_boxes': pred_boxes.detach(),  # (N_inst, 7)
                 'meta': self.forward_return_dict['meta'],
                 'inst_global_feat': inst_global_feat.detach(),  # (N_inst, 3+2*C_inst)
-                'fg': self.forward_return_dict['foreground']['fg'],  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                'fg': self.forward_return_dict['foreground']['fg'].detach(),  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
                 'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
-                'fg_prob': fg_prob,  # (N_fg_valid, 1)
+                'fg_prob': fg_prob.detach(),  # (N_fg_valid, 1)
                 'fg_inst_idx': fg_inst_idx,  # (N_fg_valid,)
             }
             if not self.training:
