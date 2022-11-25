@@ -134,7 +134,8 @@ class AlignerHead(nn.Module):
             self.forward_return_dict['target'] = self.assign_target(batch_dict)
         else:
             batch_dict['final_box_dicts'] = self.generate_predicted_boxes(batch_dict['batch_size'], batch_dict)
-
+            if self.cfg.get('GENERATE_INSTANCE_PAST_TRAJECTORY', True):
+                batch_dict['local_traj'] = self.gen_instances_past_trajectory(batch_dict)
         return batch_dict
 
     def get_training_loss(self, tb_dict: dict = None):
@@ -221,7 +222,8 @@ class AlignerHead(nn.Module):
         input_dict = batch_dict['2nd_stage_input']
 
         # decode predicted proposals
-        pred_boxes = self.decode_boxes_refinement(input_dict['pred_boxes'], self.forward_return_dict['pred']['boxes_refinement'])  # (N_inst, 7)
+        pred_boxes = self.decode_boxes_refinement(input_dict['pred_boxes'],
+                                                  self.forward_return_dict['pred']['boxes_refinement'])  # (N_inst, 7)
         if self.cfg.get('DEBUG_NOT_APPLYING_REFINEMENT', False):
             logger = logging.getLogger()
             logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
@@ -229,7 +231,9 @@ class AlignerHead(nn.Module):
 
         # compute boxes' score by weighted sum foreground score, weight come from attention matrix
         fg_prob = rearrange(input_dict['fg_prob'], 'N_fg 1 -> N_fg')
+        print(f'fg_prob: {fg_prob.shape}')
         attn_weights = self.forward_return_dict['attn_weights']  # (N_fg)
+        print(f'attn_weights: {attn_weights.shape}')
         pred_scores = torch_scatter.scatter_mean(fg_prob * attn_weights,
                                                  input_dict['meta']['inst_bi_inv_indices'])  # (N_inst,)
 
@@ -249,3 +253,41 @@ class AlignerHead(nn.Module):
                 'pred_labels': cur_labels
             })
         return out
+
+    @torch.no_grad()
+    def gen_instances_past_trajectory(self, batch_dict):
+        """
+        Returns:
+            (N_local, 4) - x, y, z, yaw
+        """
+        input_dict = batch_dict['2nd_stage_input']
+
+        # instances' pose @ the current time step
+        cur_boxes = self.decode_boxes_refinement(input_dict['pred_boxes'],
+                                                 self.forward_return_dict['pred']['boxes_refinement'])  # (N_inst, 7)
+        if self.cfg.get('DEBUG_NOT_APPLYING_REFINEMENT', False):
+            logger = logging.getLogger()
+            logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
+            cur_boxes = input_dict['pred_boxes']
+
+        # extract local_tf
+        local_transl = input_dict['local_transl']  # (N_local, 3)
+        local_rot = input_dict['local_rot']  # (N_local, 3, 3)
+        local_rot_angle = torch.atan2(local_rot[:, 1, 0], local_rot[:, 0, 0])  # (N_local,) - assume only have rot around x
+
+        # reconstruct local poses
+        indices_inst2local = input_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
+        local_yaw = -local_rot_angle + cur_boxes[indices_inst2local, -1]  # (N_local,)
+
+        offset = cur_boxes[indices_inst2local, :3] - local_transl  # (N_local, 3)
+        cos, sin = torch.cos(-local_rot_angle), torch.sin(-local_rot_angle)  # (N_local,)
+        local_xyz = torch.stack([
+            cos * offset[:, 0] - sin * offset[:, 1],
+            sin * offset[:, 0] + cos * offset[:, 1],
+            offset[:, 2]
+        ], dim=1)  # (N_local, 3)
+
+        return torch.cat([local_xyz, local_yaw[:, None]], dim=1)  # (N_local, 4)
+
+
+

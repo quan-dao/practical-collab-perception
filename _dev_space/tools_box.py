@@ -5,19 +5,22 @@ from torch_scatter import scatter_mean
 import open3d as o3d
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
+from typing import List
 
 
 DYNAMIC_CLASSES = ('vehicle', 'human')  # to get ground truth for training CFG
 CENTER_RADIUS = 2.
 
 
-def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None, fgr_offset=None, boxes_color=None):
+def show_pointcloud(xyz, boxes=None, pc_colors=None, boxes_color=None, poses: List[np.ndarray] = None):
     """
     Visualize pointcloud & annotations
     Args:
         xyz (np.ndarray): (N, 3)
         boxes (list): list of boxes, each box is denoted by coordinates of its 8 vertices - np.ndarray (8, 3)
         pc_colors (np.ndarray): (N, 3) - r, g, b
+        boxes_color:
+        poses:
     """
     def create_cube(vers, box_color):
         # vers: (8, 3)
@@ -40,36 +43,24 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, fgr_mask=None, fgr_offset=N
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
-
-    if fgr_mask is not None and pc_colors is None:
-        pc_colors = np.zeros((xyz.shape[0], 3))
-        pc_colors[fgr_mask, 0] = 1
-
-    offset_lines = []
-    if fgr_offset is not None:
-        assert fgr_mask is not None
-        if fgr_offset.shape[1] == 2:
-            fgr_offset = np.concatenate((fgr_offset, np.zeros((fgr_offset.shape[0], 1))), axis=1)
-        final = xyz[fgr_mask]
-        initial = final - fgr_offset[fgr_mask]
-        for fidx in range(final.shape[0]):
-            ln = o3d.geometry.LineSet(
-                points=o3d.utility.Vector3dVector(np.vstack([initial[[fidx]], final[[fidx]]])),
-                lines=o3d.utility.Vector2iVector([[0, 1]])
-            )
-            ln.colors = o3d.utility.Vector3dVector(np.array([[0, 0, 1]]))
-            offset_lines.append(ln)
-
-        offset_lines = offset_lines[::8]
-
     if pc_colors is not None:
         pcd.colors = o3d.utility.Vector3dVector(pc_colors)
+
+    obj_to_display = [pcd]
+
     if boxes is not None:
         o3d_cubes = [create_cube(box, boxes_color[b_idx] if boxes_color is not None else None)
                      for b_idx, box in enumerate(boxes)]
-        o3d.visualization.draw_geometries([pcd, *o3d_cubes, *offset_lines])
-    else:
-        o3d.visualization.draw_geometries([pcd, *offset_lines])
+        obj_to_display += o3d_cubes
+
+    if poses is not None:
+        for pose in poses:
+            assert pose.shape == (4, 4), f"expect (4, 4), get {pose.shape}"
+            frame = o3d.geometry.TriangleMesh.create_coordinate_frame()
+            frame = frame.transform(pose)
+            obj_to_display.append(frame)
+
+    o3d.visualization.draw_geometries(obj_to_display)
 
 
 def tf(translation, rotation):

@@ -151,14 +151,27 @@ def display_inference(ckpt_file: str, **kwargs):
     viz_bboxes = viz_boxes(torch.cat([cur_gt_boxes, cur_pred_boxes]).numpy())
     viz_color_bboxes = torch.cat([color_gt_boxes, color_pred_boxes])
 
+    local_traj = batch_dict['local_traj'].numpy()  # (N_local, 4) - here batch_size=1, so no need separate sample in batch
+    inst_poses = []
+    for i in range(local_traj.shape[0]):
+        x, y, z, yaw = local_traj[i]
+        cos, sin = np.cos(yaw), np.sin(yaw)
+        pose = np.array([
+            cos,  -sin,  0,  x,
+            sin,   cos,  0,  y,
+            0,       0,  1,  z,
+            0,       0,  0,  1
+        ]).reshape(4, 4)
+        inst_poses.append(pose)
+
     logger.info('showing foreground seg')
-    show_pointcloud(viz_points, viz_bboxes, viz_color_points, boxes_color=viz_color_bboxes)
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points, boxes_color=viz_color_bboxes, poses=inst_poses)
 
     logger.info('showing instance seg')
-    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_inst, boxes_color=viz_color_bboxes)
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_inst, boxes_color=viz_color_bboxes, poses=inst_poses)
 
     logger.info('showing motion seg')
-    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_motion, boxes_color=viz_color_bboxes)
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_motion, boxes_color=viz_color_bboxes, poses=inst_poses)
 
 
 if __name__ == '__main__':

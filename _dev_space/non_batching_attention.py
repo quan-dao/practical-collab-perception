@@ -59,7 +59,7 @@ def multi_head_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, indi
 
     if return_attn_weights:
         # attn weights are average over heads
-        attn = torch.mean(attn, dim=1)  # (N_k)
+        attn = torch.mean(attn, dim=0)  # (N_k)
         return out, attn
     else:
         return out

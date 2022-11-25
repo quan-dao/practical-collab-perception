@@ -444,6 +444,8 @@ class PointAligner(nn.Module):
                 'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
                 'fg_prob': fg_prob.detach(),  # (N_fg_valid, 1)
                 'fg_inst_idx': fg_inst_idx,  # (N_fg_valid,)
+                'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
+                'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
             }
             if not self.training:
                 batch_dict['2nd_stage_input']['fg_motion_mask'] = fg_motion_mask
