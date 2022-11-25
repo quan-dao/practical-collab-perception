@@ -14,6 +14,7 @@ class Aligner(Detector3DTemplate):
             self.aligner.eval()
             for param in self.aligner.parameters():
                 param.requires_grad = False
+
         self.det_head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.backbone2d.n_output_feat,
                                     self.aligner.num_instance_features)
 
@@ -71,10 +72,3 @@ class Aligner(Detector3DTemplate):
             )
 
         return final_pred_dict, recall_dict
-
-    def correct_point_cloud(self, **kwargs):
-        if not self.training:
-            with torch.no_grad():
-                return self.aligner.correct_point_cloud(**kwargs)
-        else:
-            return self.aligner.correct_point_cloud(**kwargs)
