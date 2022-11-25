@@ -28,7 +28,8 @@ def single_head_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, ind
     return out
 
 
-def multi_head_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, indices_q2k: torch.Tensor) -> torch.Tensor:
+def multi_head_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, indices_q2k: torch.Tensor,
+                         return_attn_weights=False):
     """
     Args:
         q: (head, N_q, k)
@@ -55,11 +56,17 @@ def multi_head_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, indi
     out = torch_scatter.scatter_sum(rearrange(attn, 'head N_k -> head N_k 1') * v,  # (head, N_k, v)
                                     rearrange(indices_q2k, 'N_k -> 1 N_k'),
                                     dim=1)  # (head, N_q, v)
-    return out
+
+    if return_attn_weights:
+        # attn weights are average over heads
+        attn = torch.mean(attn, dim=1)  # (N_k)
+        return out, attn
+    else:
+        return out
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, n_head, d_model, d_k=None, d_v=None, dropout=0.1):
+    def __init__(self, n_head, d_model, d_k=None, d_v=None, dropout=0.1, return_attn_weight=False):
         super().__init__()
         self.n_head = n_head
         if d_k is None:
@@ -79,6 +86,8 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.batch_norm = nn.BatchNorm1d(d_model, eps=1e-3, momentum=0.01)
 
+        self.return_attn_weight = return_attn_weight
+
     def forward(self, q, k, v, indices_q2k):
         """
         Args:
@@ -87,7 +96,8 @@ class MultiHeadAttention(nn.Module):
             v: (N_k, d_model)
             indices_q2k: (N_k,)
         Returns:
-            (N_q, d_model)
+            - out: (N_q, d_model)
+            - attn_weights: (N_k,)
         """
         residual = q
 
@@ -95,7 +105,16 @@ class MultiHeadAttention(nn.Module):
         k = rearrange(self.w_ks(k), 'N_k (head k) -> head N_k k', head=self.n_head)
         v = rearrange(self.w_vs(v), 'N_k (head v) -> head N_k v', head=self.n_head)
 
-        out = rearrange(multi_head_attention(q, k, v, indices_q2k), 'head N_q v -> N_q (head v)')
+        if not self.return_attn_weight:
+            out = rearrange(multi_head_attention(q, k, v, indices_q2k), 'head N_q v -> N_q (head v)')
+        else:
+            out, attn_weights = multi_head_attention(q, k, v, indices_q2k, return_attn_weights=True)
+            out = rearrange(out, 'head N_q v -> N_q (head v)')
+
         out = self.dropout(self.fc(out))
         out = self.batch_norm(out + residual)
-        return out
+
+        if not self.return_attn_weight:
+            return out
+        else:
+            return out, attn_weights

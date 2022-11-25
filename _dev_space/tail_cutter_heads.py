@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange
+import torch_scatter
 from typing import List
 import logging
 from _dev_space.non_batching_attention import MultiHeadAttention
@@ -20,7 +21,9 @@ class AlignerHead(nn.Module):
         # 2 * NUM_BEV_FEATURES = cat[(target local feat, inst global feat)]
 
         self.attention_stack = nn.ModuleList([
-            MultiHeadAttention(attn_cfg.NUM_HEADS, attn_cfg.NUM_FEATURES) for _ in range(attn_cfg.NUM_LAYERS)
+            MultiHeadAttention(
+                attn_cfg.NUM_HEADS, attn_cfg.NUM_FEATURES, return_attn_weight=a_idx == attn_cfg.NUM_LAYERS - 1
+            ) for a_idx in range(attn_cfg.NUM_LAYERS)
         ])
 
         self.decoder_inst = self._make_mlp(attn_cfg.NUM_FEATURES, [*model_cfg.get('DECODER_MID_CHANNELS', []), 8])
@@ -115,7 +118,13 @@ class AlignerHead(nn.Module):
 
         # Invoke attention stack
         for i, attn_layer in enumerate(self.attention_stack):
-            inst_feat = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)  # (N_inst, C_attn)
+            if i < len(self.attention_stack) - 1:
+                inst_feat = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)  # (N_inst, C_attn)
+            else:
+                inst_feat, attn_weights = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)
+                # inst_feat: (N_inst, C_attn)
+                # attn_weights: (N_fg,)
+                self.forward_return_dict['attn_weights'] = attn_weights  # (N_fg,)
 
         # Decode final inst_feat to get refinement vector
         inst_refinement = self.decoder_inst(inst_feat)  # (N_inst, 8)
@@ -218,13 +227,11 @@ class AlignerHead(nn.Module):
             logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
             pred_boxes = input_dict['pred_boxes']
 
-        # TODO: compute boxes' score by weighted sum foreground score, weight come from attention matrix
-        # fg_prob = self.forward_return_dict['foreground']['fg_prob']
-        #
-        # pred_scores = torch_scatter.scatter_mean(fg_prob,
-        #                                          self.forward_return_dict['meta']['inst_bi_inv_indices'],
-        #                                          dim=0)  # (N_inst, 1)
-        pred_scores = pred_boxes.new_ones(pred_boxes.shape[0], 1)
+        # compute boxes' score by weighted sum foreground score, weight come from attention matrix
+        fg_prob = rearrange(input_dict['fg_prob'], 'N_fg 1 -> N_fg')
+        attn_weights = self.forward_return_dict['attn_weights']  # (N_fg)
+        pred_scores = torch_scatter.scatter_mean(fg_prob * attn_weights,
+                                                 input_dict['meta']['inst_bi_inv_indices'])  # (N_inst,)
 
         # separate pred_boxes accodring to batch index
         inst_bi = input_dict['meta']['inst_bi']
@@ -234,7 +241,7 @@ class AlignerHead(nn.Module):
         out = []
         for b_idx in range(batch_size):
             cur_boxes = pred_boxes[inst_batch_idx == b_idx]
-            cur_scores = rearrange(pred_scores[inst_batch_idx == b_idx], 'N_cur_inst 1 -> N_cur_inst')
+            cur_scores = pred_scores[inst_batch_idx == b_idx]  # (N_cur_inst,)
             cur_labels = cur_boxes.new_ones(cur_boxes.shape[0]).long()
             out.append({
                 'pred_boxes': cur_boxes,
