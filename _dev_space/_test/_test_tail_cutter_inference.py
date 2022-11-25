@@ -106,7 +106,7 @@ def display_inference(ckpt_file: str, **kwargs):
         mask_valid_boxes = cur_gt_boxes[:, -1] > 0
         cur_gt_boxes = cur_gt_boxes[mask_valid_boxes]
 
-        show_pointcloud(cur_points[:, 1: 4], fgr_mask=cur_points[:, -2] > -1, boxes=viz_boxes(cur_gt_boxes))
+        show_pointcloud(cur_points[:, 1: 4], boxes=viz_boxes(cur_gt_boxes))
 
     out_stage1 = batch_dict['2nd_stage_input']
     print_dict(out_stage1)
@@ -136,7 +136,7 @@ def display_inference(ckpt_file: str, **kwargs):
     cur_gt_boxes = gt_boxes[chosen_batch_idx]
     mask_valid_boxes = cur_gt_boxes[:, -1] > 0
     cur_gt_boxes = cur_gt_boxes[mask_valid_boxes, :7]  # (N_gt_boxes, 7+...)
-    color_gt_boxes = torch.tensor([0, 1, 0]).repeat(cur_gt_boxes.shape[0], 1)  # green for g.t
+    color_gt_boxes = torch.tensor([0.5, 0.5, 0]).repeat(cur_gt_boxes.shape[0], 1)  # green for g.t
 
     final_box_dicts = batch_dict['final_box_dicts']  # List of dict
     cur_pred_boxes = final_box_dicts[chosen_batch_idx]['pred_boxes']  # (N_pred_boxes, 7+...)

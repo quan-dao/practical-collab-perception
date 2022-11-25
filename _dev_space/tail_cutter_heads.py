@@ -225,16 +225,14 @@ class AlignerHead(nn.Module):
         pred_boxes = self.decode_boxes_refinement(input_dict['pred_boxes'],
                                                   self.forward_return_dict['pred']['boxes_refinement'])  # (N_inst, 7)
         if self.cfg.get('DEBUG_NOT_APPLYING_REFINEMENT', False):
-            logger = logging.getLogger()
-            logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
+            # logger = logging.getLogger()
+            # logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
             pred_boxes = input_dict['pred_boxes']
 
         # compute boxes' score by weighted sum foreground score, weight come from attention matrix
         fg_prob = rearrange(input_dict['fg_prob'], 'N_fg 1 -> N_fg')
-        print(f'fg_prob: {fg_prob.shape}')
         attn_weights = self.forward_return_dict['attn_weights']  # (N_fg)
-        print(f'attn_weights: {attn_weights.shape}')
-        pred_scores = torch_scatter.scatter_mean(fg_prob * attn_weights,
+        pred_scores = torch_scatter.scatter_mean(fg_prob,
                                                  input_dict['meta']['inst_bi_inv_indices'])  # (N_inst,)
 
         # separate pred_boxes accodring to batch index
@@ -266,8 +264,8 @@ class AlignerHead(nn.Module):
         cur_boxes = self.decode_boxes_refinement(input_dict['pred_boxes'],
                                                  self.forward_return_dict['pred']['boxes_refinement'])  # (N_inst, 7)
         if self.cfg.get('DEBUG_NOT_APPLYING_REFINEMENT', False):
-            logger = logging.getLogger()
-            logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
+            # logger = logging.getLogger()
+            # logger.info('NOT USING REFINEMENT, showing pred_boxes made by 1st stage')
             cur_boxes = input_dict['pred_boxes']
 
         # extract local_tf
