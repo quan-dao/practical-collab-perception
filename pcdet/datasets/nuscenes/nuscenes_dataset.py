@@ -11,6 +11,7 @@ from ..dataset import DatasetTemplate
 
 from _dev_space.get_sweeps_instance_centric import inst_centric_get_sweeps
 from nuscenes import NuScenes
+from nuscenes.prediction import PredictHelper
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -43,6 +44,9 @@ class NuScenesDataset(DatasetTemplate):
             'traffic_cone': 'ignore',
             'ignore': 'ignore',
         }
+
+        # for prediction task
+        self.predict_helper = PredictHelper(self.nusc)
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -146,7 +150,8 @@ class NuScenesDataset(DatasetTemplate):
         num_sweeps = np.random.choice(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)
 
         _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
-                                       pointcloud_range=self.point_cloud_range)
+                                       pointcloud_range=self.point_cloud_range,
+                                       predict_helper=self.predict_helper)
         points = _out['points']  # (N, C)
 
         if self.dataset_cfg.DROP_BACKGROUND.ENABLE:
@@ -171,6 +176,7 @@ class NuScenesDataset(DatasetTemplate):
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token'], 'num_sweeps': num_sweeps,
                          'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)},
+            'instances_waypoints': _out['instance_future_waypoints']
         }
 
         # overwrite gt_boxes & gt_names

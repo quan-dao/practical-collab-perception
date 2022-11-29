@@ -4,6 +4,8 @@ from nuscenes.nuscenes import NuScenes
 from _dev_space.tools_box import apply_tf, tf, get_sweeps_token, get_nuscenes_sensor_pose_in_global
 from pcdet.datasets.nuscenes.nuscenes_utils import quaternion_yaw
 from pyquaternion import Quaternion
+from typing import List
+from nuscenes.prediction import PredictHelper
 
 
 def get_sample_data_point_cloud(nusc: NuScenes, sample_data_token: str, time_lag: float = None, sweep_idx: int = None) \
@@ -43,7 +45,8 @@ def find_points_in_box(points: np.ndarray, target_from_box: np.ndarray, dxdydz: 
 def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                             center_radius=2.0, in_box_tolerance=1e-2,
                             return_instances_last_box=False,
-                            pointcloud_range=None) -> dict:
+                            pointcloud_range=None,
+                            predict_helper: PredictHelper = None, predict_horizon=3.0, predict_freq=2) -> dict:
     """
     Returns:
         {
@@ -65,6 +68,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
     instances = list()  # for each instance, store list of poses
     instances_sweep_indices = list()  # for each instance, store list of sweep index
     instances_size = list()  # for each instance, store its sizes (dx, dy ,dz) == l, w, h
+    inst_tk_2_sample_tk = dict()  # to store the sample_tk where an inst last appears
     all_points = []
 
     for sd_token, time_lag, s_idx in sd_tokens_times:
@@ -86,7 +90,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
 
             anno_rec = nusc.get('sample_annotation', box.token)
 
-            if anno_rec['num_lidar_pts'] == 0:
+            if anno_rec['num_lidar_pts'] < 1:
                 continue
 
             # map box to target
@@ -107,6 +111,8 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 cur_instance_idx = inst_token_2_index[inst_token]
                 instances[cur_instance_idx].append(target_from_box)
                 instances_sweep_indices[cur_instance_idx].append(s_idx)
+
+            inst_tk_2_sample_tk[inst_token] = anno_rec['sample_token']
 
             # set points' instance index
             mask_in = find_points_in_box(cur_points, target_from_box, np.array([box.wlh[1], box.wlh[0], box.wlh[2]]),
@@ -184,9 +190,63 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
             instances_last_box[_idx, 9] = _idx
         out['instances_last_box'] = instances_last_box
 
+    if predict_helper is not None:
+        # return instance's future position as well
+
+        waypoints = []
+
+        for inst_tk, inst_idx in inst_token_2_index.items():
+            sequence = predict_helper.get_future_for_agent(inst_tk, inst_tk_2_sample_tk[inst_tk],
+                                                           seconds=predict_horizon,
+                                                           in_agent_frame=False, just_xy=False)
+            # sequence is List[sample_annotation], len <=6 ( = 3s * 2Hz)
+
+            current_pose = instances[inst_idx][-1]  # (4, 4) - target_from_cur_box
+            poses = [current_pose]
+            for future_anno in sequence:
+                glob_from_future = tf(future_anno['translation'], future_anno['rotation'])
+                target_from_future = target_from_glob @ glob_from_future  # (4, 4)
+                poses.append(target_from_future)
+
+            if len(poses) == 1:
+                # inst_waypoints = np.zeros((1, 4))
+                # inst_waypoints[0, :2] = current_pose[:2, -1]
+                # inst_waypoints[0, 2] = np.arctan2(current_pose[1, 0], current_pose[0, 0])
+                # inst_waypoints[0, 3] = inst_idx
+                inst_waypoints = np.array([
+                    current_pose[0, -1], current_pose[1, -1],
+                    np.arctan2(current_pose[1, 0], current_pose[0, 0]),
+                    inst_idx
+                ]).reshape(1, 4)
+            else:
+                inst_waypoints = []
+                for p_idx in range(len(poses) - 1):
+                    cur_pose = poses[p_idx]
+                    next_pose = poses[p_idx + 1]
+
+                    xs = np.interp(
+                        np.arange(5),  # time step to interpolate - exclude the right-end point
+                        [0, 5],  # time steps where value are known
+                        [cur_pose[0, -1], next_pose[0, -1]]  # values @ t0, value @ t5
+                    )  # (5,)
+
+                    ys = np.interp(np.arange(5), [0, 5], [cur_pose[1, -1], next_pose[1, -1]])  # (5,)
+
+                    qs = Quaternion.intermediates(
+                        Quaternion(matrix=cur_pose), Quaternion(matrix=next_pose), n=4, include_endpoints=True
+                    )  # (6,)
+                    qs = list(qs)
+                    qs = [quaternion_yaw(q) for q in qs[:-1]]  # (5,) - exclude the right-end point
+
+                    inst_waypoints.append(np.stack([xs, ys, qs], axis=1))
+
+                inst_waypoints = np.pad(np.concatenate(inst_waypoints, axis=0),
+                                        pad_width=[(0, 0), (0, 1)], constant_values=inst_idx)
+
+            waypoints.append(inst_waypoints)
+
+        waypoints = np.concatenate(waypoints, axis=0)
+        out['instance_future_waypoints'] = waypoints  # (N_waypoints, 4) - x, y, yaw, instance_idx
+
     return out
-
-
-
-
 
