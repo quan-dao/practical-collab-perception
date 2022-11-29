@@ -21,10 +21,10 @@ def modify_dataset_cfg(cfg):
 
     cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
         'placeholder',
-        'random_world_flip',
-        'random_world_scaling',
+        # 'random_world_flip',
+        # 'random_world_scaling',
         'gt_sampling',
-        'random_world_rotation',
+        # 'random_world_rotation',
     ]
 
     cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx',
@@ -132,6 +132,10 @@ def main(**kwargs):
     print_dict(data_dict)
     print('meta: ', data_dict['metadata'])
     print('data_dict[instance_future_waypoints]:\n', data_dict['instances_waypoints'])
+    print("data_dict['flip_x']: ", data_dict['flip_x'])
+    print("data_dict['flip_y']: ", data_dict['flip_y'])
+    print("data_dict['noise_rot']: ", data_dict['noise_rot'])
+    print("data_dict['noise_scale']: ", data_dict['noise_scale'])
 
     if kwargs.get('show_raw_pointcloud', False):
         print('-----------------------\n'
