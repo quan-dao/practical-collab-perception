@@ -358,10 +358,6 @@ class PointAligner(nn.Module):
                 'local_bisw': local_bisw, 'local_bisw_inv_indices': local_bisw_inv_indices
             }
 
-        self.forward_return_dict['foreground'] = {
-            'fg': fg, # (N_fg_valid, 6[+2]) - x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-        }
-
         # ------------
         # compute instance global feature
         fg_feat4glob = self.inst_global_mlp(fg_feat)  # (N_fg, C_inst)
@@ -380,6 +376,24 @@ class PointAligner(nn.Module):
         local_shape_enc = torch_scatter.scatter_max(fg_shape_enc, local_bisw_inv_indices, dim=0)[0]  # (N_local, C_inst)
 
         # ------------
+        # prepare input for prediction @ the 2nd stage
+        self.forward_return_dict['input_2nd_stage'] = {
+            'foreground': {
+                'fg': fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
+                'fg_prob': rearrange(fg_prob.detach(), 'N_fg 1 -> N_fg'),
+                'fg_inst_idx': fg_inst_idx,  # (N_fg,)
+            },
+            'local': {
+                'shape_encoding': local_shape_enc.detach(),  # (N_local, C_inst)
+            },
+            'global': {
+                'shape_encoding': inst_global_feat.detach(),  # (N_inst, C_inst)
+                'motion_stat': sigmoid(rearrange(pred_inst_motion_stat.detach(), 'N_inst 1 -> N_inst')),
+            }
+        }
+
+        # ------------
         # compute instance shape encoding of the local @ target timestep (i.e. local having the largest sweep idx)
         with torch.no_grad():
             # get the max sweep_index of each instance
@@ -393,7 +407,10 @@ class PointAligner(nn.Module):
             corr = corr.sum(dim=0)  # (N_inst)
 
         inst_target_center = local_center[corr]  # (N_inst, 3)
-        self.forward_return_dict['meta']['inst_target_center'] = inst_target_center  # (N_inst, 3)
+        self.forward_return_dict['meta'].update({
+            'inst_target_center': inst_target_center,  # for correction  - (N_inst, 3)
+            'inst_max_sweep_idx': inst_max_sweep_idx,  # for prediction  - (N_inst,)
+        })
 
         inst_target_center_shape = torch.cat((inst_target_center, local_shape_enc[corr]), dim=1)  # (N_inst, 3+C_inst)
         inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
@@ -432,29 +449,25 @@ class PointAligner(nn.Module):
         if self.training:
             self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
 
-        if self.has_2nd_stage:
-            pred_boxes = self.decode_proposals()  # (N_inst, 7)
-            fg_motion_mask = self.correct_point_cloud_()
+        # -------------------------
+        # prepare input for the 2nd stage
+        pred_boxes = self.decode_proposals()  # (N_inst, 7)
+        fg_motion_mask = self.correct_point_cloud_()
 
-            batch_dict['2nd_stage_input'] = {
-                'pred_boxes': pred_boxes.detach(),  # (N_inst, 7)
-                'meta': self.forward_return_dict['meta'],
-                'inst_global_feat': inst_global_feat.detach(),  # (N_inst, 3+2*C_inst)
-                'fg': self.forward_return_dict['foreground']['fg'].detach(),  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-                'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
-                'fg_prob': fg_prob.detach(),  # (N_fg_valid, 1)
-                'fg_inst_idx': fg_inst_idx,  # (N_fg_valid,)
-                'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
-                'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
-            }
-            if not self.training:
-                batch_dict['2nd_stage_input']['fg_motion_mask'] = fg_motion_mask
-                batch_dict['2nd_stage_input']['bg'] = batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
-        else:
-            # for backward compability
-            if not self.training:
-                proposals_pred_dict = self.generate_predicted_boxes(batch_dict['batch_size'])
-                batch_dict['final_box_dicts'] = proposals_pred_dict
+        self.forward_return_dict['input_2nd_stage']['local'].update({
+            'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
+            'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
+        })
+        self.forward_return_dict['input_2nd_stage']['pred_boxes'] = pred_boxes.detach(),  # (N_inst, 7)
+
+        batch_dict['input_2nd_stage'] = {
+            'meta': self.forward_return_dict['meta']
+        }
+        batch_dict['input_2nd_stage'].update(self.forward_return_dict['input_2nd_stage'])
+
+        if not self.training:
+            batch_dict['input_2nd_stage']['fg_motion_mask'] = fg_motion_mask
+            batch_dict['input_2nd_stage']['bg'] = batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
 
         return batch_dict
 
@@ -786,7 +799,8 @@ class PointAligner(nn.Module):
         Overwrite self.forward_return_dict['foreground']['fg']
         """
         pred_dict = self.forward_return_dict['pred_dict']
-        fg = self.forward_return_dict['foreground']['fg']  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+        fg = self.forward_return_dict['input_2nd_stage']['foreground']['fg']  # (N_fg, 7[+2])
+        # 7[+2] - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
 
         # get motion mask of foreground to find dynamic foreground
         inst_motion_stat = sigmoid(pred_dict['inst_motion_stat'][:, 0]) > 0.5  # TODO: use this for motion pred
