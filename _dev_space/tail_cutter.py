@@ -385,10 +385,10 @@ class PointAligner(nn.Module):
                 'fg_inst_idx': fg_inst_idx,  # (N_fg,)
             },
             'local': {
-                'shape_encoding': local_shape_enc.detach(),  # (N_local, C_inst)
+                'features': local_shape_enc.detach(),  # (N_local, C_inst)
             },
             'global': {
-                'shape_encoding': inst_global_feat.detach(),  # (N_inst, C_inst)
+                'features': inst_global_feat.detach(),  # (N_inst, C_inst)
                 'motion_stat': sigmoid(rearrange(pred_inst_motion_stat.detach(), 'N_inst 1 -> N_inst')),
             }
         }
@@ -427,9 +427,11 @@ class PointAligner(nn.Module):
             local_bi = local_bisw // self.cfg.get('NUM_SWEEPS', 10)
             # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
             local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
+            num_locals_in_instances = torch.sum(local_bi_in_inst_bi.float(), dim=1)  # (N_inst,)
             local_bi_in_inst_bi = local_bi_in_inst_bi.long() * torch.arange(inst_bi.shape[0]).unsqueeze(1).to(fg.device)
             local_bi_in_inst_bi = local_bi_in_inst_bi.sum(dim=0)  # (N_local)
             self.forward_return_dict['meta']['local_bi_in_inst_bi'] = local_bi_in_inst_bi
+            self.forward_return_dict['meta']['num_locals_in_instances'] = num_locals_in_instances
 
         # ---
         local_global_feat = inst_global_feat[local_bi_in_inst_bi]  # (N_local, 3+2*C_inst)

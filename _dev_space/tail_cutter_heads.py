@@ -5,37 +5,33 @@ from einops import rearrange
 import torch_scatter
 from typing import List
 import logging
-from _dev_space.non_batching_attention import MultiHeadAttention
 
 
 class AlignerHead(nn.Module):
-    def __init__(self, model_cfg, num_bev_features: int, num_instance_features: int):
+    def __init__(self, model_cfg, num_instance_features: int):
         super().__init__()
         self.cfg = model_cfg
-        obj_cfg = model_cfg.OBJECT_HEAD
-        traj_cfg = model_cfg.TRAJECTORY_HEAD
+        attn_cfg = model_cfg.ATTENTION_STACK
+        decoder_cfg = model_cfg.DECODER
 
-        self.obj_encode_fg = self._make_mlp(num_bev_features + 27, obj_cfg.NUM_FEATURES,
-                                            obj_cfg.get('ENC_FG_HIDDEN', []))
-        # + 27 due to the use of position encoding
-
-        self.obj_encode_inst = self._make_mlp(num_instance_features, obj_cfg.NUM_FEATURES,
-                                              obj_cfg.get('ENC_FG_HIDDEN', []))
-
-        self.obj_attention_stack = nn.ModuleList([
-            MultiHeadAttention(
-                obj_cfg.NUM_HEADS, obj_cfg.NUM_FEATURES, return_attn_weight=a_idx == obj_cfg.NUM_LAYERS - 1
-            ) for a_idx in range(obj_cfg.NUM_LAYERS)
+        self.embed_local_feat = nn.Linear(num_instance_features + 6, attn_cfg.EMBED_DIM)
+        # +6 because of position encoding made of [x, y, yaw, v_x, v_y, v_yaw]
+        self.local_self_attention_stack = nn.ModuleList([
+            nn.MultiheadAttention(attn_cfg.EMBED_DIM, attn_cfg.LOCAL_NUM_HEADS, dropout=0.1)
+            for _ in range(attn_cfg.LOCAL_NUM_LAYERS)
         ])
 
-        self.obj_decoder = self._make_mlp(obj_cfg.NUM_FEATURES, 8, obj_cfg.get('DEC_OBJECT_HIDDEN', []))
+        self.embed_global_feat = nn.Linear(num_instance_features, attn_cfg.EMBED_DIM)
+        self.global_cross_attention_stack = nn.ModuleList([
+            nn.MultiheadAttention(attn_cfg.EMBED_DIM, attn_cfg.GLOBAL_NUM_HEADS, dropout=0.1)
+            for _ in range(attn_cfg.GLOBAL_NUM_LAYERS)
+        ])
+
+        self.obj_decoder = self._make_mlp(attn_cfg.EMBED_DIM, 8, decoder_cfg.get('OBJECT_HIDDEN_CHANNELS', []))
         # following residual coder: delta_x, delta_y, delta_z, delta_dx, delta_dy, delta_dz, diff_sin, diff_cos
 
-        self.traj_attention_stack = nn.ModuleList([
-            nn.MultiheadAttention(traj_cfg.NUM_FEATURES, traj_cfg.NUM_HEADS, dropout=0.1)
-            for _ in range(traj_cfg.NUM_LAYERS)
-        ])
-        self.traj_mlp = self._make_mlp(traj_cfg.NUM_FEATURES, traj_cfg.NUM_FEATURES, traj_cfg.get('TRAJ_HIDDEN', []))
+        self.traj_decoder = self._make_mlp(attn_cfg.EMBED_DIM, 3 * decoder_cfg.TRAJECTORY_NUM_WAYPOINTS,
+                                           decoder_cfg.get('TRAJECTORY_HIDDEN_CHANNELS', []))
 
         self.forward_return_dict = dict()
 
@@ -58,101 +54,6 @@ class AlignerHead(nn.Module):
                 layers.append(nn.ReLU(True))
         return nn.Sequential(*layers)
 
-    @staticmethod
-    def generate_corners(boxes: torch.Tensor) -> torch.Tensor:
-        """
-        Generate coordinate of corners in boxes' canonical frame
-        Args:
-            boxes: (N, 7) - center(3), size(3), yaw
-        Returns:
-            corners: (N, 8, 3)
-        """
-        device = boxes.device
-        x = torch.tensor([1, 1, 1, 1, -1, -1, -1, -1], device=device).float()
-        y = torch.tensor([-1, 1, 1, -1, -1, 1, 1, -1], device=device).float()
-        z = torch.tensor([1, 1, -1, -1, 1, 1, -1, -1], device=device).float()
-        corners = torch.stack([x, y, z], dim=1)  # (8, 3)
-        corners = rearrange(corners, 'M C -> 1 M C') * rearrange(boxes[:, 3: 6], 'B C -> B 1 C') / 2.0
-        return corners
-
-    @torch.no_grad()
-    def compute_position_embedding(self, input_dict: dict) -> torch.Tensor:
-        """
-        Compute position embedding for "corrected" foreground points by
-        * map them to their corresponding proposals' local frame
-        * pos_embed = [displace w.r.t center & 8 corners]
-
-        Return:
-            pos_embed: (N_fg, 27)
-        """
-        # unzip input
-        pred_boxes = input_dict['pred_boxes']  # (N_inst, 7) - center (3), size (3), yaw
-        fg = input_dict['foreground']['fg']  # (N_fg, 7[+2]) - batch_idx, xyz, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-        indices_inst_to_fg = input_dict['meta']['inst_bi_inv_indices']  # (N_fg)
-
-        # map fg to their corresponding proposals' local frame
-        cos, sin = torch.cos(pred_boxes[:, -1]), torch.sin(pred_boxes[:, -1])
-        c_x, c_y, c_z = pred_boxes[:, 0], pred_boxes[:, 1], pred_boxes[:, 2]
-        zeros, ones = pred_boxes.new_zeros(pred_boxes.shape[0]), pred_boxes.new_ones(pred_boxes.shape[0])
-
-        tf_world_from_boxes = rearrange(torch.stack([
-            cos,  -sin,   zeros, c_x,
-            sin,   cos,   zeros, c_y,
-            zeros, zeros, ones,  c_z
-        ], dim=1), 'N_inst (R C) -> N_inst R C', R=3, C=4)
-
-        tf_for_fg = tf_world_from_boxes[indices_inst_to_fg]  # (N_fg, 3, 4)
-
-        fg_in_box = torch.einsum('bij,bj->bi', tf_for_fg[..., :3], fg[:, 1: 4]) + tf_for_fg[..., -1]  # (N_fg, 3)
-
-        # position embedding
-        corners = self.generate_corners(pred_boxes)  # (N_inst, 8, 3)
-        corners_for_fg = corners[indices_inst_to_fg]  # (N_fg, 8, 3)
-        fg_pos_embed = rearrange(fg_in_box, 'N_fg C -> N_fg 1 C') - corners_for_fg  # (N_fg, 8, 3)
-        # pad with displacement w.r.t boxes' center (i.e. coordinate in boxes' frame)
-        fg_pos_embed = rearrange(
-            torch.cat([rearrange(fg_in_box, 'N_fg C -> N_fg 1 C'), fg_pos_embed], dim=1),
-            'N_fg M C -> N_fg (M C)', M=9, C=3
-        )
-        return fg_pos_embed
-
-    def forward_obj_head_(self, input_dict):
-        """
-        Mutate self.forward_return_dict
-        """
-        fg_pos_embedding = self.compute_position_embedding(input_dict)  # (N_fg, 27)
-        fg_feat = torch.cat([input_dict['foreground']['fg_feat'], fg_pos_embedding], dim=1)  # (N_fg, C_bev + 27)
-        fg_feat = self.obj_encode_fg(fg_feat)  # (N_fg, C_attn)
-
-        inst_feat = self.obj_encode_inst(input_dict['global']['shape_encoding'])  # (N_inst, C_attn)
-
-        indices_inst2fg = input_dict['meta']['inst_bi_inv_indices']  # (N_fg)
-
-        for i, attn_layer in enumerate(self.obj_attention_stack):
-            if i < len(self.obj_attention_stack) - 1:
-                inst_feat = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)  # (N_inst, C_attn)
-            else:
-                inst_feat, attn_weights = attn_layer(inst_feat, fg_feat, fg_feat, indices_inst2fg)
-                # inst_feat: (N_inst, C_attn)
-                # attn_weights: (N_fg,)
-                self.forward_return_dict['obj'] = {'attn_weights': attn_weights}  # (N_fg,)
-
-        inst_refinement = self.obj_decoder(inst_feat)  # (N_inst, 8)
-        self.forward_return_dict['obj'].update({'pred_boxes_refinement': inst_refinement})
-
-    def forward(self, batch_dict):
-        input_dict = batch_dict['input_2nd_stage']
-        self.forward_obj_head_(input_dict)
-
-        if self.training:
-            self.forward_return_dict['obj'].update({'target_boxes_refinement': self.obj_assign_target(batch_dict)})
-        else:
-            batch_dict['final_box_dicts'] = self.generate_predicted_boxes(batch_dict['batch_size'], input_dict)
-
-            if self.cfg.get('GENERATE_INSTANCE_PAST_TRAJECTORY', True):
-                batch_dict['local_traj'] = self.gen_instances_past_trajectory(input_dict)
-        return batch_dict
-
     def get_training_loss(self, tb_dict: dict = None):
         if tb_dict is None:
             tb_dict = dict()
@@ -166,7 +67,7 @@ class AlignerHead(nn.Module):
         return loss_box_refine, tb_dict
 
     @torch.no_grad()
-    def obj_assign_target(self, batch_dict):
+    def assign_target_object(self, batch_dict):
         input_dict = batch_dict['input_2nd_stage']
         pred_boxes = input_dict['pred_boxes']  # (N_inst, 7) - center (3), size (3), yaw
 
@@ -273,9 +174,6 @@ class AlignerHead(nn.Module):
         Returns:
             (N_local, 4) - x, y, z, yaw
         """
-        # instances' pose @ the current time step
-
-
         # extract local_tf
         local_transl = input_dict['local']['local_transl']  # (N_local, 3)
         local_rot = input_dict['local']['local_rot']  # (N_local, 3, 3)
@@ -295,7 +193,16 @@ class AlignerHead(nn.Module):
 
         return torch.cat([local_xyz, local_yaw[:, None]], dim=1)  # (N_local, 4)
 
-    def forward_traj_head_(self, input_dict):
+    def forward(self, batch_dict):
+        input_dict = batch_dict['input_2nd_stage']
+
+        # unpack meta stuff
+        indices_inst2local = input_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
+        num_locals_in_instances = input_dict['meta']['num_locals_in_instances']  # (N_inst,)
+        inst_bi = input_dict['meta']['inst_bi']  # (N_inst,)
+        num_instances = inst_bi.shape[0]
+        max_locals_per_instance = num_locals_in_instances.max()
+
         if self.training:
             inst_cur_boxes = input_dict['pred_boxes']  # (N_inst, 7) - x, y, z, dx, dy, dz, yaw
         else:
@@ -306,9 +213,7 @@ class AlignerHead(nn.Module):
         local_pose = self.gen_instances_past_trajectory(input_dict, inst_cur_boxes)  # (N_local, 4) - x,y,z,yaw in global
         local_pose = local_pose[:, [0, 1, 3]]  # (N_local, 3) - x, y, yaw (exclude z) in global
 
-        # TODO: map local_pose to instance frame
-        indices_inst2local = input_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
-
+        # map local_pose to instance frame
         # translate to origin of instance current frame
         local_pose[:, :2] = local_pose[:, :2] - inst_cur_boxes[indices_inst2local, :2]
         # rotate to instance current frame
@@ -321,7 +226,7 @@ class AlignerHead(nn.Module):
         local_pose[:, :2] = torch.stack([l_x, l_y], dim=1)
         local_pose[:, 2] = torch.atan2(torch.sin(local_pose[:, 2]), torch.cos(local_pose[:, 2]))
 
-        # TODO: compute locals' velocity
+        # compute locals' velocity
         local_sweep_idx = input_dict['meta']['local_bisw'] % self.cfg('NUM_SWEEPS')  # (N_local,)
         inst_max_sweep_idx = input_dict['meta']['inst_max_sweep_idx']  # (N_inst)
         local_time_elapsed = (inst_max_sweep_idx[indices_inst2local] - local_sweep_idx) * 0.05  # (N_local,)
@@ -332,38 +237,50 @@ class AlignerHead(nn.Module):
         local_velo[mask_valid_time] = local_pose[mask_valid_time] / local_time_elapsed[mask_valid_time]
 
         # compute instance velocity to use as velocity for locals that have invalid time
-        unq, inv, counts = torch.unique(indices_inst2local, return_inverse=True, return_counts=True)
-        # unq: (n_unq) | inv: (N_local) | counts: (n_unq)
-        inst_velo = torch_scatter.scatter_sum(local_velo, inv, dim=0) / torch.clamp_min(counts.float() - 1, min=1.0)
+        inst_velo = torch_scatter.scatter_sum(local_velo, indices_inst2local, dim=0) / \
+                    torch.clamp_min(num_locals_in_instances - 1, min=1.0)
         # - 1 because velo of the most recent locals == 0
-        local_velo = local_velo + inst_velo[inv] * torch.logical_not(mask_valid_time).float()
 
-        # TODO: construct local feats for attention
+        local_velo = local_velo + inst_velo[indices_inst2local] * torch.logical_not(mask_valid_time).float()
+
+        # construct local feats for attention
         local_feat = torch.cat(
-            [input_dict['local']['shape_encoding'], local_pose, local_velo], dim=1)  # (N_local, C_inst + 6)
+            [input_dict['local']['features'], local_pose, local_velo], dim=1)  # (N_local, C_inst + 6)
 
-        batch_local_feat = local_feat.new_zeros(unq.shape[0], counts.max(), local_feat.shape[-1])
-        key_padding_mask = local_feat.new_zeros(unq.shape[0], counts.max())
-        for idx in range(unq.shape[0]):
-            batch_local_feat[unq[idx], :counts[idx]] = local_feat[indices_inst2local == unq[idx]]
-            key_padding_mask[unq[idx], counts[idx]:] = 1  # to be ignored by attention
+        batch_local_feat = local_feat.new_zeros(num_instances, max_locals_per_instance, local_feat.shape[-1])
+        key_padding_mask = local_feat.new_zeros(num_instances, max_locals_per_instance)
+        for instance_idx in range(num_instances):
+            batch_local_feat[instance_idx, :num_locals_in_instances[instance_idx]] = \
+                local_feat[indices_inst2local == instance_idx]
+            # indices_inst2local[i] = j means local i-th is associated with instance j-th
+            # (+) i in range(N_local)
+            # (+) j in range(N_inst)
+            key_padding_mask[instance_idx, num_locals_in_instances[instance_idx]:] = 1  # to be ignored by attention
 
         batch_local_feat = rearrange(batch_local_feat, 'N_inst N_local_max C -> N_local_max N_inst C').contiguous()
         # to be compatible with setting batch_first=False on torch 1.8.2
 
-        # TODO: global feat can be retrieved from instance index stored in "unq" because order in "batch_local_feat"
-        # TODO: is the same as order in "unq"
-
         # self-attention to refine local feat
-        for attn in self.traj_attention_stack:
-            batch_local_feat, _ = attn(batch_local_feat, batch_local_feat, batch_local_feat,
-                                       key_padding_mask=key_padding_mask)
-        batch_local_feat = rearrange(batch_local_feat, 'N_local_max N_inst C -> N_inst N_local_max C').contiguous()
+        batch_local_feat = self.embed_local_feat(batch_local_feat)  # (N_local_max, N_inst, C_attn)
+        for self_attn in self.local_self_attention_stack:
+            batch_local_feat, _ = self_attn(batch_local_feat, batch_local_feat, batch_local_feat,
+                                            key_padding_mask=key_padding_mask)  # (N_local_max, N_inst, C_attn)
 
-        # PointNet to summarize local feat to new global feat
-        batch_local_feat = self.traj_mlp(batch_local_feat)  # (N_inst, N_local_max, C)
-        batch_local_feat = batch_local_feat.masked_fill(key_padding_mask[..., None], -np.inf)
-        batch_inst_feat = batch_local_feat.max(dim=1)[0]  # (N_inst, C)
+        # cross attention to get global feat
+        batch_global_feat = rearrange(input_dict['global']['features'], 'N_inst C_inst -> 1 N_inst C_inst').contiguous()
+        batch_global_feat = self.embed_global_feat(batch_global_feat)  # (1, N_inst, C_attn)
+        for cross_attn in self.global_cross_attention_stack:
+            batch_global_feat, _ = cross_attn(batch_global_feat, batch_local_feat, batch_local_feat,
+                                              key_padding_mask=key_padding_mask)  # (1, N_inst, C_attn)
+        batch_global_feat = rearrange(batch_global_feat, '1 N_inst C_attn -> N_inst C_attn')
 
-        # TODO: [question] does batch_inst_feat (same order as unq) has 1-to-1 corr with inst_cur_boxes
+        # decode batch_global_feat to get box refinement & future trajectories
+        pred_boxes_refine = self.obj_decoder(batch_global_feat)  # (N_inst, 8)
+        pred_trajectories = self.traj_decoder(batch_global_feat)  # (N_inst, 3 * num_waypts)
+        self.forward_return_dict['pred'] = {
+            'boxes_refine': pred_boxes_refine,
+            'trajectories': pred_trajectories
+        }
 
+    def assign_target_trajectory(self, batch_dict):
+        pass  # TODO
