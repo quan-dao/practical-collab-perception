@@ -209,15 +209,12 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 poses.append(target_from_future)
 
             if len(poses) == 1:
-                # inst_waypoints = np.zeros((1, 4))
-                # inst_waypoints[0, :2] = current_pose[:2, -1]
-                # inst_waypoints[0, 2] = np.arctan2(current_pose[1, 0], current_pose[0, 0])
-                # inst_waypoints[0, 3] = inst_idx
                 inst_waypoints = np.array([
                     current_pose[0, -1], current_pose[1, -1],
                     np.arctan2(current_pose[1, 0], current_pose[0, 0]),
+                    0,  # waypts index  to indicate the time order
                     inst_idx
-                ]).reshape(1, 4)
+                ]).reshape(1, -1)
             else:
                 inst_waypoints = []
                 for p_idx in range(len(poses) - 1):
@@ -238,7 +235,9 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                     qs = list(qs)
                     qs = [quaternion_yaw(q) for q in qs[:-1]]  # (5,) - exclude the right-end point
 
-                    inst_waypoints.append(np.stack([xs, ys, qs], axis=1))
+                    waypts_idx = np.arange(5) + p_idx * 5
+
+                    inst_waypoints.append(np.stack([xs, ys, qs, waypts_idx], axis=1))
 
                 inst_waypoints = np.pad(np.concatenate(inst_waypoints, axis=0),
                                         pad_width=[(0, 0), (0, 1)], constant_values=inst_idx)
@@ -246,7 +245,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
             waypoints.append(inst_waypoints)
 
         waypoints = np.concatenate(waypoints, axis=0)
-        out['instance_future_waypoints'] = waypoints  # (N_waypoints, 4) - x, y, yaw, instance_idx
+        out['instance_future_waypoints'] = waypoints  # (N_waypoints, 5) - x, y, yaw, waypoints_idx, instance_idx
 
     return out
 
