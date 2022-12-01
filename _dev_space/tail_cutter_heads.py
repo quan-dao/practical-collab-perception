@@ -30,7 +30,7 @@ class AlignerHead(nn.Module):
         self.obj_decoder = self._make_mlp(attn_cfg.EMBED_DIM, 8, decoder_cfg.get('OBJECT_HIDDEN_CHANNELS', []))
         # following residual coder: delta_x, delta_y, delta_z, delta_dx, delta_dy, delta_dz, diff_sin, diff_cos
 
-        self.traj_decoder = self._make_mlp(attn_cfg.EMBED_DIM, 3 * decoder_cfg.TRAJECTORY_NUM_WAYPOINTS,
+        self.traj_decoder = self._make_mlp(attn_cfg.EMBED_DIM, decoder_cfg.TRAJECTORY_NUM_WAYPOINTS * 4,
                                            decoder_cfg.get('TRAJECTORY_HIDDEN_CHANNELS', []))
 
         self.forward_return_dict = dict()
@@ -58,13 +58,25 @@ class AlignerHead(nn.Module):
         if tb_dict is None:
             tb_dict = dict()
 
-        loss_box_refine = nn.functional.smooth_l1_loss(
-            self.forward_return_dict['obj']['pred_boxes_refinement'],
-            self.forward_return_dict['obj']['target_boxes_refinement'],
-            reduction='mean'
-        )
-        tb_dict['loss_box_refine'] = loss_box_refine.item()
-        return loss_box_refine, tb_dict
+        pred = self.forward_return_dict['pred']
+        target = self.forward_return_dict['target']
+
+        loss_box = nn.functional.smooth_l1_loss(pred['boxes_refine'], target['boxes_refine'], reduction='mean')
+        tb_dict['head_loss_box'] = loss_box.item()
+
+        pred_waypts = rearrange(pred['way_points'], 'N_inst (N_waypts C) -> N_inst N_waypts C', C=4)
+        target_waypts = target['batch_waypoints']  # (N_inst, N_waypts_max, 4)
+        waypts_pad_mask = target['waypts_pad_mask']  # (N_inst, N_waypts_max)
+        loss_waypts = nn.functional.smooth_l1_loss(pred_waypts, target_waypts, reduction='none')  # (N_inst, N_waypts_max, 4)
+        loss_waypts = loss_waypts.sum(dim=2) * (1.0 - waypts_pad_mask)  # (N_inst, N_waypts_max)
+        loss_waypts = loss_waypts.sum(dim=1) / torch.clamp_min(target['num_wpts_per_instance'], min=1.0)  # (N_inst,)
+        loss_waypts = loss_waypts.mean()
+        tb_dict['head_loss_waypts'] = loss_waypts.item()
+
+        loss_head = loss_box + loss_waypts
+        tb_dict['head_loss'] = loss_head.item()
+
+        return loss_head, tb_dict
 
     @torch.no_grad()
     def assign_target_object(self, batch_dict):
@@ -210,18 +222,17 @@ class AlignerHead(nn.Module):
                 input_dict['pred_boxes'], self.forward_return_dict['pred']['boxes_refinement']
             )  # (N_inst, 7) - x, y, z, dx, dy, dz, yaw
 
-        local_pose = self.gen_instances_past_trajectory(input_dict, inst_cur_boxes)  # (N_local, 4) - x,y,z,yaw in global
-        local_pose = local_pose[:, [0, 1, 3]]  # (N_local, 3) - x, y, yaw (exclude z) in global
+        local_pose = self.gen_instances_past_trajectory(input_dict, inst_cur_boxes)  # (N_local, 4) - x,y,z,yaw @ global
+        local_pose = local_pose[:, [0, 1, 3]]  # (N_local, 3) - x, y, yaw (exclude z) @ global
 
         # map local_pose to instance frame
         # translate to origin of instance current frame
         local_pose[:, :2] = local_pose[:, :2] - inst_cur_boxes[indices_inst2local, :2]
         # rotate to instance current frame
-        cos, sin = torch.cos(inst_cur_boxes[:, 6]), torch.sin(inst_cur_boxes[:, 6])  # (N_inst)
-        cos, sin = cos[indices_inst2local], sin[indices_inst2local]  # (N_local,)
+        cos, sin = torch.cos(inst_cur_boxes[indices_inst2local, 6]), torch.sin(inst_cur_boxes[indices_inst2local, 6])  # (N_local)
         l_x = cos * local_pose[:, 0] + sin * local_pose[:, 1]  # (N_local,)
-        l_y = -sin * local_pose[:, 0] + sin * local_pose[:, 1]  # (N_local,)
-        local_pose[:, 2] = local_pose[:, 2] - inst_cur_boxes[:, 2]  # (N_local,)
+        l_y = -sin * local_pose[:, 0] + cos * local_pose[:, 1]  # (N_local,)
+        local_pose[:, 2] = local_pose[:, 2] - inst_cur_boxes[indices_inst2local, 6]  # (N_local,)
         # overwrite x,y-coord of local pose & put yaw of local pose in range [-pi, pi)
         local_pose[:, :2] = torch.stack([l_x, l_y], dim=1)
         local_pose[:, 2] = torch.atan2(torch.sin(local_pose[:, 2]), torch.cos(local_pose[:, 2]))
@@ -276,11 +287,70 @@ class AlignerHead(nn.Module):
 
         # decode batch_global_feat to get box refinement & future trajectories
         pred_boxes_refine = self.obj_decoder(batch_global_feat)  # (N_inst, 8)
-        pred_trajectories = self.traj_decoder(batch_global_feat)  # (N_inst, 3 * num_waypts)
+        pred_waypts = self.traj_decoder(batch_global_feat)  # (N_inst, num_waypts * 4) - x, y, cos_yaw, sin_yaw
         self.forward_return_dict['pred'] = {
             'boxes_refine': pred_boxes_refine,
-            'trajectories': pred_trajectories
+            'way_points': pred_waypts
+        }
+        if self.training:
+            self.assign_target_(batch_dict)
+        else:
+            raise NotImplementedError
+            # TODO: generate_predicted_boxes
+            # TODO: map future waypoints in local frame to global frame
+
+        return batch_dict
+
+    @torch.no_grad()
+    def assign_target_trajectory(self, batch_dict):
+        input_dict = batch_dict['input_2nd_stage']
+
+        inst_bi = input_dict['meta']['inst_bi']  # (N_inst,)
+        inst_cur_boxes = input_dict['pred_boxes']  # (N_inst, 7) - x, y, z, dx, dy, dz, yaw
+        num_instances = inst_bi.shape[0]
+        max_num_inst = input_dict['meta']['max_num_inst']  # max number of instances across the batch
+
+        waypoints = batch_dict['instances_waypoints']  # (N_wpts, 6) - batch_idx, x, y, yaw, waypoints_idx, instance_idx
+        waypoints_bi = waypoints[:, 0].long() * max_num_inst + waypoints[:, -1].long()
+
+        # ----------
+        # map waypoints from global frame to the frame of instances' current box
+        # ----------
+        # for each value in waypoints_bi find WHERE (i.e., index) it appear in inst_bi
+        corr = (inst_bi[:, None] == waypoints_bi[None, :]).long()  # (N_inst, N_wpts)
+        num_wpts_per_instance = corr.sum(dim=1)  # (N_inst)
+        corr = corr * torch.arange(num_instances).unsqueeze(1).to(corr.device)
+        indices_inst2waypts = corr.sum(dim=0)  # (N_wpts,)
+
+        boxes_x, boxes_y = torch.chunk(inst_cur_boxes[:, :2], chunks=2, dim=1)
+        boxes_yaw = inst_cur_boxes[:, -1]
+        # find transformation to apply to each waypoint
+        cos, sin = torch.cos(boxes_yaw[indices_inst2waypts]), torch.sin(boxes_yaw[indices_inst2waypts])
+        # apply transformation
+        waypoints_x = cos * waypoints[:, 1] - sin * waypoints[:, 2] + boxes_x[indices_inst2waypts]
+        waypoints_y = sin * waypoints[:, 1] + cos * waypoints[:, 2] + boxes_y[indices_inst2waypts]
+        waypoints_yaw = waypoints[:, 3] + boxes_yaw[indices_inst2waypts]
+        waypoints_in_inst = torch.stack([waypoints_x, waypoints_y, torch.cos(waypoints_yaw), torch.sin(waypoints_yaw)],
+                                        dim=1)  # (N_wpts, 4)
+
+        # organize waypoints to batch form
+        batch_waypoints = waypoints.new_zeros(num_instances, self.cfg.DECODER.TRAJECTORY_NUM_WAYPOINTS, 4)
+        waypts_pad_mask = waypoints.new_zeros(num_instances, self.cfg.DECODER.TRAJECTORY_NUM_WAYPOINTS)  # 1->ignored
+        for instance_idx in range(num_instances):
+            batch_waypoints[instance_idx, :num_wpts_per_instance[instance_idx]] = \
+                waypoints_in_inst[indices_inst2waypts == instance_idx]
+            waypts_pad_mask[instance_idx, num_wpts_per_instance[instance_idx]:] = 1.
+
+        return batch_waypoints, waypts_pad_mask, num_wpts_per_instance
+
+    @torch.no_grad()
+    def assign_target_(self, batch_dict):
+        batch_waypoints, waypts_pad_mask, num_wpts_per_instance = self.assign_target_trajectory(batch_dict)
+        self.forward_return_dict['target'] = {
+            'boxes_refine': self.assign_target_object(batch_dict),
+            'batch_waypoints': batch_waypoints,  # (N_inst, N_waypts_max, 4)
+            'waypts_pad_mask': waypts_pad_mask,  # (N_inst, N_waypts_max)
+            'num_wpts_per_instance': num_wpts_per_instance  # (N_inst,)
         }
 
-    def assign_target_trajectory(self, batch_dict):
-        pass  # TODO
+
