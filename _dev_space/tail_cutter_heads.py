@@ -62,7 +62,7 @@ class AlignerHead(nn.Module):
         pred = self.forward_return_dict['pred']
         target = self.forward_return_dict['target']
 
-        loss_box = nn.functional.smooth_l1_loss(pred['boxes_refine'], target['boxes_refine'], reduction='mean')
+        loss_box = nn.functional.smooth_l1_loss(pred['boxes_refine'], target['boxes_refine'], reduction='mean') * 10.
         tb_dict['head_loss_box'] = loss_box.item()
 
         pred_waypts = rearrange(pred['way_points'], 'N_inst (N_waypts C) -> N_inst N_waypts C', C=4)
