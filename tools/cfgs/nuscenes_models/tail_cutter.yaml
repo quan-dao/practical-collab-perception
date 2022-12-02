@@ -9,7 +9,7 @@ DATA_CONFIG:
     NORMALIZE_LANE_ANGLE: False
     BEV_IMAGE_RESOLUTION: 0.2
 
-    POSSIBLE_NUM_SWEEPS: [10, 15, 20, 25]
+    POSSIBLE_NUM_SWEEPS: [10]
     DROP_BACKGROUND:
         ENABLE: True
         DISTANCE_THRESHOLD: 10
@@ -51,7 +51,6 @@ DATA_CONFIG:
 
 MODEL:
     NAME: Aligner
-    DEBUG: False
 
     PILLAR_ENCODER:
         POINT_CLOUD_RANGE: [ -51.2, -51.2, -5.0, 51.2, 51.2, 3.0 ]
@@ -77,9 +76,8 @@ MODEL:
         UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
         UP_DEFORM_CONV: [-1, False, False, False, False, False]  # dummy-1-2-3-4-5
 
-    NUM_SWEEPS: 25  # actually == MAX_SWEEPS
+    NUM_SWEEPS: 10  # actually == MAX_SWEEPS
     HEAD_MID_CHANNELS: [128]
-
     INSTANCE_MID_CHANNELS: [128]
     INSTANCE_OUT_CHANNELS: 64
     INSTANCE_HEAD_USE_DROPOUT: True
@@ -87,7 +85,7 @@ MODEL:
     TARGET_CONFIG:
         MOTION_THRESH: 0.5
 
-    FG_THRESH: 0.3
+    FG_THRESH: 0.5
 
     CLUSTER:
         EPS: 1.5
@@ -98,13 +96,22 @@ MODEL:
 
     FREEZE_1ST_STAGE: True
     REAL_INFERENCE: False
-    HAS_2ND_STAGE: True
+    DEBUG: False
+
     ALIGNER_HEAD:
-        ATTENTION:
-            NUM_FEATURES: 256
-            NUM_HEADS: 8
-            NUM_LAYERS: 4
-        DEBUG_NOT_APPLYING_REFINEMENT: False
+        ATTENTION_STACK:
+            EMBED_DIM: 256
+            LOCAL_NUM_HEADS: 8
+            LOCAL_NUM_LAYERS: 4
+            GLOBAL_NUM_HEADS: 8
+            GLOBAL_NUM_LAYERS: 2
+
+        DECODER:
+            OBJECT_HIDDEN_CHANNELS: [64]
+            TRAJECTORY_HIDDEN_CHANNELS: [256]
+            TRAJECTORY_NUM_WAYPOINTS: 30
+
+        DEBUG: False
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
