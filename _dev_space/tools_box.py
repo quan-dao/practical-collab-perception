@@ -12,7 +12,7 @@ DYNAMIC_CLASSES = ('vehicle', 'human')  # to get ground truth for training CFG
 CENTER_RADIUS = 2.
 
 
-def show_pointcloud(xyz, boxes=None, pc_colors=None, boxes_color=None, poses: List[np.ndarray] = None):
+def show_pointcloud(xyz, boxes=None, pc_colors=None, boxes_color=None, poses: np.ndarray = None):
     """
     Visualize pointcloud & annotations
     Args:
@@ -20,7 +20,7 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, boxes_color=None, poses: Li
         boxes (list): list of boxes, each box is denoted by coordinates of its 8 vertices - np.ndarray (8, 3)
         pc_colors (np.ndarray): (N, 3) - r, g, b
         boxes_color:
-        poses:
+        poses: (Np, 3) - x, y, yaw
     """
     def create_cube(vers, box_color):
         # vers: (8, 3)
@@ -41,6 +41,21 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, boxes_color=None, poses: Li
         cube.colors = o3d.utility.Vector3dVector(colors)
         return cube
 
+    def rot_z(yaw):
+        cos, sin = np.cos(yaw), np.sin(yaw)
+        rot = np.array([
+            cos, -sin, 0,
+            sin, cos, 0,
+            0, 0, 1
+        ]).reshape(3, 3)
+        return rot
+
+    def xyyaw2pose(x, y, yaw):
+        out = np.eye(4)
+        out[:3, :3] = rot_z(yaw)
+        out[:2, -1] = [x, y]
+        return out
+
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
     if pc_colors is not None:
@@ -54,8 +69,8 @@ def show_pointcloud(xyz, boxes=None, pc_colors=None, boxes_color=None, poses: Li
         obj_to_display += o3d_cubes
 
     if poses is not None:
-        for pose in poses:
-            assert pose.shape == (4, 4), f"expect (4, 4), get {pose.shape}"
+        for pidx in range(poses.shape[0]):
+            pose = xyyaw2pose(*poses[pidx].tolist())
             frame = o3d.geometry.TriangleMesh.create_coordinate_frame()
             frame = frame.transform(pose)
             obj_to_display.append(frame)

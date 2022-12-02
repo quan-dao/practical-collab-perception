@@ -78,7 +78,7 @@ def get_training_loss(ckpt_file: str, target_batch_idx=5, **kwargs):
 
     model.cuda()
     load_dict_to_gpu(batch_dict)
-    bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in model.det_head.named_parameters()]
+    bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in model.head.named_parameters()]
     ret_dict, tb_dict, _, batch_dict = model(batch_dict)
     loss = ret_dict['loss']
     model.zero_grad()
@@ -92,21 +92,22 @@ def get_training_loss(ckpt_file: str, target_batch_idx=5, **kwargs):
         if hook.grad_mag < 1e-4:
             print(f'zero grad at {hook.name}')
 
-    torch.save(batch_dict, f'inference_{ckpt_file}.pth')
+    torch.save(batch_dict, f'test_2nd_stage_with_1st_stage_{ckpt_file[:-4]}.pth')
 
 
 def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     if not ckpt_file.endswith('.pth'):
         ckpt_file += '.pth'
 
-    batch_dict = torch.load(f'inference_{ckpt_file}.pth', map_location=torch.device('cpu'))
+    batch_dict = torch.load(f'test_2nd_stage_with_1st_stage_{ckpt_file[:-4]}.pth', map_location=torch.device('cpu'))
     # print_dict(batch_dict)
-    print('--\n', batch_dict['metadata'], '\n--')
+    print('-----metadata\n', batch_dict['metadata'], '\n-----')
 
     chosen_batch_idx = 0
     logger = logging.getLogger()
     if kwargs.get('show_raw_point_cloud', False):
         logger.info('showing raw point cloud w/ g.t boxes & g.t foreground')
+
         points = batch_dict['points']
         mask_cur = points[:, 0].long() == chosen_batch_idx
         cur_points = points[mask_cur]
@@ -116,17 +117,22 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
         mask_valid_boxes = cur_gt_boxes[:, -1] > 0
         cur_gt_boxes = cur_gt_boxes[mask_valid_boxes]
 
-        show_pointcloud(cur_points[:, 1: 4], fgr_mask=cur_points[:, -2] > -1, boxes=viz_boxes(cur_gt_boxes))
+        waypts = batch_dict['instances_waypoints']  # (N_wpts, 6) - batch_idx, x, y, yaw, waypts_idx, inst_idx
+        cur_waypts = waypts[waypts[:, 0].long() == chosen_batch_idx]
 
-    out_stage1 = batch_dict['2nd_stage_input']
-    # print_dict(out_stage1)
+        pc_colors = np.zeros((cur_points.shape[0], 3))
+        pc_colors[cur_points[:, -2].long() > -1] = np.array([1, 0, 0])
+        show_pointcloud(cur_points[:, 1: 4], boxes=viz_boxes(cur_gt_boxes), pc_colors=pc_colors,
+                        poses=cur_waypts[:, 1: 4].numpy())
+
+    out_stage1 = batch_dict['input_2nd_stage']
 
     bg = out_stage1['bg']  # (N_bg, 6[+2])
     bg = bg[bg[:, 0].long() == chosen_batch_idx]
 
     fg = out_stage1['fg']  # (N_fg, 6[+2])
+    # extract stuff of chosen_batch_idx
     mask_cur_fg = fg[:, 0].long() == chosen_batch_idx
-
     fg = fg[mask_cur_fg]
     fg_inst_idx = out_stage1['fg_inst_idx'][mask_cur_fg]
     fg_motion_mask = out_stage1['fg_motion_mask'][mask_cur_fg]
@@ -148,18 +154,17 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     cur_gt_boxes = cur_gt_boxes[mask_valid_boxes, :7]  # (N_gt_boxes, 7+...)
     color_gt_boxes = torch.tensor([0, 1, 0]).repeat(cur_gt_boxes.shape[0], 1)  # green for g.t
 
-    # final_box_dicts = batch_dict['final_box_dicts']  # List of dict
-    # cur_pred_boxes = final_box_dicts[chosen_batch_idx]['pred_boxes']  # (N_pred_boxes, 7+...)
-    # color_pred_boxes = torch.tensor([1, 0, 0]).repeat(cur_pred_boxes.shape[0], 1)  # red for predict
+    cur_pred_boxes = out_stage1['pred_boxes']  # (N_inst, 7) !!! only works for batch size = 1
+    color_pred_boxes = torch.tensor([1, 0, 0]).repeat(cur_pred_boxes.shape[0], 1)  # red for predict
 
     # format visualization input
     viz_points = torch.cat([bg, fg])[:, 1: 4]
-    viz_color_points = torch.cat([color_bg, color_fg])
-    viz_color_points_by_inst = torch.cat([color_bg, color_fg_by_inst])
-    viz_color_points_by_motion = torch.cat([color_bg, color_fg_by_motion])
+    viz_color_points = torch.cat([color_bg, color_fg]).numpy()
+    viz_color_points_by_inst = torch.cat([color_bg, color_fg_by_inst]).numpy()
+    viz_color_points_by_motion = torch.cat([color_bg, color_fg_by_motion]).numpy()
 
-    viz_bboxes = viz_boxes(cur_gt_boxes.numpy())
-    viz_color_bboxes = color_gt_boxes
+    viz_bboxes = viz_boxes(torch.cat([cur_gt_boxes, cur_pred_boxes], dim=0).numpy())
+    viz_color_bboxes = torch.cat([color_gt_boxes, color_pred_boxes], dim=0).numpy()
 
     logger.info('showing foreground seg')
     show_pointcloud(viz_points, viz_bboxes, viz_color_points, boxes_color=viz_color_bboxes)
@@ -176,6 +181,8 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_file', type=str, default=None, help='specify the ckpt')
     parser.add_argument('--target_batch_idx', type=int, default=5, help='')
     parser.add_argument('--show_raw_point_cloud', action='store_true', default=False)
+    parser.add_argument('--do_forward', action='store_true', default=False)
     args = parser.parse_args()
-    get_training_loss(**vars(args))
+    if args.do_forward:
+        get_training_loss(**vars(args))
     display_input_to_2nd_stage(**vars(args))
