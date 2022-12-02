@@ -71,9 +71,10 @@ class AlignerHead(nn.Module):
         loss_waypts = nn.functional.smooth_l1_loss(pred_waypts, target_waypts, reduction='none')  # (N_inst, N_waypts_max, 4)
         # TODO: add a discount factor here
         loss_waypts = loss_waypts.sum(dim=2) * (1.0 - waypts_pad_mask)  # (N_inst, N_waypts_max)
-        loss_waypts = loss_waypts.sum(dim=1) / torch.clamp_min(target['num_wpts_per_instance'], min=1.0)  # (N_inst,)
+        loss_waypts = loss_waypts.sum(dim=1) / torch.clamp_min(target['num_wpts_per_instance'].float(), min=1.0)  # (N_inst,)
         loss_waypts = loss_waypts.mean()
         tb_dict['head_loss_waypts'] = loss_waypts.item()
+        tb_dict['head_avg_wpts_per_inst'] = target['num_wpts_per_instance'].float().mean().item()
 
         loss_head = loss_box + loss_waypts
         tb_dict['head_loss'] = loss_head.item()

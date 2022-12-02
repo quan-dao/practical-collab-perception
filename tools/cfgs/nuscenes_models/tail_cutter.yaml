@@ -104,7 +104,7 @@ MODEL:
             LOCAL_NUM_HEADS: 8
             LOCAL_NUM_LAYERS: 4
             GLOBAL_NUM_HEADS: 8
-            GLOBAL_NUM_LAYERS: 2
+            GLOBAL_NUM_LAYERS: 4
 
         DECODER:
             OBJECT_HIDDEN_CHANNELS: [64]
