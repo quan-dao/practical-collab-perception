@@ -15,7 +15,7 @@ class AlignerHead(nn.Module):
         decoder_cfg = model_cfg.DECODER
         self.num_sweeps = num_sweeps
 
-        self.embed_local_feat = nn.Linear(num_instance_features + 6, attn_cfg.EMBED_DIM)
+        self.embed_local_feat = nn.Linear(num_instance_features + 7, attn_cfg.EMBED_DIM)
         # +6 because of position encoding made of [x, y, yaw, v_x, v_y, v_yaw]
         self.local_self_attention_stack = nn.ModuleList([
             nn.MultiheadAttention(attn_cfg.EMBED_DIM, attn_cfg.LOCAL_NUM_HEADS, dropout=0.1)
@@ -257,11 +257,24 @@ class AlignerHead(nn.Module):
         local_feat = torch.cat(
             [input_dict['local']['features'], local_pose, local_velo], dim=1)  # (N_local, C_inst + 6)
 
-        batch_local_feat = local_feat.new_zeros(num_instances, max_locals_per_instance, local_feat.shape[-1])
+        batch_local_feat = local_feat.new_zeros(num_instances, max_locals_per_instance, local_feat.shape[-1] + 1)
+        # +1 because of adding normalized sweep_idx into position encoding of local_feat
+
         key_padding_mask = local_feat.new_zeros(num_instances, max_locals_per_instance).bool()
+
         for instance_idx in range(num_instances):
+            mask_locals_of_inst = indices_inst2local == instance_idx
+
+            locals_of_inst_sweep_idx = local_sweep_idx[mask_locals_of_inst]
+
+            locals_of_inst_feat = torch.cat([
+                local_feat[mask_locals_of_inst],
+                locals_of_inst_sweep_idx[:, None].float() / max(inst_max_sweep_idx[instance_idx].float().item(), 1.0)
+            ], dim=1)
+
             batch_local_feat[instance_idx, :num_locals_in_instances[instance_idx]] = \
-                local_feat[indices_inst2local == instance_idx]
+                locals_of_inst_feat[torch.argsort(locals_of_inst_sweep_idx)]
+
             # indices_inst2local[i] = j means local i-th is associated with instance j-th
             # (+) i in range(N_local)
             # (+) j in range(N_inst)

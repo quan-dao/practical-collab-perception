@@ -65,7 +65,7 @@ def get_training_loss(ckpt_file: str, target_batch_idx=5, **kwargs):
     logger = common_utils.create_logger('./dummy_log.txt')
 
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=1,
-                                              dist=False, logger=logger, training=False, total_epochs=1, seed=666)
+                                              dist=False, logger=logger, training=True, total_epochs=1, seed=666)
     iter_dataloader = iter(dataloader)
     for _ in range(target_batch_idx):
         batch_dict = next(iter_dataloader)
