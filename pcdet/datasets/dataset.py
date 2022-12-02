@@ -184,7 +184,7 @@ class DatasetTemplate(torch_data.Dataset):
         )
 
         invalid_waypoints = data_dict['instances_waypoints'].shape[0] == 1 and \
-                            data_dict['instances_waypoints'].abs().sum() < 1e-3
+                            np.abs(data_dict['instances_waypoints']).sum() < 1e-3
         has_gt = np.any(data_dict['points'][:, -2].astype(int) > -1) & (data_dict['gt_boxes'].shape[0] > 0) & \
                  (not invalid_waypoints)
         if self.training and not has_gt:
