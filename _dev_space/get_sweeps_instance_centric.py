@@ -244,7 +244,10 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
 
             waypoints.append(inst_waypoints)
 
-        waypoints = np.concatenate(waypoints, axis=0)
+        if len(waypoints) > 0:
+            waypoints = np.concatenate(waypoints, axis=0)
+        else:
+            waypoints = np.zeros((1, 5))  # some dummy output
         out['instance_future_waypoints'] = waypoints  # (N_waypoints, 5) - x, y, yaw, waypoints_idx, instance_idx
 
     return out
