@@ -69,6 +69,7 @@ class AlignerHead(nn.Module):
         target_waypts = target['batch_waypoints']  # (N_inst, N_waypts_max, 4)
         waypts_pad_mask = target['waypts_pad_mask']  # (N_inst, N_waypts_max)
         loss_waypts = nn.functional.smooth_l1_loss(pred_waypts, target_waypts, reduction='none')  # (N_inst, N_waypts_max, 4)
+        # TODO: add a discount factor here
         loss_waypts = loss_waypts.sum(dim=2) * (1.0 - waypts_pad_mask)  # (N_inst, N_waypts_max)
         loss_waypts = loss_waypts.sum(dim=1) / torch.clamp_min(target['num_wpts_per_instance'], min=1.0)  # (N_inst,)
         loss_waypts = loss_waypts.mean()
@@ -289,12 +290,23 @@ class AlignerHead(nn.Module):
             'boxes_refine': pred_boxes_refine,
             'way_points': pred_waypts
         }
-        if self.training:
+        if self.training or self.cfg.get('DEBUG', False):
             self.assign_target_(batch_dict)
         else:
             raise NotImplementedError
             # TODO: generate_predicted_boxes
             # TODO: map future waypoints in local frame to global frame
+
+        if self.cfg.get('DEBUG', False):
+            batch_dict['inst_velo'] = inst_velo
+            target_dict = self.forward_return_dict['target']
+            target_waypts_in_glob = self.decode_predicted_trajectory(
+                rearrange(target_dict['batch_waypoints'], 'N_i N_w C -> N_i (N_w C)', C=4), inst_cur_boxes
+            )
+            batch_dict.update({
+                'target_waypts_in_glob': target_waypts_in_glob,  # (N_inst, N_wpts, 3) - x, y, yaw
+                'waypts_pad_mask': target_dict['waypts_pad_mask']  # (N_inst, N_wpts)
+            })
 
         return batch_dict
 
@@ -327,14 +339,15 @@ class AlignerHead(nn.Module):
         # ----------
         # map waypoints from global frame to the frame of instances' current box
         # ----------
-        boxes_x = rearrange(inst_cur_boxes[:, 0], 'N_inst -> N_inst 1')
-        boxes_y = rearrange(inst_cur_boxes[:, 1], 'N_inst -> N_inst 1')
+        boxes_xy = rearrange(inst_cur_boxes[:, :2], 'N_inst C -> N_inst 1 C')
         boxes_yaw = rearrange(inst_cur_boxes[:, -1], 'N_inst -> N_inst 1')
         cos, sin = torch.cos(boxes_yaw), torch.sin(boxes_yaw)
-        # apply transformation
-        waypoints_x = cos * batch_waypoints[:, :, 0] - sin * batch_waypoints[:, :, 1] + boxes_x  # (N_inst, N_waypts_max)
-        waypoints_y = sin * batch_waypoints[:, :, 0] + cos * batch_waypoints[:, :, 1] + boxes_y  # (N_inst, N_waypts_max)
-        waypoints_yaw = batch_waypoints[:, :, 2] + boxes_yaw  # (N_inst, N_waypts_max)
+        # translate
+        waypoints_xy = batch_waypoints[:, :, :2] - boxes_xy  # (N_inst, N_waypts_max, 2)
+        # rotate
+        waypoints_x = cos * waypoints_xy[:, :, 0] + sin * waypoints_xy[:, :, 1]  # (N_inst, N_waypts_max)
+        waypoints_y = -sin * waypoints_xy[:, :, 0] + cos * waypoints_xy[:, :, 1]  # (N_inst, N_waypts_max)
+        waypoints_yaw = batch_waypoints[:, :, 2] - boxes_yaw  # (N_inst, N_waypts_max)
         waypoints_in_inst = torch.stack(
             [waypoints_x, waypoints_y, torch.cos(waypoints_yaw), torch.sin(waypoints_yaw)],
             dim=2)  # (N_inst, N_waypts_max, 4)
@@ -350,5 +363,27 @@ class AlignerHead(nn.Module):
             'waypts_pad_mask': waypts_pad_mask,  # (N_inst, N_waypts_max)
             'num_wpts_per_instance': num_wpts_per_instance  # (N_inst,)
         }
+
+    @torch.no_grad()
+    def decode_predicted_trajectory(self, predicted_waypoints: torch.Tensor, predicted_boxes: torch.Tensor):
+        """
+        Args:
+            predicted_waypoints: (N_inst, N_waypts * 4) - x, y, cos_yaw, sin_yaw
+            predicted_boxes: (N_inst, 7) - x, y, z, dx, dy, dz, yaw
+        """
+        waypoints = rearrange(predicted_waypoints, 'N_inst (N_waypts C) -> N_inst N_waypts C', C=4)
+        wpts_xy = waypoints[:, :, :2]  # (N_inst, N_wpts, 2)
+        wpts_yaw = torch.atan2(waypoints[..., -1], waypoints[..., -2])  # (N_inst, N_wpts)
+
+        # map waypoints from boxes frame to global frame
+        boxes_xy = rearrange(predicted_boxes[:, :2], 'N_inst C -> N_inst 1 C')
+        boxes_yaw = rearrange(predicted_boxes[:, -1], 'N_inst -> N_inst 1')
+        cos, sin = torch.cos(boxes_yaw), torch.sin(boxes_yaw)
+
+        wpts_x_in_global = cos * wpts_xy[:, :, 0] - sin * wpts_xy[:, :, 1] + boxes_xy[:, :, 0]
+        wpts_y_in_global = sin * wpts_xy[:, :, 0] + cos * wpts_xy[:, :, 1] + boxes_xy[:, :, 1]
+        wpts_yaw_in_global = wpts_yaw + boxes_yaw
+
+        return torch.stack([wpts_x_in_global, wpts_y_in_global, wpts_yaw_in_global], dim=2)
 
 

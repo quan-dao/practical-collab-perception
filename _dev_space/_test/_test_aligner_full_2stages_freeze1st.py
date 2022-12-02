@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 import logging
+from einops import rearrange
 
 
 def load_params_from_file(model, filename, logger, to_cpu=False):
@@ -94,6 +95,8 @@ def get_training_loss(ckpt_file: str, target_batch_idx=5, **kwargs):
 
     torch.save(batch_dict, f'test_2nd_stage_with_1st_stage_{ckpt_file[:-4]}.pth')
 
+    print('-----inst_velo:\n', batch_dict['inst_velo'], '\n-----')
+
 
 def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     if not ckpt_file.endswith('.pth'):
@@ -102,6 +105,7 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     batch_dict = torch.load(f'test_2nd_stage_with_1st_stage_{ckpt_file[:-4]}.pth', map_location=torch.device('cpu'))
     # print_dict(batch_dict)
     print('-----metadata\n', batch_dict['metadata'], '\n-----')
+    print('-----inst_velo:\n', batch_dict['inst_velo'], '\n-----')
 
     chosen_batch_idx = 0
     logger = logging.getLogger()
@@ -157,6 +161,10 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     cur_pred_boxes = out_stage1['pred_boxes']  # (N_inst, 7) !!! only works for batch size = 1
     color_pred_boxes = torch.tensor([1, 0, 0]).repeat(cur_pred_boxes.shape[0], 1)  # red for predict
 
+    waypts_in_glob = batch_dict['target_waypts_in_glob']  # (N_inst, N_wpts, 3) - x, y, yaw
+    waypts_pad_mask = batch_dict['waypts_pad_mask']  # (N_inst, N_wpts)
+    waypts_in_glob = rearrange(waypts_in_glob * (1.0 - waypts_pad_mask).unsqueeze(-1), 'N_inst N_wpts C -> (N_inst N_wpts) C')
+
     # format visualization input
     viz_points = torch.cat([bg, fg])[:, 1: 4]
     viz_color_points = torch.cat([color_bg, color_fg]).numpy()
@@ -173,7 +181,8 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_inst, boxes_color=viz_color_bboxes)
 
     logger.info('showing motion seg')
-    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_motion, boxes_color=viz_color_bboxes)
+    show_pointcloud(viz_points, viz_bboxes, viz_color_points_by_motion, boxes_color=viz_color_bboxes,
+                    poses=waypts_in_glob.numpy())
 
 
 if __name__ == '__main__':
