@@ -15,8 +15,7 @@ class Aligner(Detector3DTemplate):
             for param in self.aligner.parameters():
                 param.requires_grad = False
 
-        self.det_head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.backbone2d.n_output_feat,
-                                    self.aligner.num_instance_features)
+        self.head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.num_instance_features)
 
     def forward(self, batch_dict):
         if self.model_cfg.get('FREEZE_1ST_STAGE', False):
@@ -26,14 +25,14 @@ class Aligner(Detector3DTemplate):
         else:
             batch_dict = self.aligner(batch_dict)
 
-        batch_dict = self.det_head(batch_dict)
+        batch_dict = self.head(batch_dict)
 
         if self.training:
             tb_dict = dict()
             if self.aligner.training:
                 loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict)
 
-            loss_head, tb_dict = self.det_head.get_training_loss(tb_dict)
+            loss_head, tb_dict = self.head.get_training_loss(tb_dict)
 
             if self.aligner.training:
                 loss = loss_aligner + loss_head

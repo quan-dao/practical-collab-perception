@@ -218,7 +218,6 @@ class PointAligner(nn.Module):
             raise NotImplementedError
 
         self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
-        self.has_2nd_stage = cfg.get('HAS_2ND_STAGE', False)
         self.num_instance_features = cfg.INSTANCE_OUT_CHANNELS
 
     @staticmethod
@@ -460,7 +459,7 @@ class PointAligner(nn.Module):
             'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
             'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
         })
-        self.forward_return_dict['input_2nd_stage']['pred_boxes'] = pred_boxes.detach(),  # (N_inst, 7)
+        self.forward_return_dict['input_2nd_stage']['pred_boxes'] = pred_boxes.detach()  # (N_inst, 7)
 
         batch_dict['input_2nd_stage'] = {
             'meta': self.forward_return_dict['meta']

@@ -193,7 +193,8 @@ class AlignerHead(nn.Module):
 
         # reconstruct local poses
         indices_inst2local = input_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
-        local_yaw = -local_rot_angle + instance_current_boxes[indices_inst2local, -1]  # (N_local,)
+        inst_current_yaw = instance_current_boxes[:, 6]
+        local_yaw = -local_rot_angle + inst_current_yaw[indices_inst2local]  # (N_local,)
 
         offset = instance_current_boxes[indices_inst2local, :3] - local_transl  # (N_local, 3)
         cos, sin = torch.cos(-local_rot_angle), torch.sin(-local_rot_angle)  # (N_local,)
@@ -210,17 +211,12 @@ class AlignerHead(nn.Module):
 
         # unpack meta stuff
         indices_inst2local = input_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
-        num_locals_in_instances = input_dict['meta']['num_locals_in_instances']  # (N_inst,)
+        num_locals_in_instances = input_dict['meta']['num_locals_in_instances'].long()  # (N_inst,)
         inst_bi = input_dict['meta']['inst_bi']  # (N_inst,)
         num_instances = inst_bi.shape[0]
-        max_locals_per_instance = num_locals_in_instances.max()
+        max_locals_per_instance = int(num_locals_in_instances.max().item())
 
-        if self.training:
-            inst_cur_boxes = input_dict['pred_boxes']  # (N_inst, 7) - x, y, z, dx, dy, dz, yaw
-        else:
-            inst_cur_boxes = self.decode_boxes_refinement(
-                input_dict['pred_boxes'], self.forward_return_dict['pred']['boxes_refinement']
-            )  # (N_inst, 7) - x, y, z, dx, dy, dz, yaw
+        inst_cur_boxes = input_dict['pred_boxes']  # (N_inst, 7) - x, y, z, dx, dy, dz, yaw
 
         local_pose = self.gen_instances_past_trajectory(input_dict, inst_cur_boxes)  # (N_local, 4) - x,y,z,yaw @ global
         local_pose = local_pose[:, [0, 1, 3]]  # (N_local, 3) - x, y, yaw (exclude z) @ global
@@ -238,35 +234,35 @@ class AlignerHead(nn.Module):
         local_pose[:, 2] = torch.atan2(torch.sin(local_pose[:, 2]), torch.cos(local_pose[:, 2]))
 
         # compute locals' velocity
-        local_sweep_idx = input_dict['meta']['local_bisw'] % self.cfg('NUM_SWEEPS')  # (N_local,)
+        local_sweep_idx = input_dict['meta']['local_bisw'] % self.cfg.NUM_SWEEPS  # (N_local,)
         inst_max_sweep_idx = input_dict['meta']['inst_max_sweep_idx']  # (N_inst)
         local_time_elapsed = (inst_max_sweep_idx[indices_inst2local] - local_sweep_idx) * 0.05  # (N_local,)
-        # * 0.1 because sweeps are produced at 20Hz
+        # * 0.05 because sweeps are produced at 20Hz
         assert torch.all(local_time_elapsed > -1e-5)
         local_velo = torch.zeros_like(local_pose)
         mask_valid_time = local_time_elapsed > 1e-5  # (N_local,)
-        local_velo[mask_valid_time] = local_pose[mask_valid_time] / local_time_elapsed[mask_valid_time]
+        local_velo[mask_valid_time] = local_pose[mask_valid_time] / local_time_elapsed[mask_valid_time, None]
 
         # compute instance velocity to use as velocity for locals that have invalid time
         inst_velo = torch_scatter.scatter_sum(local_velo, indices_inst2local, dim=0) / \
-                    torch.clamp_min(num_locals_in_instances - 1, min=1.0)
+                    torch.clamp_min(num_locals_in_instances - 1, min=1.0).unsqueeze(-1)
         # - 1 because velo of the most recent locals == 0
 
-        local_velo = local_velo + inst_velo[indices_inst2local] * torch.logical_not(mask_valid_time).float()
+        local_velo = local_velo + inst_velo[indices_inst2local] * torch.logical_not(mask_valid_time).float().unsqueeze(-1)
 
         # construct local feats for attention
         local_feat = torch.cat(
             [input_dict['local']['features'], local_pose, local_velo], dim=1)  # (N_local, C_inst + 6)
 
         batch_local_feat = local_feat.new_zeros(num_instances, max_locals_per_instance, local_feat.shape[-1])
-        key_padding_mask = local_feat.new_zeros(num_instances, max_locals_per_instance)
+        key_padding_mask = local_feat.new_zeros(num_instances, max_locals_per_instance).bool()
         for instance_idx in range(num_instances):
             batch_local_feat[instance_idx, :num_locals_in_instances[instance_idx]] = \
                 local_feat[indices_inst2local == instance_idx]
             # indices_inst2local[i] = j means local i-th is associated with instance j-th
             # (+) i in range(N_local)
             # (+) j in range(N_inst)
-            key_padding_mask[instance_idx, num_locals_in_instances[instance_idx]:] = 1  # to be ignored by attention
+            key_padding_mask[instance_idx, num_locals_in_instances[instance_idx]:] = True  # to be ignored by attention
 
         batch_local_feat = rearrange(batch_local_feat, 'N_inst N_local_max C -> N_local_max N_inst C').contiguous()
         # to be compatible with setting batch_first=False on torch 1.8.2
@@ -311,37 +307,38 @@ class AlignerHead(nn.Module):
         max_num_inst = input_dict['meta']['max_num_inst']  # max number of instances across the batch
 
         waypoints = batch_dict['instances_waypoints']  # (N_wpts, 6) - batch_idx, x, y, yaw, waypoints_idx, instance_idx
-        waypoints_bi = waypoints[:, 0].long() * max_num_inst + waypoints[:, -1].long()
+        waypoints_bi = waypoints[:, 0].long() * max_num_inst + waypoints[:, -1].long()  # (N_wpts,)
+
+        # organize waypoints to batch form
+        num_waypts_per_instance = inst_bi.new_zeros(num_instances)
+        batch_waypoints = waypoints.new_zeros(num_instances, self.cfg.DECODER.TRAJECTORY_NUM_WAYPOINTS, 3)  # x, y, yaw
+        waypts_pad_mask = waypoints.new_zeros(num_instances, self.cfg.DECODER.TRAJECTORY_NUM_WAYPOINTS)  # 1->ignored
+        for instance_idx in range(num_instances):
+            mask_inst = waypoints_bi == inst_bi[instance_idx]  # (N_wpts,)
+            num_waypts_per_instance[instance_idx] = mask_inst.long().sum()
+            # sort instance's waypoints according to their waypoints_idx
+            inst_waypts = waypoints[mask_inst]
+            inst_waypts = inst_waypts[torch.argsort(inst_waypts[:, -2].long())]
+            # put instance waypoints in batch form
+            batch_waypoints[instance_idx, :num_waypts_per_instance[instance_idx]] = inst_waypts[:, 1: 4]
+            waypts_pad_mask[instance_idx, num_waypts_per_instance[instance_idx]:] = 1.
 
         # ----------
         # map waypoints from global frame to the frame of instances' current box
         # ----------
-        # for each value in waypoints_bi find WHERE (i.e., index) it appear in inst_bi
-        corr = (inst_bi[:, None] == waypoints_bi[None, :]).long()  # (N_inst, N_wpts)
-        num_wpts_per_instance = corr.sum(dim=1)  # (N_inst)
-        corr = corr * torch.arange(num_instances).unsqueeze(1).to(corr.device)
-        indices_inst2waypts = corr.sum(dim=0)  # (N_wpts,)
-
-        boxes_x, boxes_y = torch.chunk(inst_cur_boxes[:, :2], chunks=2, dim=1)
-        boxes_yaw = inst_cur_boxes[:, -1]
-        # find transformation to apply to each waypoint
-        cos, sin = torch.cos(boxes_yaw[indices_inst2waypts]), torch.sin(boxes_yaw[indices_inst2waypts])
+        boxes_x = rearrange(inst_cur_boxes[:, 0], 'N_inst -> N_inst 1')
+        boxes_y = rearrange(inst_cur_boxes[:, 1], 'N_inst -> N_inst 1')
+        boxes_yaw = rearrange(inst_cur_boxes[:, -1], 'N_inst -> N_inst 1')
+        cos, sin = torch.cos(boxes_yaw), torch.sin(boxes_yaw)
         # apply transformation
-        waypoints_x = cos * waypoints[:, 1] - sin * waypoints[:, 2] + boxes_x[indices_inst2waypts]
-        waypoints_y = sin * waypoints[:, 1] + cos * waypoints[:, 2] + boxes_y[indices_inst2waypts]
-        waypoints_yaw = waypoints[:, 3] + boxes_yaw[indices_inst2waypts]
-        waypoints_in_inst = torch.stack([waypoints_x, waypoints_y, torch.cos(waypoints_yaw), torch.sin(waypoints_yaw)],
-                                        dim=1)  # (N_wpts, 4)
+        waypoints_x = cos * batch_waypoints[:, :, 0] - sin * batch_waypoints[:, :, 1] + boxes_x  # (N_inst, N_waypts_max)
+        waypoints_y = sin * batch_waypoints[:, :, 0] + cos * batch_waypoints[:, :, 1] + boxes_y  # (N_inst, N_waypts_max)
+        waypoints_yaw = batch_waypoints[:, :, 2] + boxes_yaw  # (N_inst, N_waypts_max)
+        waypoints_in_inst = torch.stack(
+            [waypoints_x, waypoints_y, torch.cos(waypoints_yaw), torch.sin(waypoints_yaw)],
+            dim=2)  # (N_inst, N_waypts_max, 4)
 
-        # organize waypoints to batch form
-        batch_waypoints = waypoints.new_zeros(num_instances, self.cfg.DECODER.TRAJECTORY_NUM_WAYPOINTS, 4)
-        waypts_pad_mask = waypoints.new_zeros(num_instances, self.cfg.DECODER.TRAJECTORY_NUM_WAYPOINTS)  # 1->ignored
-        for instance_idx in range(num_instances):
-            batch_waypoints[instance_idx, :num_wpts_per_instance[instance_idx]] = \
-                waypoints_in_inst[indices_inst2waypts == instance_idx]
-            waypts_pad_mask[instance_idx, num_wpts_per_instance[instance_idx]:] = 1.
-
-        return batch_waypoints, waypts_pad_mask, num_wpts_per_instance
+        return waypoints_in_inst, waypts_pad_mask, num_waypts_per_instance
 
     @torch.no_grad()
     def assign_target_(self, batch_dict):

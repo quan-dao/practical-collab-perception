@@ -31,7 +31,7 @@ def main(**kwargs):
     model.cuda()
     load_dict_to_gpu(batch_dict)
 
-    bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in model.named_parameters()]
+    bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in model.head.named_parameters()]
     ret_dict, tb_dict, _ = model(batch_dict)
     loss = ret_dict['loss']
     model.zero_grad()

@@ -94,10 +94,21 @@ MODEL:
     LOSS:
         SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
 
-    HAS_2ND_STAGE: True
+    FREEZE_1ST_STAGE: True
+    REAL_INFERENCE: False
+    DEBUG: False
 
     ALIGNER_HEAD:
-        ATTENTION:
-            NUM_FEATURES: 4
-            NUM_HEADS: 2
-            NUM_LAYERS: 2
+        ATTENTION_STACK:
+            EMBED_DIM: 4
+            LOCAL_NUM_HEADS: 2
+            LOCAL_NUM_LAYERS: 2
+            GLOBAL_NUM_HEADS: 2
+            GLOBAL_NUM_LAYERS: 2
+
+        DECODER:
+            OBJECT_HIDDEN_CHANNELS: [2]
+            TRAJECTORY_HIDDEN_CHANNELS: [2]
+            TRAJECTORY_NUM_WAYPOINTS: 30
+
+        NUM_SWEEPS: 10
