@@ -15,7 +15,7 @@ class Aligner(Detector3DTemplate):
             for param in self.aligner.parameters():
                 param.requires_grad = False
 
-        self.head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.num_instance_features)
+        self.head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.num_instance_features, model_cfg.NUM_SWEEPS)
 
     def forward(self, batch_dict):
         if self.model_cfg.get('FREEZE_1ST_STAGE', False):

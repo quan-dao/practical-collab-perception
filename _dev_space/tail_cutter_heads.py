@@ -8,11 +8,12 @@ import logging
 
 
 class AlignerHead(nn.Module):
-    def __init__(self, model_cfg, num_instance_features: int):
+    def __init__(self, model_cfg, num_instance_features: int, num_sweeps: int):
         super().__init__()
         self.cfg = model_cfg
         attn_cfg = model_cfg.ATTENTION_STACK
         decoder_cfg = model_cfg.DECODER
+        self.num_sweeps = num_sweeps
 
         self.embed_local_feat = nn.Linear(num_instance_features + 6, attn_cfg.EMBED_DIM)
         # +6 because of position encoding made of [x, y, yaw, v_x, v_y, v_yaw]
@@ -234,7 +235,7 @@ class AlignerHead(nn.Module):
         local_pose[:, 2] = torch.atan2(torch.sin(local_pose[:, 2]), torch.cos(local_pose[:, 2]))
 
         # compute locals' velocity
-        local_sweep_idx = input_dict['meta']['local_bisw'] % self.cfg.NUM_SWEEPS  # (N_local,)
+        local_sweep_idx = input_dict['meta']['local_bisw'] % self.num_sweeps  # (N_local,)
         inst_max_sweep_idx = input_dict['meta']['inst_max_sweep_idx']  # (N_inst)
         local_time_elapsed = (inst_max_sweep_idx[indices_inst2local] - local_sweep_idx) * 0.05  # (N_local,)
         # * 0.05 because sweeps are produced at 20Hz

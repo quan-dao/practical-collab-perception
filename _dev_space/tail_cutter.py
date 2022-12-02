@@ -377,12 +377,12 @@ class PointAligner(nn.Module):
         # ------------
         # prepare input for prediction @ the 2nd stage
         self.forward_return_dict['input_2nd_stage'] = {
-            'foreground': {
-                'fg': fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-                'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
-                'fg_prob': rearrange(fg_prob.detach(), 'N_fg 1 -> N_fg'),
-                'fg_inst_idx': fg_inst_idx,  # (N_fg,)
-            },
+            # 'foreground': {
+            #     'fg': fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+            #     'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
+            #     'fg_prob': rearrange(fg_prob.detach(), 'N_fg 1 -> N_fg'),
+            #     'fg_inst_idx': fg_inst_idx,  # (N_fg,)
+            # },
             'local': {
                 'features': local_shape_enc.detach(),  # (N_local, C_inst)
             },
@@ -453,7 +453,6 @@ class PointAligner(nn.Module):
         # -------------------------
         # prepare input for the 2nd stage
         pred_boxes = self.decode_proposals()  # (N_inst, 7)
-        fg_motion_mask = self.correct_point_cloud_()
 
         self.forward_return_dict['input_2nd_stage']['local'].update({
             'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
@@ -466,9 +465,13 @@ class PointAligner(nn.Module):
         }
         batch_dict['input_2nd_stage'].update(self.forward_return_dict['input_2nd_stage'])
 
-        if not self.training:
-            batch_dict['input_2nd_stage']['fg_motion_mask'] = fg_motion_mask
-            batch_dict['input_2nd_stage']['bg'] = batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
+        if not self.training and self.cfg.get('DEBUG', False):
+            batch_dict['input_2nd_stage'].update({
+                'fg_motion_mask': self.correct_point_cloud(fg),  # fg is mutated in this function
+                'fg': fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                'fg_inst_idx': fg_inst_idx,  # (N_fg,)
+                'bg': batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
+            })
 
         return batch_dict
 
@@ -795,13 +798,12 @@ class PointAligner(nn.Module):
             })
         return out
 
-    def correct_point_cloud_(self):
+    def correct_point_cloud(self, fg_: torch.Tensor):
         """
-        Overwrite self.forward_return_dict['foreground']['fg']
+        Args:
+            fg_: (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
         """
         pred_dict = self.forward_return_dict['pred_dict']
-        fg = self.forward_return_dict['input_2nd_stage']['foreground']['fg']  # (N_fg, 7[+2])
-        # 7[+2] - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
 
         # get motion mask of foreground to find dynamic foreground
         inst_motion_stat = sigmoid(pred_dict['inst_motion_stat'][:, 0]) > 0.5  # TODO: use this for motion pred
@@ -810,7 +812,7 @@ class PointAligner(nn.Module):
 
         if torch.any(fg_motion_mask):
             # only perform correction if there are some dynamic foreground points
-            dyn_fg = fg[fg_motion_mask, 1: 4]  # (N_dyn, 3)
+            dyn_fg = fg_[fg_motion_mask, 1: 4]  # (N_dyn, 3)
 
             local_tf = torch.cat([
                 pred_dict['local_rot'],
@@ -827,7 +829,7 @@ class PointAligner(nn.Module):
             dyn_fg = torch.matmul(dyn_fg_tf[:, :, :3], dyn_fg.unsqueeze(-1)).squeeze(-1) + dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
 
             # overwrite coordinate of dynamic foreground with dyn_fg (computed above)
-            fg[fg_motion_mask, 1: 4] = dyn_fg
+            fg_[fg_motion_mask, 1: 4] = dyn_fg
 
         return fg_motion_mask
 
