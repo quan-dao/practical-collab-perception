@@ -125,9 +125,36 @@ def main(**kwargs):
 
         batch_inst_wpts = data_dict['instances_waypoints']
         cur_inst_wpts = batch_inst_wpts[batch_inst_wpts[:, 0].astype(int) == batch_idx]
-        print('---\n cur_inst_wpts inst idx:\n', np.unique(cur_inst_wpts[:, -1].astype(int)), '\n---')
-        print('---\n cur_fg inst idx:\n', np.unique(cur_fg[:, -2].astype(int)), '\n---')
-        poses = [xyyaw2pose(*cur_inst_wpts[wp_idx].tolist()[1:-1]) for wp_idx in range(cur_inst_wpts.shape[0])]
+        unique_inst_idx_from_wpts, counts = np.unique(cur_inst_wpts[:, -1].astype(int), return_counts=True)
+        print('---\n cur_inst_wpts inst idx:\n', unique_inst_idx_from_wpts, '\n---')
+        print('waypts per inst: ', counts, '\n---')
+        print('sample waypts index:\n',
+              cur_inst_wpts[cur_inst_wpts[:, -1].astype(int) == unique_inst_idx_from_wpts[np.argmax(counts)], -2])
+
+        unique_inst_idx_from_fg = np.unique(cur_fg[:, -2].astype(int))
+        print('---\n cur_fg inst idx:\n', unique_inst_idx_from_fg, '\n---')
+
+        poses = [xyyaw2pose(*cur_inst_wpts[wp_idx].tolist()[1:-2]) for wp_idx in range(cur_inst_wpts.shape[0])]
+
+        # interp_trajs = np.load(f'../data/nuscenes/v1.0-mini/nuscenes_trajectory_sets/interpolated_epsilon_4.npy')
+        # print(f'interp_trajs: {interp_trajs.shape}')
+        #
+        # poses = []
+        # chosen_boxes = cur_target_boxes[unique_inst_idx_from_fg[0]]  # (7+...,)
+        # cos, sin = np.cos(chosen_boxes[6]), np.sin(chosen_boxes[6])
+        # target_from_box = np.array([
+        #     cos, -sin, chosen_boxes[0],
+        #     sin, cos, chosen_boxes[1],
+        #     0, 0, 1,
+        # ]).reshape(3, 3)
+        #
+        # for trj_idx in range(20):
+        #     traj = interp_trajs[5 * trj_idx]  # (30, 2)
+        #     traj = np.pad(traj, pad_width=[(0, 0), (0, 1)], constant_values=1)  # (30, 3)
+        #     traj = (target_from_box @ traj.T).T  # (30, 3)
+        #     poses += [xyyaw2pose(traj[_k, 0], traj[_k, 1], 0) for _k in range(0, traj.shape[0], 5)]
+
+
 
     print_dict(data_dict)
     print('meta: ', data_dict['metadata'])

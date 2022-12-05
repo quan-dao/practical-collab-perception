@@ -65,7 +65,7 @@ def get_training_loss(ckpt_file: str, target_batch_idx=5, **kwargs):
     logger = common_utils.create_logger('./dummy_log.txt')
 
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=1,
-                                              dist=False, logger=logger, training=True, total_epochs=1, seed=666)
+                                              dist=False, logger=logger, training=False, total_epochs=1, seed=666)
     iter_dataloader = iter(dataloader)
     for _ in range(target_batch_idx):
         batch_dict = next(iter_dataloader)
@@ -79,23 +79,28 @@ def get_training_loss(ckpt_file: str, target_batch_idx=5, **kwargs):
 
     model.cuda()
     load_dict_to_gpu(batch_dict)
-    bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in model.head.named_parameters()]
-    ret_dict, tb_dict, _, batch_dict = model(batch_dict)
-    loss = ret_dict['loss']
-    model.zero_grad()
-    loss.backward()
+    if not kwargs.get('eval_mode', False):
+        bw_hooks = [BackwardHook(name, param, is_cuda=True) for name, param in model.head.named_parameters()]
+        ret_dict, tb_dict, _, batch_dict = model(batch_dict)
+        loss = ret_dict['loss']
+        model.zero_grad()
+        loss.backward()
 
-    print('---')
-    print_dict(tb_dict)
-    print('---')
+        print('---')
+        print_dict(tb_dict)
+        print('---')
 
-    for hook in bw_hooks:
-        if hook.grad_mag < 1e-4:
-            print(f'zero grad at {hook.name}')
+        for hook in bw_hooks:
+            if hook.grad_mag < 1e-4:
+                print(f'zero grad at {hook.name}')
+    else:
+        model.eval()
+        with torch.no_grad():
+            batch_dict = model(batch_dict)
 
     torch.save(batch_dict, f'test_2nd_stage_with_1st_stage_{ckpt_file[:-4]}.pth')
 
-    print('-----inst_velo:\n', batch_dict['inst_velo'], '\n-----')
+    # print('-----inst_velo:\n', batch_dict['inst_velo'], '\n-----')
 
 
 def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
@@ -105,7 +110,7 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     batch_dict = torch.load(f'test_2nd_stage_with_1st_stage_{ckpt_file[:-4]}.pth', map_location=torch.device('cpu'))
     # print_dict(batch_dict)
     print('-----metadata\n', batch_dict['metadata'], '\n-----')
-    print('-----inst_velo:\n', batch_dict['inst_velo'], '\n-----')
+    # print('-----inst_velo:\n', batch_dict['inst_velo'], '\n-----')
 
     chosen_batch_idx = 0
     logger = logging.getLogger()
@@ -158,12 +163,15 @@ def display_input_to_2nd_stage(ckpt_file: str, **kwargs):
     cur_gt_boxes = cur_gt_boxes[mask_valid_boxes, :7]  # (N_gt_boxes, 7+...)
     color_gt_boxes = torch.tensor([0, 1, 0]).repeat(cur_gt_boxes.shape[0], 1)  # green for g.t
 
-    cur_pred_boxes = out_stage1['pred_boxes']  # (N_inst, 7) !!! only works for batch size = 1
+    # cur_pred_boxes = out_stage1['pred_boxes']  # (N_inst, 7) !!! only works for batch size = 1
+    cur_pred_boxes = batch_dict['final_box_dicts'][chosen_batch_idx]['pred_boxes']
     color_pred_boxes = torch.tensor([1, 0, 0]).repeat(cur_pred_boxes.shape[0], 1)  # red for predict
 
-    waypts_in_glob = batch_dict['target_waypts_in_glob']  # (N_inst, N_wpts, 3) - x, y, yaw
-    waypts_pad_mask = batch_dict['waypts_pad_mask']  # (N_inst, N_wpts)
-    waypts_in_glob = rearrange(waypts_in_glob * (1.0 - waypts_pad_mask).unsqueeze(-1), 'N_inst N_wpts C -> (N_inst N_wpts) C')
+    waypts_in_glob = batch_dict['pred_waypts_in_glob']  # (N_inst, N_wpts, 3) - x, y, yaw
+    print(f"waypts_in_glob: {waypts_in_glob.shape}")
+    # waypts_pad_mask = batch_dict['waypts_pad_mask']  # (N_inst, N_wpts)
+    # waypts_in_glob = rearrange(waypts_in_glob * (1.0 - waypts_pad_mask).unsqueeze(-1), 'N_inst N_wpts C -> (N_inst N_wpts) C')
+    waypts_in_glob = rearrange(waypts_in_glob, 'N_i N_wp C -> (N_i N_wp) C')
 
     # format visualization input
     viz_points = torch.cat([bg, fg])[:, 1: 4]
@@ -191,6 +199,7 @@ if __name__ == '__main__':
     parser.add_argument('--target_batch_idx', type=int, default=5, help='')
     parser.add_argument('--show_raw_point_cloud', action='store_true', default=False)
     parser.add_argument('--do_forward', action='store_true', default=False)
+    parser.add_argument('--eval_mode', action='store_true', default=False)
     args = parser.parse_args()
     if args.do_forward:
         get_training_loss(**vars(args))
