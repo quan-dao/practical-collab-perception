@@ -9,7 +9,7 @@ DATA_CONFIG:
     NORMALIZE_LANE_ANGLE: False
     BEV_IMAGE_RESOLUTION: 0.2
 
-    POSSIBLE_NUM_SWEEPS: [10]
+    POSSIBLE_NUM_SWEEPS: [20]
     DROP_BACKGROUND:
         ENABLE: True
         DISTANCE_THRESHOLD: 10
@@ -76,29 +76,29 @@ MODEL:
         UP_CHANNELS: [-1, 128, 128, 128, 64, 64]  # dummy-1-2-3-4-5
         UP_DEFORM_CONV: [-1, False, False, False, False, False]  # dummy-1-2-3-4-5
 
-    NUM_SWEEPS: 10  # actually == MAX_SWEEPS
-    HEAD_MID_CHANNELS: [128]
-    INSTANCE_MID_CHANNELS: [128]
-    INSTANCE_OUT_CHANNELS: 64
-    INSTANCE_HEAD_USE_DROPOUT: True
+    ALIGNER_1ST_STAGE:
+        NUM_SWEEPS: 20  # actually == MAX_SWEEPS
+        HEAD_MID_CHANNELS: [128]
 
-    TARGET_CONFIG:
-        MOTION_THRESH: 0.5
+        INSTANCE_MID_CHANNELS: [128]
+        INSTANCE_OUT_CHANNELS: 128
+        INSTANCE_HEAD_USE_DROPOUT: True
 
-    FG_THRESH: 0.5
+        THRESH_MOTION: 0.5
+        THRESH_FOREGROUND_PROB: 0.5
 
-    CLUSTER:
-        EPS: 1.5
-        MIN_POINTS: 3
+        CLUSTER:
+            EPS: 1.5
+            MIN_POINTS: 3
 
-    LOSS:
-        SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
+        LOSS:
+            SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
 
-    FREEZE_1ST_STAGE: True
-    REAL_INFERENCE: False
-    DEBUG: False
+        FREEZE_WEIGHTS: True
+        REAL_INFERENCE: False
+        DEBUG: False
 
-    ALIGNER_HEAD:
+    ALIGNER_2ND_STAGE:
         ATTENTION_STACK:
             EMBED_DIM: 256
             LOCAL_NUM_HEADS: 8

@@ -166,59 +166,66 @@ class PointAligner(nn.Module):
             else:
                 self.map_net = PoseResNet(map_net_cfg, map_net_cfg.NUM_MAP_LAYERS)
                 num_map_features = self.map_net.num_out_features
-        else:
-            self.map_net = None
-        self.drop_map = DropBlock2d(map_net_cfg.DROP_PROB, map_net_cfg.DROP_BLOCK_SIZE)
 
-        if map_net_cfg.ENABLE:
+            self.drop_map = DropBlock2d(map_net_cfg.DROP_PROB, map_net_cfg.DROP_BLOCK_SIZE)
+
             self.backbone2d = UNet2D(num_map_features + pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
+
         else:
+            self.map_net, self.drop_map = None, None
             self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES, cfg.BEV_BACKBONE)
 
         # ----
         backbone_out_c = self.backbone2d.n_output_feat
+        stage_cfg = cfg.ALIGNER_1ST_STAGE
         # point heads
-        self.point_fg_seg = self._make_mlp(backbone_out_c, 1, cfg.get('HEAD_MID_CHANNELS', None))
-        self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_fg_seg = self._make_mlp(backbone_out_c, 1, stage_cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, stage_cfg.get('HEAD_MID_CHANNELS', None))
 
         # ---
-        self.inst_global_mlp = self._make_mlp(backbone_out_c, cfg.INSTANCE_OUT_CHANNELS,
-                                              cfg.get('INSTANCE_MID_CHANNELS', None))
-        self.inst_local_mlp = self._make_mlp(3, cfg.INSTANCE_OUT_CHANNELS, cfg.get('INSTANCE_MID_CHANNELS', None))
+        self.inst_global_mlp = self._make_mlp(backbone_out_c, stage_cfg.INSTANCE_OUT_CHANNELS,
+                                              stage_cfg.get('INSTANCE_MID_CHANNELS', None))
+
+        self.inst_local_mlp = self._make_mlp(3, stage_cfg.INSTANCE_OUT_CHANNELS,
+                                             stage_cfg.get('INSTANCE_MID_CHANNELS', None))
         # input channels == 3 because: x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
 
         # ----
         # instance heads
-        self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1,
-                                              cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        self.inst_motion_seg = self._make_mlp(stage_cfg.INSTANCE_OUT_CHANNELS, 1,
+                                              stage_cfg.get('INSTANCE_MID_CHANNELS', None),
+                                              stage_cfg.INSTANCE_HEAD_USE_DROPOUT)
 
-        self.inst_proposal_gen = self._make_mlp(3 + 2 * cfg.INSTANCE_OUT_CHANNELS, 8,
-                                                cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        self.inst_proposal_gen = self._make_mlp(3 + 2 * stage_cfg.INSTANCE_OUT_CHANNELS, 8,
+                                                stage_cfg.get('INSTANCE_MID_CHANNELS', None),
+                                                stage_cfg.INSTANCE_HEAD_USE_DROPOUT)
         # in_ch == 3 + 2 * cfg.INSTANCE_OUT_CHANNELS because
         # 3 = |centroid of the local @ target time step|
         # 2 * cfg.INSTANCE_OUT_CHANNELS = |concatenation of feat of local @ target & global|
         # out_ch == 8 because c_x, c_y, c_z, d_x, d_y, d_z, sin_yaw, cos_yaw
 
-        self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
-                                                cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        self.inst_local_transl = self._make_mlp(6 + 3 * stage_cfg.INSTANCE_OUT_CHANNELS, 3,
+                                                stage_cfg.get('INSTANCE_MID_CHANNELS', None),
+                                                stage_cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 3 for 3 components of translation vector
 
-        self.inst_local_rot = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 4,
-                                             cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
+        self.inst_local_rot = self._make_mlp(6 + 3 * stage_cfg.INSTANCE_OUT_CHANNELS, 4,
+                                             stage_cfg.get('INSTANCE_MID_CHANNELS', None),
+                                             stage_cfg.INSTANCE_HEAD_USE_DROPOUT)
         # out == 4 for 4 components of quaternion
         fill_fc_weights(self.inst_local_rot)
         # ---
         self.forward_return_dict = dict()
         # loss func
-        if cfg.LOSS.SEGMENTATION_LOSS == 'focal':
+        if stage_cfg.LOSS.SEGMENTATION_LOSS == 'focal':
             self.seg_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
-        elif cfg.LOSS.SEGMENTATION_LOSS == 'ce_lovasz':
+        elif stage_cfg.LOSS.SEGMENTATION_LOSS == 'ce_lovasz':
             self.seg_loss = CELovaszLoss(num_classes=2)  # binary classification for both fg seg & motion seg
         else:
             raise NotImplementedError
 
-        self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS)
-        self.num_instance_features = cfg.INSTANCE_OUT_CHANNELS
+        self.clusterer = DBSCAN(eps=stage_cfg.CLUSTER.EPS, min_samples=stage_cfg.CLUSTER.MIN_POINTS)
+        self.num_instance_features = stage_cfg.INSTANCE_OUT_CHANNELS
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
@@ -291,8 +298,8 @@ class PointAligner(nn.Module):
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
             fg_prob = sigmoid(pred_points_fg.detach())[mask_fg]  # (N_fg_valid, 1)
         else:
-            if self.cfg.get('FG_THRESH', 0.5) > 0:
-                mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.FG_THRESH
+            if self.cfg.THRESH_FOREGROUND_PROB > 0:
+                mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.THRESH_FOREGROUND_PROB
             else:
                 # use ground truth foreground
                 mask_fg = batch_dict['points'][:, -2] > -1
@@ -336,7 +343,7 @@ class PointAligner(nn.Module):
             fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
 
             # merge batch_idx, instance_idx & sweep_idx
-            fg_bisw_idx = fg_bi_idx * self.cfg.get('NUM_SWEEPS', 10) + fg_sweep_idx
+            fg_bisw_idx = fg_bi_idx * self.cfg.NUM_SWEEPS + fg_sweep_idx
 
             # --
             # group foreground points to instance
@@ -398,7 +405,7 @@ class PointAligner(nn.Module):
             # get the max sweep_index of each instance
             inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)
             # get bisw_index of each instance's max sweep
-            inst_target_bisw_idx = inst_bi * self.cfg.get('NUM_SWEEPS', 10) + inst_max_sweep_idx  # (N_inst,)
+            inst_target_bisw_idx = inst_bi * self.cfg.NUM_SWEEPS + inst_max_sweep_idx  # (N_inst,)
 
             # for each value in inst_target_bisw_idx find WHERE (i.e., index) it appear in local_bisw
             corr = local_bisw[:, None] == inst_target_bisw_idx[None, :]  # (N_local, N_inst)
@@ -423,7 +430,7 @@ class PointAligner(nn.Module):
         # ------------
         with torch.no_grad():
             # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
-            local_bi = local_bisw // self.cfg.get('NUM_SWEEPS', 10)
+            local_bi = local_bisw // self.cfg.NUM_SWEEPS
             # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
             local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
             num_locals_in_instances = torch.sum(local_bi_in_inst_bi.float(), dim=1)  # (N_inst,)
@@ -452,13 +459,11 @@ class PointAligner(nn.Module):
 
         # -------------------------
         # prepare input for the 2nd stage
-        pred_boxes = self.decode_proposals()  # (N_inst, 7)
-
         self.forward_return_dict['input_2nd_stage']['local'].update({
             'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
             'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
         })
-        self.forward_return_dict['input_2nd_stage']['pred_boxes'] = pred_boxes.detach()  # (N_inst, 7)
+        self.forward_return_dict['input_2nd_stage']['pred_boxes'] = self.decode_proposals(proposals.detach())  # (N_inst, 7)
 
         batch_dict['input_2nd_stage'] = {
             'meta': self.forward_return_dict['meta']
@@ -513,7 +518,7 @@ class PointAligner(nn.Module):
         # --------------
         inst_bi = self.forward_return_dict['meta']['inst_bi']
         # target motion
-        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.TARGET_CONFIG.MOTION_THRESH
+        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.THRESH_MOTION
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
 
@@ -739,11 +744,15 @@ class PointAligner(nn.Module):
         #     out.append(debug_dict)
         return out
 
-    def decode_proposals(self) -> torch.Tensor:
-        pred_proposals = self.forward_return_dict['pred_dict']['proposals']  # (N_inst, 8)
-        center = self.forward_return_dict['meta']['inst_target_center'] + pred_proposals[:, :3]
-        size = pred_proposals[:, 3: 6]
-        yaw = torch.atan2(pred_proposals[:, 6], pred_proposals[:, 7])
+    @torch.no_grad()
+    def decode_proposals(self, proposals: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            proposals: (N_inst, 8) - x, y, z, dx, dy, dz, sin_yaw, cos_yaw
+        """
+        center = self.forward_return_dict['meta']['inst_target_center'] + proposals[:, :3]
+        size = proposals[:, 3: 6]
+        yaw = torch.atan2(proposals[:, 6], proposals[:, 7])
         pred_boxes = torch.cat([center, size, yaw[:, None]], dim=1)  # (N_inst, 7)
         return pred_boxes
 

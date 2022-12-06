@@ -147,7 +147,10 @@ class NuScenesDataset(DatasetTemplate):
 
         info = copy.deepcopy(self.infos[index])
 
-        num_sweeps = np.random.choice(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)
+        if len(self.dataset_cfg.POSSIBLE_NUM_SWEEPS) > 1:
+            num_sweeps = np.random.choice(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)
+        else:
+            num_sweeps = self.dataset_cfg.POSSIBLE_NUM_SWEEPS[0]
 
         _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
                                        pointcloud_range=self.point_cloud_range,

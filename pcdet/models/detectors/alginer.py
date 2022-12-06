@@ -10,15 +10,19 @@ class Aligner(Detector3DTemplate):
     def __init__(self, model_cfg, num_class, dataset):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
         self.aligner = PointAligner(model_cfg)
-        if model_cfg.get('FREEZE_1ST_STAGE', False):
+        self.freeze_1st_stage = model_cfg.ALIGNER_1ST_STAGE.FREEZE_WEIGHTS
+        self.debug = self.model_cfg.get('DEBUG', False)
+
+        if self.freeze_1st_stage:
             self.aligner.eval()
             for param in self.aligner.parameters():
                 param.requires_grad = False
 
-        self.head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.num_instance_features, model_cfg.NUM_SWEEPS)
+        self.head = AlignerHead(model_cfg.ALIGNER_2ND_STAGE, self.aligner.num_instance_features,
+                                model_cfg.ALIGNER_1ST_STAGE.NUM_SWEEPS)
 
     def forward(self, batch_dict):
-        if self.model_cfg.get('FREEZE_1ST_STAGE', False):
+        if self.freeze_1st_stage:
             self.aligner.eval()
             with torch.no_grad():
                 batch_dict = self.aligner(batch_dict)
@@ -29,26 +33,28 @@ class Aligner(Detector3DTemplate):
 
         if self.training:
             tb_dict = dict()
-            if self.aligner.training:
+            if not self.freeze_1st_stage:
                 loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict)
 
             loss_head, tb_dict = self.head.get_training_loss(tb_dict)
 
-            if self.aligner.training:
+            if not self.freeze_1st_stage:
                 loss = loss_aligner + loss_head
             else:
                 loss = loss_head
 
             ret_dict = {'loss': loss}
             tb_dict['loss_total'] = loss.item()
-            if self.model_cfg.get('DEBUG', False):
+
+            if self.debug:
                 logger = logging.getLogger()
                 logger.warning('during training, DEBUG flag is on, return batch_dict together with ret_dict & tb_dict')
                 return ret_dict, tb_dict, {}, batch_dict
             else:
                 return ret_dict, tb_dict, {}
+
         else:
-            if self.model_cfg.get('DEBUG', False):
+            if self.debug:
                 logger = logging.getLogger()
                 logger.warning('DEBUG flag is on, migh not generate boxes')
                 return batch_dict

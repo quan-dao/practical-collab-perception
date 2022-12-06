@@ -61,8 +61,6 @@ class CELovaszLoss(nn.Module):
 
             prob = torch.softmax(pred_logits, dim=1)  # (N, n_cls)
 
-        print(f"prob: {prob.shape}")
-        print(f"label: {label.shape}")
         loss_lovasz = self.lovasz_loss(prob, label)
 
         loss_seg = loss_ce + loss_lovasz
