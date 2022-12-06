@@ -5,7 +5,7 @@ import torch_scatter
 from einops import rearrange
 from typing import List
 from kornia.losses.focal import BinaryFocalLossWithLogits
-from torchmetrics.functional import precision_recall
+from torchmetrics.functional import precision, recall
 from sklearn.cluster import DBSCAN
 from _dev_space.unet_2d import UNet2D
 from _dev_space.resnet import PoseResNet
@@ -179,9 +179,9 @@ class PointAligner(nn.Module):
         backbone_out_c = self.backbone2d.n_output_feat
         stage_cfg = cfg.ALIGNER_1ST_STAGE
         self.is_real_inference = stage_cfg.REAL_INFERENCE
-        self.num_det_classes = num_det_classes
+        self.num_det_classes = 1 + num_det_classes  # add 1 to represent the background class
         # point heads
-        self.point_fg_seg = self._make_mlp(backbone_out_c, num_det_classes, stage_cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_fg_seg = self._make_mlp(backbone_out_c, self.num_det_classes, stage_cfg.get('HEAD_MID_CHANNELS', None))
         self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, stage_cfg.get('HEAD_MID_CHANNELS', None))
 
         # ---
@@ -221,9 +221,13 @@ class PointAligner(nn.Module):
         self.forward_return_dict = dict()
         # loss func
         if stage_cfg.LOSS.SEGMENTATION_LOSS == 'focal':
-            self.seg_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
+            self.type_segmentation_loss = 'focal'
+            self.fg_seg_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
+            self.motion_seg_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
         elif stage_cfg.LOSS.SEGMENTATION_LOSS == 'ce_lovasz':
-            self.seg_loss = CELovaszLoss(num_classes=2)  # binary classification for both fg seg & motion seg
+            self.type_segmentation_loss = 'ce_lovasz'
+            self.fg_seg_loss = CELovaszLoss(num_classes=self.num_det_classes)
+            self.motion_seg_loss = CELovaszLoss(num_classes=2)  # binary classification
         else:
             raise NotImplementedError
 
@@ -492,8 +496,8 @@ class PointAligner(nn.Module):
         """
         Args:
             batch_dict:
-                'points': (N, 8) - batch_idx, x, y, z, intensity, time, sweep_idx, instance_idx
-                    * inst_indicator: -1 for background, >= 0 for foreground
+                'points': (N, 10) - batch_idx, x, y, z, intensity, time, sweep_idx, instance_idx, aug_inst_idx, cls_idx
+                    * instance_idx: -1 for background, >= 0 for foreground
                 'instances_tf': (B, N_inst_max, N_sweeps, 3, 4)
         """
         points = batch_dict['points']
@@ -503,10 +507,11 @@ class PointAligner(nn.Module):
         # -------------------------------------------------------
         # --------------
         # target foreground
-        mask_fg = points[:, -2].long() > -1
-        target_fg = mask_fg.long()  # (N,) - use original instance index for foreground seg
+        points_cls_idx = points[:, -1].long()  # (N,) | -1: background, [0, n_cls) - foreground
+        target_fg = points_cls_idx + 1  # (N,) -  0: background, [1, n_cls + 1) - foreground
 
         # --------------
+        mask_fg = target_fg > 0  # (N,)
         # target of inst_assoc as offset toward mean of points inside each instance
         _fg = points[mask_fg]
         max_num_inst = batch_dict['instances_tf'].shape[1]
@@ -525,12 +530,12 @@ class PointAligner(nn.Module):
         # --------------
         inst_bi = self.forward_return_dict['meta']['inst_bi']
         # target motion
-        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.THRESH_MOTION
+        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.ALIGNER_1ST_STAGE.THRESH_MOTION
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
 
         # target proposal
-        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 11) -center (3), size (3), yaw, dummy_v (2), instance_index, class
+        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 11) -center (3), size (3), yaw, dummy_v (2), instance_index, class_idx
         assert gt_boxes.shape[1] == instances_tf.shape[1], f"{gt_boxes.shape[1]} != {instances_tf.shape[1]}"
         batch_boxes = rearrange(gt_boxes, 'B N_inst_max C -> (B N_inst_max) C')
         batch_boxes = batch_boxes[inst_bi]  # (N_inst, 11)
@@ -579,10 +584,9 @@ class PointAligner(nn.Module):
         else:
             return diff.mean()
 
-    def get_training_loss(self, batch_dict, tb_dict=None, debug=False):
+    def get_training_loss(self, batch_dict, tb_dict=None):
         if tb_dict is None:
             tb_dict = dict()
-        debug_dict = dict() if debug else None
 
         pred_dict = self.forward_return_dict['pred_dict']
         target_dict = self.forward_return_dict['target_dict']
@@ -592,15 +596,15 @@ class PointAligner(nn.Module):
         # -----------------------
         # ---
         # foreground seg
-        fg_logit = pred_dict['fg']  # (N, 1)
+        fg_logit = pred_dict['fg']  # (N, n_cls)
         fg_target = target_dict['fg']  # (N,)
         assert torch.all(torch.isfinite(fg_logit))
 
-        num_gt_fg = fg_target.sum().item()
-        if self.cfg.LOSS.SEGMENTATION_LOSS == 'focal':
-            loss_fg = self.seg_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
+        num_gt_fg = (fg_target > 0).float().sum().item()
+        if self.type_segmentation_loss == 'focal':
+            loss_fg = self.fg_seg_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
         else:
-            loss_fg = self.seg_loss(fg_logit, fg_target, tb_dict, loss_name='fg')
+            loss_fg = self.fg_seg_loss(fg_logit, fg_target, tb_dict, loss_name='fg')
         tb_dict['loss_fg'] = loss_fg.item()
 
         # ---
@@ -622,10 +626,10 @@ class PointAligner(nn.Module):
         inst_mos_target = target_dict['inst_motion_stat']  # (N_inst,)
 
         num_gt_dyn_inst = float(inst_mos_target.sum().item())
-        if self.cfg.LOSS.SEGMENTATION_LOSS == 'focal':
-            loss_inst_mos = self.seg_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
+        if self.type_segmentation_loss == 'focal':
+            loss_inst_mos = self.motion_seg_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
         else:
-            loss_inst_mos = self.seg_loss(inst_mos_logit, inst_mos_target, tb_dict, loss_name='mos')
+            loss_inst_mos = self.motion_seg_loss(inst_mos_logit, inst_mos_target, tb_dict, loss_name='mos')
         tb_dict['loss_inst_mos'] = loss_inst_mos.item()
 
         # ---
@@ -647,24 +651,19 @@ class PointAligner(nn.Module):
             local_mos_mask = local_mos_target == 1  # (N_local,)
 
         # translation
-        # logger = logging.getLogger()
         if torch.any(local_mos_mask):
-            # logger.info('loss_local_transl has ground truth')
             loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
                                              dim=-1, reduction='mean')
         else:
-            # logger.info('loss_local_transl does not have ground truth')
             loss_local_transl = self.l2_loss(local_transl, torch.clone(local_transl).detach(),
                                              dim=-1, reduction='mean')
         tb_dict['loss_local_transl'] = loss_local_transl.item()
 
         # rotation
         if torch.any(local_mos_mask):
-            # logger.info('loss_local_rot has ground truth')
             loss_local_rot = torch.linalg.norm(
                 local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
         else:
-            # logger.info('loss_local_rot does not have ground truth')
             loss_local_rot = self.l2_loss(local_rot_mat.reshape(-1, 1),
                                           torch.clone(local_rot_mat).detach().reshape(-1, 1),
                                           dim=-1, reduction='mean')
@@ -677,7 +676,7 @@ class PointAligner(nn.Module):
         inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']  # (N_fg)
         fg_motion = inst_mos_target[inst_bi_inv_indices] == 1  # (N_fg)
 
-        aug_fg_mask = batch_dict['points'][:, -1].long() > -1  # (N,) - use aug inst index
+        aug_fg_mask = batch_dict['points'][:, -2].long() > -1  # (N,) - use aug inst index
         fg = batch_dict['points'][aug_fg_mask]  # (N_fg)
 
         if torch.any(fg_motion):
@@ -691,8 +690,6 @@ class PointAligner(nn.Module):
 
             gt_recon_dyn_fg = torch.matmul(gt_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
                               gt_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
-            if debug:
-                debug_dict['gt_recon_dyn_fg'] = gt_recon_dyn_fg  # (N_dyn, 3)
 
             # reconstruct with prediction
             local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
@@ -737,18 +734,16 @@ class PointAligner(nn.Module):
 
         # eval foregound seg, motion seg during training
         with torch.no_grad():
-            pred_fg_prob = sigmoid(fg_logit.detach()).squeeze(-1)  # (N,)
-            precision_fg, recall_fg = precision_recall(pred_fg_prob, fg_target, threshold=0.5)
-            tb_dict['fg_P'] = precision_fg.item()
-            tb_dict['fg_R'] = recall_fg.item()
+            detached_fg_logit = fg_logit.detach()  # (N, n_cls)
+            tb_dict['fg_P'] = precision(detached_fg_logit, fg_target, task='multiclass',
+                                        num_classes=self.num_det_classes).item()
+            tb_dict['fg_R'] = recall(detached_fg_logit, fg_target, task='multiclass',
+                                     num_classes=self.num_det_classes).item()
 
-            inst_mos_prob = sigmoid(inst_mos_logit.detach()).squeeze(-1)  # (N_inst)
-            precision_mos, recall_mos = precision_recall(inst_mos_prob, inst_mos_target, threshold=0.5)
-            tb_dict['mos_P'] = precision_mos.item()
-            tb_dict['mos_R'] = recall_mos.item()
+            detached_inst_mos = rearrange(inst_mos_logit.detach(), 'N_inst 1 -> N_inst')
+            tb_dict['mos_P'] = precision(detached_inst_mos, inst_mos_target, task='binary').item()
+            tb_dict['mos_R'] = recall(detached_inst_mos, inst_mos_target, task='binary').item()
         out = [loss, tb_dict]
-        # if debug:
-        #     out.append(debug_dict)
         return out
 
     @torch.no_grad()
@@ -817,7 +812,7 @@ class PointAligner(nn.Module):
     def correct_point_cloud(self, fg_: torch.Tensor):
         """
         Args:
-            fg_: (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+            fg_: (N_fg, 7[+3]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx, cls_idx]
         """
         pred_dict = self.forward_return_dict['pred_dict']
 
