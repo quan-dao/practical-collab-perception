@@ -139,7 +139,7 @@ class PillarEncoder(nn.Module):
 
 
 class PointAligner(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, num_det_classes):
         super().__init__()
         self.cfg = cfg
 
@@ -178,8 +178,10 @@ class PointAligner(nn.Module):
         # ----
         backbone_out_c = self.backbone2d.n_output_feat
         stage_cfg = cfg.ALIGNER_1ST_STAGE
+        self.is_real_inference = stage_cfg.REAL_INFERENCE
+        self.num_det_classes = num_det_classes
         # point heads
-        self.point_fg_seg = self._make_mlp(backbone_out_c, 1, stage_cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_fg_seg = self._make_mlp(backbone_out_c, num_det_classes, stage_cfg.get('HEAD_MID_CHANNELS', None))
         self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, stage_cfg.get('HEAD_MID_CHANNELS', None))
 
         # ---
@@ -199,6 +201,7 @@ class PointAligner(nn.Module):
         self.inst_proposal_gen = self._make_mlp(3 + 2 * stage_cfg.INSTANCE_OUT_CHANNELS, 8,
                                                 stage_cfg.get('INSTANCE_MID_CHANNELS', None),
                                                 stage_cfg.INSTANCE_HEAD_USE_DROPOUT)
+        # TODO: add 1 to output dim -> confidence score (g.t conf score == IoU with g.t box)
         # in_ch == 3 + 2 * cfg.INSTANCE_OUT_CHANNELS because
         # 3 = |centroid of the local @ target time step|
         # 2 * cfg.INSTANCE_OUT_CHANNELS = |concatenation of feat of local @ target & global|
@@ -276,10 +279,10 @@ class PointAligner(nn.Module):
                                                                  points_bev_coord[batch_mask, 1])
 
         # invoke point heads
-        pred_points_fg = self.point_fg_seg(points_feat)  # (N, 1)
+        pred_points_fg = self.point_fg_seg(points_feat)  # (N, n_cls)
         pred_points_inst_assoc = self.point_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
         pred_dict = {
-            'fg': pred_points_fg,  # (N, 1)
+            'fg': pred_points_fg,  # (N, n_cls)
             'inst_assoc': pred_points_inst_assoc  # (N, 2)
         }
 
@@ -287,23 +290,28 @@ class PointAligner(nn.Module):
         # INSTANCE stuff
         # ---------------------------------------------------------------
 
-        if self.training or not self.cfg.REAL_INFERENCE:
+        if self.training or not self.is_real_inference:
             # Training 1st stage or Freeze 1st stage to train 2nd stage
             # ==> use AUGMENTED instance index
-            mask_fg = batch_dict['points'][:, -1].long() > -1
-            fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
-            fg_inst_idx = fg[:, -1].long()  # (N_fg,)
+            mask_fg = batch_dict['points'][:, -2].long() > -1
+            fg = batch_dict['points'][mask_fg]  # (N_fg, 10): batch_idx,x,y,z,intense,time,sweep_idx,inst_idx,aug_inst_idx,cls_idx
+            fg_inst_idx = fg[:, -2].long()  # (N_fg,)
             max_num_inst = batch_dict['instances_tf'].shape[1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
             fg_batch_idx = points_batch_idx[mask_fg]
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
-            fg_prob = sigmoid(pred_points_fg.detach())[mask_fg]  # (N_fg_valid, 1)
+            fg_prob = torch.softmax(pred_points_fg.detach(), dim=1)[mask_fg]  # (N_fg_valid, n_cls)
         else:
             if self.cfg.THRESH_FOREGROUND_PROB > 0:
-                mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.cfg.THRESH_FOREGROUND_PROB
+                fg_prob = torch.softmax(pred_points_fg.detach(), dim=1)
+                mask_fg = torch.max(fg_prob, dim=1)[0] > self.cfg.THRESH_FOREGROUND_PROB
             else:
                 # use ground truth foreground
-                mask_fg = batch_dict['points'][:, -2] > -1
-            fg = batch_dict['points'][mask_fg]  # (N_fg, 8) - batch_idx, x, y, z, instensity, time, sweep_idx, instance_idx
+                mask_fg = batch_dict['points'][:, -3] > -1
+                fg_prob = mask_fg.new_zeros(mask_fg.float().sum(), self.num_det_classes).float()
+                fg_prob.scatter_(dim=1,
+                                 index=batch_dict['points'][mask_fg, -1].reshape(-1, 1),
+                                 src=fg_prob.new_ones(fg_prob.shape[0], 1))
+            fg = batch_dict['points'][mask_fg]  # (N_fg, 10): batch_idx,x,y,z,intense,time,sweep_idx,inst_idx,aug_inst_idx,cls_idx
             fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
             fg_inst_idx = fg.new_zeros(fg.shape[0]).long()
@@ -333,11 +341,10 @@ class PointAligner(nn.Module):
             fg_batch_idx = fg_batch_idx[valid_fg]  # (N_fg_valid,)
             fg_inst_idx = fg_inst_idx[valid_fg]  # (N_fg_valid,)
             fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
-            fg_prob = sigmoid(pred_points_fg)[mask_fg]  # (N_fg_valid, 1)
-            fg_prob = fg_prob[valid_fg]
+            fg_prob = fg_prob[valid_fg]  # (N_fg_valid, n_cls)
 
         with torch.no_grad():
-            fg_sweep_idx = fg[:, -3].long()
+            fg_sweep_idx = fg[:, -4].long()
 
             # merge batch_idx & instance_idx
             fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)

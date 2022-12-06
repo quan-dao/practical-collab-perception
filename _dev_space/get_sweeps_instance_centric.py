@@ -8,6 +8,33 @@ from typing import List
 from nuscenes.prediction import PredictHelper
 
 
+map_name_from_general_to_detection = {
+    'human.pedestrian.adult': 'pedestrian',
+    'human.pedestrian.child': 'pedestrian',
+    'human.pedestrian.wheelchair': 'ignore',
+    'human.pedestrian.stroller': 'ignore',
+    'human.pedestrian.personal_mobility': 'ignore',
+    'human.pedestrian.police_officer': 'pedestrian',
+    'human.pedestrian.construction_worker': 'pedestrian',
+    'animal': 'ignore',
+    'vehicle.car': 'car',
+    'vehicle.motorcycle': 'motorcycle',
+    'vehicle.bicycle': 'bicycle',
+    'vehicle.bus.bendy': 'bus',
+    'vehicle.bus.rigid': 'bus',
+    'vehicle.truck': 'truck',
+    'vehicle.construction': 'construction_vehicle',
+    'vehicle.emergency.ambulance': 'ignore',
+    'vehicle.emergency.police': 'ignore',
+    'vehicle.trailer': 'trailer',
+    'movable_object.barrier': 'barrier',
+    'movable_object.trafficcone': 'traffic_cone',
+    'movable_object.pushable_pullable': 'ignore',
+    'movable_object.debris': 'ignore',
+    'static_object.bicycle_rack': 'ignore',
+}
+
+
 def get_sample_data_point_cloud(nusc: NuScenes, sample_data_token: str, time_lag: float = None, sweep_idx: int = None) \
         -> np.ndarray:
     """
@@ -46,11 +73,12 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                             center_radius=2.0, in_box_tolerance=1e-2,
                             return_instances_last_box=False,
                             pointcloud_range=None,
-                            predict_helper: PredictHelper = None, predict_horizon=3.0, predict_freq=2) -> dict:
+                            predict_helper: PredictHelper = None, predict_horizon=3.0,
+                            detection_classes=('car', 'pedestrian', 'bicycle')) -> dict:
     """
     Returns:
         {
-            'points' (np.ndarray): (N, 7) - x, y, z, intensity, time-lag, sweep_idx, instance_idx
+            'points' (np.ndarray): (N, 9) - x, y, z, intensity, time-lag, sweep_idx, instance_idx, aug_inst_idx, class_idx
             'instances' (list): [[target_from_inst0@-10, ..., target_from_inst0@0]]
             'instances_sweep_indices' (list): [[inst0_sweep_idxFirst, ..., inst0_sweep_idxFinal]]
         }
@@ -68,6 +96,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
     instances = list()  # for each instance, store list of poses
     instances_sweep_indices = list()  # for each instance, store list of sweep index
     instances_size = list()  # for each instance, store its sizes (dx, dy ,dz) == l, w, h
+    instances_name = list()  # for each instance, store its detection name
     inst_tk_2_sample_tk = dict()  # to store the sample_tk where an inst last appears
     all_points = []
 
@@ -79,13 +108,14 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         # map to target
         cur_points[:, :3] = apply_tf(target_from_glob @ glob_from_cur, cur_points[:, :3])  # (N, 6) in target frame
 
-        # pad points with instances index & augmented instance index
-        cur_points = np.pad(cur_points, pad_width=[(0, 0), (0, 2)], constant_values=-1)
+        # pad points with instances index, augmented instance index & class index
+        cur_points = np.pad(cur_points, pad_width=[(0, 0), (0, 3)], constant_values=-1)
 
         boxes = nusc.get_boxes(sd_token)
 
         for b_idx, box in enumerate(boxes):
-            if box.name.split('.')[0] not in ('vehicle'):  # 'human'
+            box_det_name = map_name_from_general_to_detection[box.name]
+            if box_det_name not in detection_classes:
                 continue
 
             anno_rec = nusc.get('sample_annotation', box.token)
@@ -107,6 +137,8 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 instances_sweep_indices.append([s_idx])
                 # store size
                 instances_size.append([box.wlh[1], box.wlh[0], box.wlh[2]])
+                # store name
+                instances_name.append(box_det_name)
             else:
                 cur_instance_idx = inst_token_2_index[inst_token]
                 instances[cur_instance_idx].append(target_from_box)
@@ -117,7 +149,9 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
             # set points' instance index
             mask_in = find_points_in_box(cur_points, target_from_box, np.array([box.wlh[1], box.wlh[0], box.wlh[2]]),
                                          in_box_tolerance)
-            cur_points[mask_in, -2] = inst_token_2_index[inst_token]
+            cur_points[mask_in, -3] = inst_token_2_index[inst_token]
+            # set points' class index
+            cur_points[mask_in, -1] = detection_classes.index(box_det_name)
 
             if np.any(mask_in):
                 # this box has some points
@@ -128,7 +162,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 large_mask_in = find_points_in_box(cur_points, target_from_box,
                                                    np.array([box.wlh[1], box.wlh[0], box.wlh[2]]), noise_factor)
                 # set aug inst index
-                cur_points[large_mask_in, -1] = inst_token_2_index[inst_token]
+                cur_points[large_mask_in, -2] = inst_token_2_index[inst_token]
 
                 # --
                 # Drop points in box to simulate False Negative foreground
@@ -147,7 +181,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                     mask_keep_points[drop_indices[:num_to_switch]] = 1
 
                 # drop points by setting their aug inst idx to -1
-                cur_points[points_in_box_indices[mask_keep_points == 0], -1] = -1
+                cur_points[points_in_box_indices[mask_keep_points == 0], -2] = -1
 
         all_points.append(cur_points)
 
@@ -164,8 +198,6 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
     out = {
         'points': all_points,
         'instances_tf': instances_tf,
-        # 'instances': instances,
-        # 'instances_sweep_indices': instances_sweep_indices
     }
 
     if return_instances_last_box:
@@ -189,6 +221,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
             instances_last_box[_idx, 6] = yaw
             instances_last_box[_idx, 9] = _idx
         out['instances_last_box'] = instances_last_box
+        out['instances_name'] = np.array(instances_name)
 
     if predict_helper is not None:
         # return instance's future position as well

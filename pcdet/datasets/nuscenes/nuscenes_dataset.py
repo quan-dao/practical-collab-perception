@@ -30,22 +30,6 @@ class NuScenesDataset(DatasetTemplate):
             self.infos = self.infos[::4]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
-
-        self.detection_name_to_meta_cls = {
-            'pedestrian': 'ignore',
-            'car': 'car',
-            'motorcycle': 'car',
-            'bicycle': 'car',
-            'bus': 'car',
-            'truck': 'car',
-            'construction_vehicle': 'car',
-            'trailer': 'car',
-            'barrier': 'ignore',
-            'traffic_cone': 'ignore',
-            'ignore': 'ignore',
-        }
-
-        # for prediction task
         self.predict_helper = PredictHelper(self.nusc)
 
     def include_nuscenes_data(self, mode):
@@ -154,7 +138,8 @@ class NuScenesDataset(DatasetTemplate):
 
         _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
                                        pointcloud_range=self.point_cloud_range,
-                                       predict_helper=self.predict_helper)
+                                       predict_helper=self.predict_helper,
+                                       detection_classes=self.class_names)
         points = _out['points']  # (N, C)
 
         if self.dataset_cfg.DROP_BACKGROUND.ENABLE:
@@ -185,7 +170,7 @@ class NuScenesDataset(DatasetTemplate):
         # overwrite gt_boxes & gt_names
         input_dict.update({
             'gt_boxes': _out['instances_last_box'],
-            'gt_names': np.tile(['car'], _out['instances_last_box'].shape[0])
+            'gt_names': _out['instances_name']
         })
 
         # ------
@@ -237,8 +222,7 @@ class NuScenesDataset(DatasetTemplate):
             return 'No ground-truth annotations for evaluation', {}
 
         from nuscenes.eval.detection.config import config_factory
-        # from nuscenes.eval.detection.evaluate import NuScenesEval
-        from _dev_space.new_nuscenes_eval.my_nuscenes_eval import MyNuScenesEval as NuScenesEval
+        from nuscenes.eval.detection.evaluate import NuScenesEval
 
         eval_set_map = {
             'v1.0-mini': 'mini_val',
