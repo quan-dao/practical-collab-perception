@@ -178,8 +178,10 @@ class PointAligner(nn.Module):
         # ----
         backbone_out_c = self.backbone2d.n_output_feat
         stage_cfg = cfg.ALIGNER_1ST_STAGE
+        self.num_sweeps = stage_cfg.NUM_SWEEPS
         self.is_real_inference = stage_cfg.REAL_INFERENCE
         self.num_det_classes = 1 + num_det_classes  # add 1 to represent the background class
+        self.debug = stage_cfg.get('DEBUG', False)
         # point heads
         self.point_fg_seg = self._make_mlp(backbone_out_c, self.num_det_classes, stage_cfg.get('HEAD_MID_CHANNELS', None))
         self.point_inst_assoc = self._make_mlp(backbone_out_c, 2, stage_cfg.get('HEAD_MID_CHANNELS', None))
@@ -297,7 +299,7 @@ class PointAligner(nn.Module):
         if self.training or not self.is_real_inference:
             # Training 1st stage or Freeze 1st stage to train 2nd stage
             # ==> use AUGMENTED instance index
-            mask_fg = batch_dict['points'][:, -2].long() > -1
+            mask_fg = batch_dict['points'][:, -2].long() > -1 if not self.debug else batch_dict['points'][:, -3].long() > -1
             fg = batch_dict['points'][mask_fg]  # (N_fg, 10): batch_idx,x,y,z,intense,time,sweep_idx,inst_idx,aug_inst_idx,cls_idx
             fg_inst_idx = fg[:, -2].long()  # (N_fg,)
             max_num_inst = batch_dict['instances_tf'].shape[1]  # batch_dict['instances_tf']: (batch_size, max_n_inst, n_sweeps, 3, 4)
@@ -354,7 +356,7 @@ class PointAligner(nn.Module):
             fg_bi_idx = fg_batch_idx * max_num_inst + fg_inst_idx  # (N,)
 
             # merge batch_idx, instance_idx & sweep_idx
-            fg_bisw_idx = fg_bi_idx * self.cfg.NUM_SWEEPS + fg_sweep_idx
+            fg_bisw_idx = fg_bi_idx * self.num_sweeps + fg_sweep_idx
 
             # --
             # group foreground points to instance
@@ -416,7 +418,7 @@ class PointAligner(nn.Module):
             # get the max sweep_index of each instance
             inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)
             # get bisw_index of each instance's max sweep
-            inst_target_bisw_idx = inst_bi * self.cfg.NUM_SWEEPS + inst_max_sweep_idx  # (N_inst,)
+            inst_target_bisw_idx = inst_bi * self.num_sweeps + inst_max_sweep_idx  # (N_inst,)
 
             # for each value in inst_target_bisw_idx find WHERE (i.e., index) it appear in local_bisw
             corr = local_bisw[:, None] == inst_target_bisw_idx[None, :]  # (N_local, N_inst)
@@ -441,7 +443,7 @@ class PointAligner(nn.Module):
         # ------------
         with torch.no_grad():
             # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
-            local_bi = local_bisw // self.cfg.NUM_SWEEPS
+            local_bi = local_bisw // self.num_sweeps
             # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
             local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
             num_locals_in_instances = torch.sum(local_bi_in_inst_bi.float(), dim=1)  # (N_inst,)
@@ -481,10 +483,15 @@ class PointAligner(nn.Module):
         }
         batch_dict['input_2nd_stage'].update(self.forward_return_dict['input_2nd_stage'])
 
-        if not self.training and self.cfg.get('DEBUG', False):
-            batch_dict['input_2nd_stage'].update({
-                'fg_motion_mask': self.correct_point_cloud(fg),  # fg is mutated in this function
-                'fg': fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+        if self.debug:
+            corrected_fg, fg_motion_mask = self.correct_point_cloud(
+                fg,
+                self.forward_return_dict['target_dict']['inst_motion_stat'].long(),
+                self.forward_return_dict['target_dict']['local_tf']
+            )
+            batch_dict.update({
+                'fg_motion_mask': fg_motion_mask,  # (N_fg,)
+                'corrected_fg': corrected_fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
                 'fg_inst_idx': fg_inst_idx,  # (N_fg,)
                 'bg': batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
             })
@@ -530,7 +537,15 @@ class PointAligner(nn.Module):
         # --------------
         inst_bi = self.forward_return_dict['meta']['inst_bi']
         # target motion
-        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.cfg.ALIGNER_1ST_STAGE.THRESH_MOTION
+        ones = instances_tf.new_zeros(1, 4)
+        ones[0, -1] = 1.0
+        eyes = instances_tf.new_zeros(4, 4)
+        eyes[range(4), range(4)] = 1.0
+        inst_1st_tf = torch.cat([
+            instances_tf[:, :, 0], ones.reshape(1, 1, 1, 4).repeat(instances_tf.shape[0], instances_tf.shape[1], 1, 1)
+        ], dim=-2)  # (B, N_inst_max, 4, 4)
+        inst_motion_stat = torch.linalg.norm(inst_1st_tf - eyes.reshape(1, 1, 4, 4),
+                                             ord='fro', dim=(2, 3)) > self.cfg.ALIGNER_1ST_STAGE.THRESH_MOTION
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
         inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
 
@@ -809,26 +824,26 @@ class PointAligner(nn.Module):
             })
         return out
 
-    def correct_point_cloud(self, fg_: torch.Tensor):
+    def correct_point_cloud(self, fg: torch.Tensor, inst_motion_prob: torch.Tensor, local_tf):
         """
         Args:
-            fg_: (N_fg, 7[+3]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx, cls_idx]
+            fg: (N_fg, 7[+3]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx, cls_idx]
+            inst_motion_prob: (N_inst,) activated motion probability
+            local_tf: (N_local, 3, 4) - local rotation | local translation
+        Return:
+            corrected_fg: (N_fg, 7[+3]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx, cls_idx]
+            fg_motion_mask: (N_fg,) - True for foreground points of moving instance
         """
-        pred_dict = self.forward_return_dict['pred_dict']
+        fg_ = torch.clone(fg)  # to prevent this function from mutating foreground
 
         # get motion mask of foreground to find dynamic foreground
-        inst_motion_stat = sigmoid(pred_dict['inst_motion_stat'][:, 0]) > 0.5  # TODO: use this for motion pred
+        inst_motion_mask = inst_motion_prob > 0.5
         inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']  # (N_fg)
-        fg_motion_mask = inst_motion_stat[inst_bi_inv_indices] == 1  # (N_fg)
+        fg_motion_mask = inst_motion_mask[inst_bi_inv_indices] == 1  # (N_fg)
 
         if torch.any(fg_motion_mask):
             # only perform correction if there are some dynamic foreground points
             dyn_fg = fg_[fg_motion_mask, 1: 4]  # (N_dyn, 3)
-
-            local_tf = torch.cat([
-                pred_dict['local_rot'],
-                rearrange(pred_dict['local_transl'], 'N_local C -> N_local C 1', C=3)
-            ], dim=-1)  # (N_local, 3, 4)
 
             # pair local_tf to foreground
             fg_tf = local_tf[self.forward_return_dict['meta']['local_bisw_inv_indices']]  # (N_fg, 3, 4)
@@ -842,7 +857,7 @@ class PointAligner(nn.Module):
             # overwrite coordinate of dynamic foreground with dyn_fg (computed above)
             fg_[fg_motion_mask, 1: 4] = dyn_fg
 
-        return fg_motion_mask
+        return fg_, fg_motion_mask
 
 
 def sigmoid(x):

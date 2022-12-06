@@ -9,7 +9,7 @@ import logging
 class Aligner(Detector3DTemplate):
     def __init__(self, model_cfg, num_class, dataset):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
-        self.aligner = PointAligner(model_cfg)
+        self.aligner = PointAligner(model_cfg, num_class)
         self.freeze_1st_stage = model_cfg.ALIGNER_1ST_STAGE.FREEZE_WEIGHTS
         self.debug = self.model_cfg.get('DEBUG', False)
 
