@@ -99,9 +99,10 @@ MODEL:
 
         FREEZE_WEIGHTS: True
         REAL_INFERENCE: False
-        DEBUG: True
+        DEBUG: False
 
     ALIGNER_HEAD:
+        ENABLE: False
         ATTENTION_STACK:
             EMBED_DIM: 4
             LOCAL_NUM_HEADS: 2

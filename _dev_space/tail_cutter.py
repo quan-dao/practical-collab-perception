@@ -627,7 +627,7 @@ class PointAligner(nn.Module):
         inst_assoc = pred_dict['inst_assoc']  # (N, 2)
         if num_gt_fg > 0:
             inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
-            loss_inst_assoc = self.l2_loss(inst_assoc[fg_target == 1], inst_assoc_target, dim=1, reduction='mean')
+            loss_inst_assoc = self.l2_loss(inst_assoc[fg_target > 0], inst_assoc_target, dim=1, reduction='mean')
         else:
             loss_inst_assoc = self.l2_loss(inst_assoc, torch.clone(inst_assoc).detach(), dim=1, reduction='mean')
         tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
@@ -751,9 +751,9 @@ class PointAligner(nn.Module):
         with torch.no_grad():
             detached_fg_logit = fg_logit.detach()  # (N, n_cls)
             tb_dict['fg_P'] = precision(detached_fg_logit, fg_target, task='multiclass',
-                                        num_classes=self.num_det_classes).item()
+                                        num_classes=self.num_det_classes, top_k=1).item()
             tb_dict['fg_R'] = recall(detached_fg_logit, fg_target, task='multiclass',
-                                     num_classes=self.num_det_classes).item()
+                                     num_classes=self.num_det_classes, top_k=1).item()
 
             detached_inst_mos = rearrange(inst_mos_logit.detach(), 'N_inst 1 -> N_inst')
             tb_dict['mos_P'] = precision(detached_inst_mos, inst_mos_target, task='binary').item()

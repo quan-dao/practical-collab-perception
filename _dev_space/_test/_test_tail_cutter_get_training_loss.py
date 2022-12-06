@@ -36,7 +36,7 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
     if show_raw_data:
         show_points_in_batch_dict(batch_dict, batch_idx=1)
 
-    model = PointAligner(cfg.MODEL)
+    model = PointAligner(cfg.MODEL, num_det_classes=len(cfg.CLASS_NAMES))
     print('---\n', model, '\n---\n')
     if test_pred_is_gt:
         assert not test_full
@@ -125,7 +125,7 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
 
         load_dict_to_gpu(batch_dict)
         batch_dict = model(batch_dict)
-        loss, tb_dict = model.get_training_loss(batch_dict, debug=False)
+        loss, tb_dict = model.get_training_loss(batch_dict)
 
         print('loss = ', loss)
         print_dict(tb_dict)
@@ -164,8 +164,8 @@ def main(show_raw_data=False, test_pred_is_gt=False, show_correction_result=Fals
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--show_raw_data', action='store_true', default=False)
-    parser.add_argument('--test_pred_is_gt', action='store_true', default=False)
+    # parser.add_argument('--test_pred_is_gt', action='store_true', default=False)
     parser.add_argument('--show_correction_result', action='store_true', default=False)
     parser.add_argument('--test_full', action='store_true', default=False)
     args = parser.parse_args()
-    main(args.show_raw_data, args.test_pred_is_gt, args.show_correction_result, args.test_full)
+    main(args.show_raw_data, False, args.show_correction_result, args.test_full)

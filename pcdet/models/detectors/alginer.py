@@ -14,12 +14,13 @@ class Aligner(Detector3DTemplate):
         self.debug = self.model_cfg.get('DEBUG', False)
 
         if self.freeze_1st_stage:
+            assert model_cfg.ALIGNER_HEAD.ENABLE
             self.aligner.eval()
             for param in self.aligner.parameters():
                 param.requires_grad = False
 
         self.head = AlignerHead(model_cfg.ALIGNER_2ND_STAGE, self.aligner.num_instance_features,
-                                model_cfg.ALIGNER_1ST_STAGE.NUM_SWEEPS)
+                                model_cfg.ALIGNER_1ST_STAGE.NUM_SWEEPS) if model_cfg.ALIGNER_HEAD.ENABLE else None
 
     def forward(self, batch_dict):
         if self.freeze_1st_stage:
@@ -29,17 +30,21 @@ class Aligner(Detector3DTemplate):
         else:
             batch_dict = self.aligner(batch_dict)
 
-        batch_dict = self.head(batch_dict)
+        if self.head is not None:
+            batch_dict = self.head(batch_dict)
 
         if self.training:
             tb_dict = dict()
             if not self.freeze_1st_stage:
                 loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict)
 
-            loss_head, tb_dict = self.head.get_training_loss(tb_dict)
+            if self.head is not None:
+                loss_head, tb_dict = self.head.get_training_loss(tb_dict)
 
             if not self.freeze_1st_stage:
-                loss = loss_aligner + loss_head
+                loss = loss_aligner
+                if self.head is not None:
+                    loss = loss + loss_head
             else:
                 loss = loss_head
 
