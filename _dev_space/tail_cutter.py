@@ -396,21 +396,15 @@ class PointAligner(nn.Module):
 
         # ------------
         # prepare input for prediction @ the 2nd stage
-        self.forward_return_dict['input_2nd_stage'] = {
-            # 'foreground': {
-            #     'fg': fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-            #     'fg_feat': fg_feat.detach(),  # (N_fg, C_bev)
-            #     'fg_prob': rearrange(fg_prob.detach(), 'N_fg 1 -> N_fg'),
-            #     'fg_inst_idx': fg_inst_idx,  # (N_fg,)
-            # },
-            'local': {
-                'features': local_shape_enc.detach(),  # (N_local, C_inst)
-            },
-            'global': {
-                'features': inst_global_feat.detach(),  # (N_inst, C_inst)
-                'motion_stat': sigmoid(rearrange(pred_inst_motion_stat.detach(), 'N_inst 1 -> N_inst')),
-            }
-        }
+        # self.forward_return_dict['input_2nd_stage'] = {
+        #     'local': {
+        #         'features': local_shape_enc.detach(),  # (N_local, C_inst)
+        #     },
+        #     'global': {
+        #         'features': inst_global_feat.detach(),  # (N_inst, C_inst)
+        #         'motion_stat': sigmoid(rearrange(pred_inst_motion_stat.detach(), 'N_inst 1 -> N_inst')),
+        #     }
+        # }
 
         # ------------
         # compute instance shape encoding of the local @ target timestep (i.e. local having the largest sweep idx)
@@ -472,29 +466,29 @@ class PointAligner(nn.Module):
 
         # -------------------------
         # prepare input for the 2nd stage
-        self.forward_return_dict['input_2nd_stage']['local'].update({
-            'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
-            'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
-        })
-        self.forward_return_dict['input_2nd_stage']['pred_boxes'] = self.decode_proposals(proposals.detach())  # (N_inst, 7)
-
-        batch_dict['input_2nd_stage'] = {
-            'meta': self.forward_return_dict['meta']
-        }
-        batch_dict['input_2nd_stage'].update(self.forward_return_dict['input_2nd_stage'])
-
-        if self.debug:
-            corrected_fg, fg_motion_mask = self.correct_point_cloud(
-                fg,
-                self.forward_return_dict['target_dict']['inst_motion_stat'].long(),
-                self.forward_return_dict['target_dict']['local_tf']
-            )
-            batch_dict.update({
-                'fg_motion_mask': fg_motion_mask,  # (N_fg,)
-                'corrected_fg': corrected_fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-                'fg_inst_idx': fg_inst_idx,  # (N_fg,)
-                'bg': batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
-            })
+        # self.forward_return_dict['input_2nd_stage']['local'].update({
+        #     'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
+        #     'local_rot': pred_dict['local_rot'].detach()  # (N_local, 3, 3)
+        # })
+        # self.forward_return_dict['input_2nd_stage']['pred_boxes'] = self.decode_proposals(proposals.detach())  # (N_inst, 7)
+        #
+        # batch_dict['input_2nd_stage'] = {
+        #     'meta': self.forward_return_dict['meta']
+        # }
+        # batch_dict['input_2nd_stage'].update(self.forward_return_dict['input_2nd_stage'])
+        #
+        # if self.debug:
+        #     corrected_fg, fg_motion_mask = self.correct_point_cloud(
+        #         fg,
+        #         self.forward_return_dict['target_dict']['inst_motion_stat'].long(),
+        #         self.forward_return_dict['target_dict']['local_tf']
+        #     )
+        #     batch_dict.update({
+        #         'fg_motion_mask': fg_motion_mask,  # (N_fg,)
+        #         'corrected_fg': corrected_fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+        #         'fg_inst_idx': fg_inst_idx,  # (N_fg,)
+        #         'bg': batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
+        #     })
 
         return batch_dict
 
