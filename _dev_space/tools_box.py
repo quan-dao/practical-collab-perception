@@ -401,3 +401,10 @@ def compute_bev_coord_torch(points: torch.Tensor, pc_range: torch.Tensor, pix_si
     else:
         feat_unq_pts_2d = None
     return unq_pts_2d, feat_unq_pts_2d
+
+
+def get_nuscenes_sample_location(nusc: NuScenes, sample_token: str) -> str:
+    sample_rec = nusc.get('sample', sample_token)
+    scene_rec = nusc.get('scene', sample_rec['scene_token'])
+    log_rec= nusc.get('log', scene_rec['log_token'])
+    return log_rec['location']

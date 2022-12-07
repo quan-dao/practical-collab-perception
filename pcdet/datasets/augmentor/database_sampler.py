@@ -3,6 +3,7 @@ import pickle
 import os
 import copy
 import numpy as np
+import numpy.linalg as LA
 from skimage import io
 import torch
 import SharedArray
@@ -11,6 +12,7 @@ import torch.distributed as dist
 from ...ops.iou3d_nms import iou3d_nms_utils
 from ...utils import box_utils, common_utils, calibration_kitti
 from pcdet.datasets.kitti.kitti_object_eval_python import kitti_common
+
 
 class DataBaseSampler(object):
     def __init__(self, root_path, sampler_cfg, class_names, logger=None):
@@ -127,11 +129,12 @@ class DataBaseSampler(object):
 
         return db_infos
 
-    def sample_with_fixed_number(self, class_name, sample_group):
+    def sample_with_fixed_number(self, class_name: str, sample_group: dict, current_location: str) -> list:
         """
         Args:
             class_name:
             sample_group:
+            current_location
         Returns:
 
         """
@@ -140,8 +143,17 @@ class DataBaseSampler(object):
             indices = np.random.permutation(len(self.db_infos[class_name]))
             pointer = 0
 
-        sampled_dict = [self.db_infos[class_name][idx] for idx in indices[pointer: pointer + sample_num]]
-        pointer += sample_num
+        sampled_dict = []
+        while len(sampled_dict) < sample_num:
+            if pointer >= len(self.db_infos[class_name]):
+                pointer = 0
+
+            obj_dict = self.db_infos[class_name][pointer]
+            if obj_dict['location'] == current_location:
+                sampled_dict.append(obj_dict)
+
+            pointer += 1
+
         sample_group['pointer'] = pointer
         sample_group['indices'] = indices
         return sampled_dict
@@ -362,11 +374,17 @@ class DataBaseSampler(object):
             raise NotImplementedError
         return data_dict
 
-    def add_sampled_boxes_to_scene(self, data_dict, sampled_gt_boxes, total_valid_sampled_dict, mv_height=None, sampled_gt_boxes2d=None):
-        gt_boxes_mask = data_dict['gt_boxes_mask']
-        gt_boxes = data_dict['gt_boxes'][gt_boxes_mask]
-        gt_names = data_dict['gt_names'][gt_boxes_mask]
-        points = data_dict['points']
+    def add_sampled_boxes_to_scene(self, data_dict, sampled_gt_boxes, total_valid_sampled_dict,
+                                   mv_height=None, sampled_gt_boxes2d=None):
+        gt_boxes = data_dict['gt_boxes']  # (N_inst, 10) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, inst_index
+        gt_names = data_dict['gt_names']  # (N_inst,)
+        points = data_dict['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
+        num_point_features = points.shape[1]
+
+        meta_data = data_dict['metadata']
+        num_original_instances = meta_data['num_original_instances']
+        tf_current_from_glob = LA.inv(meta_data['tf_glob_from_lidar'])  # (4, 4)
+
         if self.sampler_cfg.get('USE_ROAD_PLANE', False) and mv_height is None:
             sampled_gt_boxes, mv_height = self.put_boxes_on_road_planes(
                 sampled_gt_boxes, data_dict['road_plane'], data_dict['calib']
@@ -375,9 +393,8 @@ class DataBaseSampler(object):
             data_dict.pop('road_plane')
 
         obj_points_list = []
-
-        # convert sampled 3D boxes to image plane
-        img_aug_gt_dict = self.initilize_image_aug_dict(data_dict, gt_boxes_mask)
+        instances_tf_list = list()
+        sampled_boxes_list = []
 
         if self.use_shared_memory:
             gt_database_data = SharedArray.attach(f"shm://{self.gt_database_data_key}")
@@ -391,14 +408,34 @@ class DataBaseSampler(object):
                 obj_points = copy.deepcopy(gt_database_data[start_offset:end_offset])
             else:
                 file_path = self.root_path / info['path']
-
-                obj_points = np.fromfile(str(file_path), dtype=np.float32).reshape(
-                    [-1, self.sampler_cfg.NUM_POINT_FEATURES])
+                obj_points = np.fromfile(str(file_path), dtype=np.float32).reshape(-1, num_point_features)
                 if obj_points.shape[0] != info['num_points_in_gt']:
-                    obj_points = np.fromfile(str(file_path), dtype=np.float64).reshape(-1, self.sampler_cfg.NUM_POINT_FEATURES)
+                    obj_points = np.fromfile(str(file_path), dtype=np.float64).reshape(-1, num_point_features)
 
             assert obj_points.shape[0] == info['num_points_in_gt']
             obj_points[:, :3] += info['box3d_lidar'][:3].astype(np.float32)
+
+            # update obj_points instance_idx
+            obj_points[:, -3] +=  num_original_instances
+
+            # update obj_points' aug_inst_idx
+            mask_fg = obj_points[:, -2].astype(int) > -1
+            obj_points[mask_fg, -2] += num_original_instances
+
+            # update sampled instance's tf
+            tf_glob_from_sampled = info['tf_glob_from_lidar']  # (4, 4)
+            tf_current_from_sampled = tf_current_from_glob @ tf_glob_from_sampled
+            inst_tf = info['instance_tf']  # (max_sweeps, 4, 4)
+            # transform inst_tf from sampled's LiDAR to current's LiDAR
+            inst_tf = np.einsum('ij, bjk, kh -> bih', tf_current_from_sampled, inst_tf, LA.inv(tf_current_from_sampled))
+            # zero-out padded tf
+            real_max_sweep_idx = np.max(obj_points[:, -4].astype(int))
+            inst_tf[real_max_sweep_idx:] *= 0.0
+
+            # get sampled gt box & update its instance index
+            sampled_box = info['box3d_lidar']   # (10,)
+            sampled_box[:, -1] += num_original_instances
+
 
             if self.sampler_cfg.get('USE_ROAD_PLANE', False):
                 # mv height
@@ -409,16 +446,14 @@ class DataBaseSampler(object):
                     img_aug_gt_dict, info, data_dict, obj_points, sampled_gt_boxes, sampled_gt_boxes2d, idx
                 )
 
-            # ---
-            # for foreground segementation & compute of correction vector
-            # ---
-            if self.sampler_cfg.get('PAD_WITH_OFFSET_INDICATOR', False):
-                obj_points = np.pad(obj_points, [(0, 0), (0, 3)], constant_values=0)
-                obj_points[:, -1] = data_dict['metadata']['n_original_instances'] + idx
-
+            # store sampling result
             obj_points_list.append(obj_points)
+            instances_tf_list.append(inst_tf)
+            sampled_boxes_list.append(sampled_box)
 
         obj_points = np.concatenate(obj_points_list, axis=0)
+        sampled_instances_tf = np.stack(instances_tf_list, axis=0)  # (N_sampled_inst, max_sweeps, 4, 4)
+        sampled_boxes = np.stack(sampled_boxes_list, axis=0)  # (N_sampled_inst, 10)
 
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
 
@@ -434,16 +469,21 @@ class DataBaseSampler(object):
             time_mask = np.logical_and(obj_points[:, -1] < max_time + 1e-6, obj_points[:, -1] > min_time - 1e-6)
             obj_points = obj_points[time_mask]
 
-        large_sampled_gt_boxes = box_utils.enlarge_box3d(
-            sampled_gt_boxes[:, 0:7], extra_width=self.sampler_cfg.REMOVE_EXTRA_WIDTH
-        )
-        points = box_utils.remove_points_in_boxes3d(points, large_sampled_gt_boxes)
-        points = np.concatenate([obj_points[:, :points.shape[-1]], points], axis=0)
-        gt_names = np.concatenate([gt_names, sampled_gt_names], axis=0)
-        gt_boxes = np.concatenate([gt_boxes, sampled_gt_boxes], axis=0)
+        # remove background points in sampled_gt_boxes
+        # large_sampled_gt_boxes = box_utils.enlarge_box3d(
+        #     sampled_gt_boxes[:, 0:7], extra_width=self.sampler_cfg.REMOVE_EXTRA_WIDTH
+        # )
+        # points = box_utils.remove_points_in_boxes3d(points, large_sampled_gt_boxes)
+
+        points = np.concatenate([points, obj_points], axis=0)
+        gt_names = np.concatenate([gt_names, sampled_gt_names], axis=0)  # (N_total_inst,)
+        gt_boxes = np.concatenate([gt_boxes, sampled_boxes], axis=0)  # (N_total_inst, 10)
+        instances_tf = np.concatenate([data_dict['instance_tf'], sampled_instances_tf],
+                                      axis=0)  # (N_total_inst, max_sweeps, 4, 4)
         data_dict['gt_boxes'] = gt_boxes
         data_dict['gt_names'] = gt_names
         data_dict['points'] = points
+        data_dict['instance_tf'] = instances_tf  # (N_total_inst, max_sweeps, 4, 4)
 
         if self.img_aug_type is not None:
             data_dict = self.copy_paste_to_image(img_aug_gt_dict, data_dict, points)
@@ -459,6 +499,7 @@ class DataBaseSampler(object):
         Returns:
 
         """
+        meta_data = data_dict['metadata']
         gt_boxes = data_dict['gt_boxes']
         gt_names = data_dict['gt_names'].astype(str)
         existed_boxes = gt_boxes
@@ -470,8 +511,9 @@ class DataBaseSampler(object):
             if self.limit_whole_scene:
                 num_gt = np.sum(class_name == gt_names)
                 sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
+
             if int(sample_group['sample_num']) > 0:
-                sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
+                sampled_dict = self.sample_with_fixed_number(class_name, sample_group, meta_data['location'])
 
                 sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
 
@@ -496,14 +538,14 @@ class DataBaseSampler(object):
                 existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes[:, :existed_boxes.shape[-1]]), axis=0)
                 total_valid_sampled_dict.extend(valid_sampled_dict)
 
-        sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]
+        # sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]  # not sure gt_boxes & instance_tf correspondance
 
         if total_valid_sampled_dict.__len__() > 0:
             sampled_gt_boxes2d = np.concatenate(sampled_gt_boxes2d, axis=0) if len(sampled_gt_boxes2d) > 0 else None
             sampled_mv_height = np.concatenate(sampled_mv_height, axis=0) if len(sampled_mv_height) > 0 else None
 
             data_dict = self.add_sampled_boxes_to_scene(
-                data_dict, sampled_gt_boxes, total_valid_sampled_dict, sampled_mv_height, sampled_gt_boxes2d
+                data_dict, None, total_valid_sampled_dict, sampled_mv_height, sampled_gt_boxes2d
             )
 
         data_dict.pop('gt_boxes_mask')

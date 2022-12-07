@@ -10,6 +10,7 @@ from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
 from _dev_space.get_sweeps_instance_centric import inst_centric_get_sweeps
+from _dev_space.tools_box import get_nuscenes_sensor_pose_in_global, get_nuscenes_sample_location
 from nuscenes import NuScenes
 from nuscenes.prediction import PredictHelper
 
@@ -138,7 +139,6 @@ class NuScenesDataset(DatasetTemplate):
 
         _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
                                        pointcloud_range=self.point_cloud_range,
-                                       predict_helper=self.predict_helper,
                                        detection_classes=self.class_names)
         points = _out['points']  # (N, C)
 
@@ -158,13 +158,21 @@ class NuScenesDataset(DatasetTemplate):
             # concatenate kept closed_bg & points that are not closed_bg
             points = np.concatenate((closed_bg, points[np.logical_not(mask_closed_bg)]), axis=0)
 
+        sample_rec = self.nusc.get('sample', info['token'])
+        lidar_token = sample_rec['data']['LIDAR_TOP']
+        tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
+
         input_dict = {
             'points': points,
             'instances_tf': _out['instances_tf'],
             'frame_id': Path(info['lidar_path']).stem,
-            'metadata': {'token': info['token'], 'num_sweeps': num_sweeps,
-                         'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)},
-            'instances_waypoints': _out['instance_future_waypoints']
+            'metadata': {
+                'token': info['token'],
+                'num_original_instances': _out['instances_tf'].shape[0],
+                'num_sweeps': num_sweeps, 'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS),
+                'location': get_nuscenes_sample_location(self.nusc, info['token']),
+                'tf_glob_from_lidar': tf_glob_from_lidar,  # (4, 4)
+            }
         }
 
         # overwrite gt_boxes & gt_names
@@ -264,19 +272,28 @@ class NuScenesDataset(DatasetTemplate):
         for idx in tqdm(range(len(self.infos))):
             sample_idx = idx
             info = self.infos[idx]
-            points = self.get_lidar_with_sweeps(idx, max_sweeps=max_sweeps)
-            gt_boxes = info['gt_boxes']
-            gt_names = info['gt_names']
+            _out = inst_centric_get_sweeps(self.nusc, info['token'], max_sweeps, return_instances_last_box=True,
+                                           pointcloud_range=self.point_cloud_range,
+                                           detection_classes=self.class_names)
 
-            box_idxs_of_pts = roiaware_pool3d_utils.points_in_boxes_gpu(
-                torch.from_numpy(points[:, 0:3]).unsqueeze(dim=0).float().cuda(),
-                torch.from_numpy(gt_boxes[:, 0:7]).unsqueeze(dim=0).float().cuda()
-            ).long().squeeze(dim=0).cpu().numpy()
+            points = _out['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
+            points_inst_idx = points[:, -3].astype(int)
+
+            gt_boxes = _out['instances_last_box']  # (N_inst, 10) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, inst_index
+            gt_names = _out['instances_name']
+            instances_tf = _out['instances_tf']  # (N_inst, max_sweeps, 4, 4)
+
+            # nuscenes stuff
+            sample_rec = self.nusc.get('sample', info['token'])
+            lidar_token = sample_rec['data']['LIDAR_TOP']
+            tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
+            sample_location = get_nuscenes_sample_location(self.nusc, info['token'])
 
             for i in range(gt_boxes.shape[0]):
                 filename = '%s_%s_%d.bin' % (sample_idx, gt_names[i], i)
                 filepath = database_save_path / filename
-                gt_points = points[box_idxs_of_pts == i]
+                current_instance_idx = gt_boxes[i, -1].astype(int)
+                gt_points = points[points_inst_idx == current_instance_idx]
 
                 gt_points[:, :3] -= gt_boxes[i, :3]
                 with open(filepath, 'w') as f:
@@ -284,8 +301,14 @@ class NuScenesDataset(DatasetTemplate):
 
                 if (used_classes is None) or gt_names[i] in used_classes:
                     db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
-                    db_info = {'name': gt_names[i], 'path': db_path, 'image_idx': sample_idx, 'gt_idx': i,
-                               'box3d_lidar': gt_boxes[i], 'num_points_in_gt': gt_points.shape[0]}
+                    db_info = {
+                        'name': gt_names[i], 'path': db_path, 'image_idx': sample_idx, 'gt_idx': i,
+                        'box3d_lidar': gt_boxes[i], 'num_points_in_gt': gt_points.shape[0],
+                        'instance_idx': current_instance_idx,
+                        'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)
+                        'location': sample_location,
+                        'tf_glob_from_lidar': tf_glob_from_lidar,
+                    }
                     if gt_names[i] in all_db_infos:
                         all_db_infos[gt_names[i]].append(db_info)
                     else:
