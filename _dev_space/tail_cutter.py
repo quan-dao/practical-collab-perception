@@ -746,17 +746,6 @@ class PointAligner(nn.Module):
         loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon + loss_prop
         tb_dict['loss'] = loss.item()
 
-        # eval foregound seg, motion seg during training
-        with torch.no_grad():
-            detached_fg_logit = fg_logit.detach()  # (N, n_cls)
-            tb_dict['fg_P'] = precision(detached_fg_logit, fg_target, task='multiclass',
-                                        num_classes=self.num_det_classes, top_k=1).item()
-            tb_dict['fg_R'] = recall(detached_fg_logit, fg_target, task='multiclass',
-                                     num_classes=self.num_det_classes, top_k=1).item()
-
-            detached_inst_mos = rearrange(inst_mos_logit.detach(), 'N_inst 1 -> N_inst')
-            tb_dict['mos_P'] = precision(detached_inst_mos, inst_mos_target, task='binary').item()
-            tb_dict['mos_R'] = recall(detached_inst_mos, inst_mos_target, task='binary').item()
         out = [loss, tb_dict]
         return out
 
