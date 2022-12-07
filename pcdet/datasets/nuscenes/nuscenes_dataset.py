@@ -32,6 +32,7 @@ class NuScenesDataset(DatasetTemplate):
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.predict_helper = PredictHelper(self.nusc)
+        self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -199,8 +200,8 @@ class NuScenesDataset(DatasetTemplate):
             gt_boxes[np.isnan(gt_boxes)] = 0
             data_dict['gt_boxes'] = gt_boxes
 
-        if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
-            data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
+        # if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
+        #     data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
 
         return data_dict
 
@@ -269,12 +270,14 @@ class NuScenesDataset(DatasetTemplate):
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
 
+        detection_classes = ['car', 'bicycle', 'pedestrian']
+
         for idx in tqdm(range(len(self.infos))):
             sample_idx = idx
             info = self.infos[idx]
             _out = inst_centric_get_sweeps(self.nusc, info['token'], max_sweeps, return_instances_last_box=True,
                                            pointcloud_range=self.point_cloud_range,
-                                           detection_classes=self.class_names)
+                                           detection_classes=detection_classes)
 
             points = _out['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
             points_inst_idx = points[:, -3].astype(int)
@@ -305,7 +308,7 @@ class NuScenesDataset(DatasetTemplate):
                         'name': gt_names[i], 'path': db_path, 'image_idx': sample_idx, 'gt_idx': i,
                         'box3d_lidar': gt_boxes[i], 'num_points_in_gt': gt_points.shape[0],
                         'instance_idx': current_instance_idx,
-                        'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)
+                        'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)  # TODO: filter by motion
                         'location': sample_location,
                         'tf_glob_from_lidar': tf_glob_from_lidar,
                     }
@@ -395,4 +398,4 @@ if __name__ == '__main__':
             root_path=ROOT_DIR / 'data' / 'nuscenes',
             logger=common_utils.create_logger(), training=True
         )
-        nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
+        nuscenes_dataset.create_groundtruth_database(max_sweeps=15)
