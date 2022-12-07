@@ -49,21 +49,21 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         model.train()
         optimizer.zero_grad()
 
-        # logger.info(f'\t--- rank[{rank}] start forward')
-        # _ftime = time.time()
+        logger.info(f'\t--- rank[{rank}] start forward')
+        _ftime = time.time()
         loss, tb_dict, disp_dict = model_func(model, batch)
-        # logger.info(f'\t--- rank[{rank}] finish forward in {time.time() - _ftime}')
+        logger.info(f'\t--- rank[{rank}] finish forward in {time.time() - _ftime}')
 
-        # logger.info(f'\t--- rank[{rank}] start backward')
-        # _btime = time.time()
+        logger.info(f'\t--- rank[{rank}] start backward')
+        _btime = time.time()
         loss.backward()
-        # logger.info(f'\t--- rank[{rank}] finish backward in {time.time() - _btime}')
+        logger.info(f'\t--- rank[{rank}] finish backward in {time.time() - _btime}')
 
-        # logger.info(f'\t--- rank[{rank}] start optim')
-        # _otime = time.time()
+        logger.info(f'\t--- rank[{rank}] start optim')
+        _otime = time.time()
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
-        # logger.info(f'\t--- rank[{rank}] finish optim in {time.time() - _otime}')
+        logger.info(f'\t--- rank[{rank}] finish optim in {time.time() - _otime}')
 
         accumulated_iter += 1
  

@@ -623,6 +623,7 @@ class PointAligner(nn.Module):
             inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
             loss_inst_assoc = self.l2_loss(inst_assoc[fg_target > 0], inst_assoc_target, dim=1, reduction='mean')
         else:
+            print('inst assoc no gt')
             loss_inst_assoc = self.l2_loss(inst_assoc, torch.clone(inst_assoc).detach(), dim=1, reduction='mean')
         tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
 
@@ -638,6 +639,7 @@ class PointAligner(nn.Module):
         if self.type_segmentation_loss == 'focal':
             loss_inst_mos = self.motion_seg_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
         else:
+            print('inst mos no gt')
             loss_inst_mos = self.motion_seg_loss(inst_mos_logit, inst_mos_target, tb_dict, loss_name='mos')
         tb_dict['loss_inst_mos'] = loss_inst_mos.item()
 
@@ -664,6 +666,7 @@ class PointAligner(nn.Module):
             loss_local_transl = self.l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
                                              dim=-1, reduction='mean')
         else:
+            print('loss_local_transl no gt')
             loss_local_transl = self.l2_loss(local_transl, torch.clone(local_transl).detach(),
                                              dim=-1, reduction='mean')
         tb_dict['loss_local_transl'] = loss_local_transl.item()
@@ -673,6 +676,7 @@ class PointAligner(nn.Module):
             loss_local_rot = torch.linalg.norm(
                 local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro').mean()
         else:
+            print('loss_local_rot no gt')
             loss_local_rot = self.l2_loss(local_rot_mat.reshape(-1, 1),
                                           torch.clone(local_rot_mat).detach().reshape(-1, 1),
                                           dim=-1, reduction='mean')
@@ -710,6 +714,7 @@ class PointAligner(nn.Module):
 
             loss_recon = self.l2_loss(pred_recon_dyn_fg, gt_recon_dyn_fg, dim=-1, reduction='mean')
         else:
+            print('loss_recon no gt')
             # there is no moving fg -> dummy loss
             local_bisw_inv_indices = self.forward_return_dict['meta']['local_bisw_inv_indices']
             local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
