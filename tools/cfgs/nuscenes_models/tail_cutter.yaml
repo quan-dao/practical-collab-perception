@@ -1,4 +1,4 @@
-CLASS_NAMES: ['car']
+CLASS_NAMES: ['car', 'bicycle', 'pedestrian']
 
 DATA_CONFIG:
     _BASE_CONFIG_: ./cfgs/dataset_configs/nuscenes_dataset.yaml
@@ -17,8 +17,10 @@ DATA_CONFIG:
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
-        used_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx' ],
-        src_feature_list: [ 'x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx' ],
+        used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx',
+                            'class_idx'],
+        src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx',
+                           'class_idx'],
     }
 
     DATA_AUGMENTOR:
@@ -84,7 +86,7 @@ MODEL:
         INSTANCE_OUT_CHANNELS: 128
         INSTANCE_HEAD_USE_DROPOUT: True
 
-        THRESH_MOTION: 0.5
+        THRESH_MOTION: 1.0
         THRESH_FOREGROUND_PROB: 0.5
 
         CLUSTER:
@@ -94,11 +96,12 @@ MODEL:
         LOSS:
             SEGMENTATION_LOSS: 'ce_lovasz'  # or 'ce_lovasz'
 
-        FREEZE_WEIGHTS: True
+        FREEZE_WEIGHTS: False
         REAL_INFERENCE: False
         DEBUG: False
 
-    ALIGNER_2ND_STAGE:
+    ALIGNER_HEAD:
+        ENABLE: False
         ATTENTION_STACK:
             EMBED_DIM: 256
             LOCAL_NUM_HEADS: 8

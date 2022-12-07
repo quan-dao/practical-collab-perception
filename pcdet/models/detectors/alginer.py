@@ -19,7 +19,7 @@ class Aligner(Detector3DTemplate):
             for param in self.aligner.parameters():
                 param.requires_grad = False
 
-        self.head = AlignerHead(model_cfg.ALIGNER_2ND_STAGE, self.aligner.num_instance_features,
+        self.head = AlignerHead(model_cfg.ALIGNER_HEAD, self.aligner.num_instance_features,
                                 model_cfg.ALIGNER_1ST_STAGE.NUM_SWEEPS) if model_cfg.ALIGNER_HEAD.ENABLE else None
 
     def forward(self, batch_dict):
