@@ -307,9 +307,13 @@ class PointAligner(nn.Module):
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
             fg_prob = torch.softmax(pred_points_fg.detach(), dim=1)[mask_fg]  # (N_fg_valid, n_cls)
         else:
-            if self.cfg.THRESH_FOREGROUND_PROB > 0:
-                fg_prob = torch.softmax(pred_points_fg.detach(), dim=1)
-                mask_fg = torch.max(fg_prob, dim=1)[0] > self.cfg.THRESH_FOREGROUND_PROB
+            if self.cfg.ALIGNER_1ST_STAGE.THRESH_FOREGROUND_PROB > 0:
+                points_cls_prob = torch.softmax(pred_points_fg.detach(), dim=1)  # (N, n_cls)
+                points_cls_prob, points_cls_idx = torch.max(points_cls_prob, dim=1)  #(N,), (N,)
+                mask_fg = torch.logical_and(
+                    points_cls_prob > self.cfg.ALIGNER_1ST_STAGE.THRESH_FOREGROUND_PROB,
+                    points_cls_idx > 0
+                )
             else:
                 # use ground truth foreground
                 mask_fg = batch_dict['points'][:, -3] > -1
@@ -320,6 +324,7 @@ class PointAligner(nn.Module):
             fg = batch_dict['points'][mask_fg]  # (N_fg, 10): batch_idx,x,y,z,intense,time,sweep_idx,inst_idx,aug_inst_idx,cls_idx
             fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
+            fg_prob = points_cls_prob[mask_fg]
             fg_inst_idx = fg.new_zeros(fg.shape[0]).long()
             # ==
             # DBSCAN to get instance_idx during inference
@@ -465,6 +470,7 @@ class PointAligner(nn.Module):
             self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
 
         # -------------------------
+        else:
         # prepare input for the 2nd stage
         # self.forward_return_dict['input_2nd_stage']['local'].update({
         #     'local_transl': pred_dict['local_transl'].detach(),  # (N_local, 3)
@@ -476,19 +482,19 @@ class PointAligner(nn.Module):
         #     'meta': self.forward_return_dict['meta']
         # }
         # batch_dict['input_2nd_stage'].update(self.forward_return_dict['input_2nd_stage'])
-        #
-        # if self.debug:
-        #     corrected_fg, fg_motion_mask = self.correct_point_cloud(
-        #         fg,
-        #         self.forward_return_dict['target_dict']['inst_motion_stat'].long(),
-        #         self.forward_return_dict['target_dict']['local_tf']
-        #     )
-        #     batch_dict.update({
-        #         'fg_motion_mask': fg_motion_mask,  # (N_fg,)
-        #         'corrected_fg': corrected_fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
-        #         'fg_inst_idx': fg_inst_idx,  # (N_fg,)
-        #         'bg': batch_dict['points'][torch.logical_not(mask_fg)]  # (N_bg, 7[+2])
-        #     })
+            corrected_fg, fg_motion_mask = self.correct_point_cloud(
+                fg,
+                sigmoid(pred_dict['inst_motion_stat'].squeeze(-1)),
+                torch.cat([pred_dict['local_rot'], pred_dict['local_transl'].unsqueeze(-1)], dim=-1)
+            )
+            pred_boxes = self.decode_proposals(proposals.detach())  # (N_inst, 7)
+            batch_dict['output_1st_stage'] = {
+                'fg_motion_mask': fg_motion_mask,  # (N_fg,)
+                'corrected_fg': corrected_fg,  # (N_fg, 7[+2]) - batch_idx x, y, z, intensity, time, sweep_idx, [inst_idx, aug_inst_idx]
+                'fg_inst_idx': fg_inst_idx,  # (N_fg,)
+                'bg': batch_dict['points'][torch.logical_not(mask_fg)],  # (N_bg, 7[+2])
+                'pred_boxes': pred_boxes  # (N_inst, 7)
+            }
 
         return batch_dict
 

@@ -38,6 +38,8 @@ def _show_point_cloud(batch_dict, chosen_batch_idx):
 
     boxes_color = classes_color[cur_gt_boxes[:, -1].long() - 1]
 
+    print_dict(batch_dict)
+    print("---metadata\n", batch_dict['metadata'], "\n---")
     show_pointcloud(cur_points[:, 1: 4], boxes=viz_boxes(cur_gt_boxes), pc_colors=points_color, boxes_color=boxes_color)
 
 
@@ -196,13 +198,13 @@ def _show_corrected_point_cloud(model, batch_dict, chosen_batch_idx):
 
 
 def main(**kwargs):
-    chosen_batch_idx = kwargs.get('chosen_batch_idx', 1)
+    chosen_batch_idx = kwargs.get('chosen_batch_idx', 0)
     cfg_file = './tail_cutter_cfg.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./dummy_log.txt')
 
-    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=2,
-                                              dist=False, logger=logger, training=False, total_epochs=1, seed=666)
+    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=1,
+                                              dist=False, logger=logger, training=True, total_epochs=1, seed=666)
     iter_dataloader = iter(dataloader)
     for _ in range(kwargs.get('chosen_iteration', 5)):
         batch_dict = next(iter_dataloader)
@@ -237,7 +239,7 @@ if __name__ == '__main__':
     parser.add_argument('--show_target_motion_stat', action='store_true', default=False)
     parser.add_argument('--show_corrected_point_cloud', action='store_true', default=False)
     parser.add_argument('--print_model', action='store_true', default=False)
-    parser.add_argument('--chosen_iteration', type=int, default=5, help='blah')
+    parser.add_argument('--chosen_iteration', type=int, default=1, help='blah')
     parser.add_argument('--test_generate_predicted_boxes', action='store_true', default=False)
     args = parser.parse_args()
     main(**vars(args))

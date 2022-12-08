@@ -25,8 +25,20 @@ DATA_CONFIG:
     }
 
     DATA_AUGMENTOR:
-        DISABLE_AUG_LIST: [ 'placeholder', 'gt_sampling' ]
+        DISABLE_AUG_LIST: ['placeholder', 'random_world_flip', 'random_world_rotation',
+                           'random_world_scaling']
         AUG_CONFIG_LIST:
+            -   NAME: gt_sampling
+                DB_INFO_PATH:
+                    - nuscenes_dbinfos_15sweeps_withvelo.pkl
+                PREPARE: {
+                    filter_by_min_points: ['car:5', 'bicycle:5', 'pedestrian:5'],
+                }
+
+                SAMPLE_GROUPS: ['car:2', 'bicycle:16', 'pedestrian:2']
+                NUM_POINT_FEATURES: 9
+                LIMIT_WHOLE_SCENE: True
+
             -   NAME: random_world_flip
                 ALONG_AXIS_LIST: [ 'x', 'y' ]
                 POINT_FEAT_TO_TRANSFORM: [ 5, 6 ]

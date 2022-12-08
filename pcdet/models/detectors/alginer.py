@@ -30,8 +30,11 @@ class Aligner(Detector3DTemplate):
             ret_dict = {'loss': loss}
             return ret_dict, tb_dict, {}
         else:
-            pred_dicts, recall_dicts = self.post_processing(batch_dict)
-            return pred_dicts, recall_dicts
+            if self.aligner.debug:
+                return batch_dict
+            else:
+                pred_dicts, recall_dicts = self.post_processing(batch_dict)
+                return pred_dicts, recall_dicts
 
     def post_processing(self, batch_dict):
         post_process_cfg = self.model_cfg.POST_PROCESSING

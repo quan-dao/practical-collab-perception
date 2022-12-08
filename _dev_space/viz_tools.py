@@ -46,6 +46,8 @@ def print_dict(d: dict):
             out += f"{v.item()}"
         elif isinstance(v, torch.Tensor):
             out += f"{v.shape}"
+        elif isinstance(v, dict):
+            print_dict(v)
         print(out)
     print('}\n')
 

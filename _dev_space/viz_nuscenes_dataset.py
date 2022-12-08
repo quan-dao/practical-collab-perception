@@ -12,7 +12,7 @@ import lovely_tensors as lt
 from einops import rearrange
 
 
-np.random.seed(666)
+# np.random.seed(666)
 lt.monkey_patch()
 
 
@@ -21,17 +21,16 @@ def modify_dataset_cfg(cfg):
 
     cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = [
         'placeholder',
-        # 'random_world_flip',
-        # 'random_world_scaling',
-        'gt_sampling',
-        # 'random_world_rotation',
+        'random_world_flip',
+        'random_world_scaling',
+        # 'gt_sampling',
+        'random_world_rotation',
     ]
 
     cfg.POINT_FEATURE_ENCODING.used_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx',
-                                                    'instance_idx',
-                                                    'aug_instance_idx']
-    cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx',
-                                                   'aug_instance_idx']
+                                                    'instance_idx', 'aug_instance_idx', 'cls_idx']
+    cfg.POINT_FEATURE_ENCODING.src_feature_list = ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx',
+                                                   'instance_idx', 'aug_instance_idx', 'cls_idx']
     cfg.VERSION = 'v1.0-mini'
 
     cfg.USE_HD_MAP = True
@@ -71,9 +70,9 @@ def main(**kwargs):
     modify_dataset_cfg(cfg)
     logger = common_utils.create_logger('./dummy_log.txt')
 
-    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg, class_names=cfg.CLASS_NAMES, batch_size=2, dist=False,
+    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg, class_names=cfg.CLASS_NAMES, batch_size=1, dist=False,
                                               logger=logger, training=True, total_epochs=1, seed=666)
-    batch_idx = 1
+    batch_idx = 0
 
     if kwargs.get('viz_dataset', False):
         print('visualizing dataset')
@@ -81,8 +80,8 @@ def main(**kwargs):
         pc = data_dict['points']
         gt_boxes = viz_boxes(data_dict['gt_boxes'])
         # convert waypoints to poses
-        poses = [xyyaw2pose(*data_dict['instances_waypoints'][wp_idx].tolist()[:-1])
-                 for wp_idx in range(data_dict['instances_waypoints'].shape[0])]
+        # poses = [xyyaw2pose(*data_dict['instances_waypoints'][wp_idx].tolist()[:-1])
+        #          for wp_idx in range(data_dict['instances_waypoints'].shape[0])]
     else:
         assert kwargs.get('viz_dataloader', False)
         iter_dataloader = iter(dataloader)
@@ -158,11 +157,11 @@ def main(**kwargs):
 
     print_dict(data_dict)
     print('meta: ', data_dict['metadata'])
-    print('data_dict[instance_future_waypoints]:\n', data_dict['instances_waypoints'])
-    print("data_dict['flip_x']: ", data_dict['flip_x'])
-    print("data_dict['flip_y']: ", data_dict['flip_y'])
-    print("data_dict['noise_rot']: ", data_dict['noise_rot'])
-    print("data_dict['noise_scale']: ", data_dict['noise_scale'])
+    # print('data_dict[instance_future_waypoints]:\n', data_dict['instances_waypoints'])
+    # print("data_dict['flip_x']: ", data_dict['flip_x'])
+    # print("data_dict['flip_y']: ", data_dict['flip_y'])
+    # print("data_dict['noise_rot']: ", data_dict['noise_rot'])
+    # print("data_dict['noise_scale']: ", data_dict['noise_scale'])
 
     if kwargs.get('show_raw_pointcloud', False):
         print('-----------------------\n'
@@ -170,7 +169,11 @@ def main(**kwargs):
         # dataset.nusc.render_sample(data_dict['metadata']['token'])
         # plt.show()
         if kwargs.get('viz_dataset', False):
-            show_pointcloud(pc[:, :3], boxes=gt_boxes, poses=poses)
+            mask_sampled_boxes = data_dict['gt_boxes'][:, -2].astype(int) >= data_dict['metadata']['num_original_instances']
+            boxes_colors = np.zeros((data_dict['gt_boxes'].shape[0], 3))
+            boxes_colors[np.logical_not(mask_sampled_boxes)] = np.array([0, 0, 1])  # blue for original
+            boxes_colors[mask_sampled_boxes] = np.array([1, 0, 0])  # red for sampled
+            show_pointcloud(pc[:, :3], boxes=gt_boxes, boxes_color=boxes_colors)
         else:
             show_pointcloud(pc, pc_colors=pc_colors, boxes=gt_boxes, boxes_color=cur_target_boxes_colors, poses=poses)
 
