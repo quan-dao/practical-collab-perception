@@ -12,7 +12,6 @@ from ..dataset import DatasetTemplate
 from _dev_space.get_sweeps_instance_centric import inst_centric_get_sweeps
 from _dev_space.tools_box import get_nuscenes_sensor_pose_in_global, get_nuscenes_sample_location
 from nuscenes import NuScenes
-from nuscenes.prediction import PredictHelper
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -31,8 +30,14 @@ class NuScenesDataset(DatasetTemplate):
             self.infos = self.infos[::4]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
-        self.predict_helper = PredictHelper(self.nusc)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
+
+        num_pts_raw_feat = 5  # x, y, z, intensity, time
+        self.map_point_feat2idx = {
+            'inst_idx': num_pts_raw_feat,
+            'aug_inst_idx': num_pts_raw_feat + 1,
+            'cls_idx': num_pts_raw_feat + 2,
+        }
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -130,34 +135,13 @@ class NuScenesDataset(DatasetTemplate):
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
             index = index % len(self.infos)
-
         info = copy.deepcopy(self.infos[index])
-
-        if len(self.dataset_cfg.POSSIBLE_NUM_SWEEPS) > 1:
-            num_sweeps = np.random.choice(self.dataset_cfg.POSSIBLE_NUM_SWEEPS)
-        else:
-            num_sweeps = self.dataset_cfg.POSSIBLE_NUM_SWEEPS[0]
-
+        num_sweeps = self.dataset_cfg.MAX_SWEEPS
         _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
-                                       pointcloud_range=self.point_cloud_range,
-                                       detection_classes=self.class_names)
+                                       point_cloud_range=self.point_cloud_range,
+                                       detection_classes=self.class_names,
+                                       map_point_feat2idx=self.map_point_feat2idx)
         points = _out['points']  # (N, C)
-
-        if self.dataset_cfg.DROP_BACKGROUND.ENABLE:
-            dist = np.linalg.norm(points[:, :2], axis=1)
-            mask_closed_bg = np.logical_and(dist < self.dataset_cfg.DROP_BACKGROUND.DISTANCE_THRESHOLD,
-                                            points[:, -2].astype(int) == -1)  # (N,)
-
-            closed_bg = points[mask_closed_bg]
-            closed_bg_ids = np.arange(closed_bg.shape[0])
-            np.random.shuffle(closed_bg_ids)
-
-            # keep the first (1 - DROP_PROB)% of closed_bg
-            num_kept_closed_bg = int(closed_bg_ids.shape[0] * (1.0 - self.dataset_cfg.DROP_BACKGROUND.DROP_PROB))
-            closed_bg = closed_bg[closed_bg_ids[:max(num_kept_closed_bg, 100)]]
-
-            # concatenate kept closed_bg & points that are not closed_bg
-            points = np.concatenate((closed_bg, points[np.logical_not(mask_closed_bg)]), axis=0)
 
         sample_rec = self.nusc.get('sample', info['token'])
         lidar_token = sample_rec['data']['LIDAR_TOP']
@@ -270,14 +254,16 @@ class NuScenesDataset(DatasetTemplate):
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
 
-        detection_classes = ['car', 'bicycle', 'pedestrian']
+        detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
+                             'bicycle', 'pedestrian', 'traffic_cone')
 
         for idx in tqdm(range(len(self.infos))):
             sample_idx = idx
             info = self.infos[idx]
             _out = inst_centric_get_sweeps(self.nusc, info['token'], max_sweeps, return_instances_last_box=True,
-                                           pointcloud_range=self.point_cloud_range,
-                                           detection_classes=detection_classes)
+                                           point_cloud_range=self.point_cloud_range,
+                                           detection_classes=detection_classes,
+                                           map_point_feat2idx=self.map_point_feat2idx)
 
             points = _out['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
             points_inst_idx = points[:, -3].astype(int)
@@ -398,4 +384,4 @@ if __name__ == '__main__':
             root_path=ROOT_DIR / 'data' / 'nuscenes',
             logger=common_utils.create_logger(), training=True
         )
-        nuscenes_dataset.create_groundtruth_database(max_sweeps=15)
+        nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
