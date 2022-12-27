@@ -178,8 +178,11 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         assert point_cloud_range is not None
         if not isinstance(point_cloud_range, np.ndarray):
             point_cloud_range = np.array(point_cloud_range)
-        instances_last_box = np.zeros((len(instances), 10))
-        # 10 == c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy, instance_index
+        instances_last_box = np.zeros((len(instances), 9))
+        # 10 == c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
+        # ------
+        # NOTE: instances_last_box DON'T NEED TO BE CONSISTENT WITH instances_tf because aligner doesn't predict boxes
+        # ------
         for _idx, (_size, _poses) in enumerate(zip(instances_size, instances)):
             # find the pose that has center inside point cloud range & is closest to the target time step
             # if couldn't find any, take the 1st pose (i.e. the furthest into the past)
@@ -196,11 +199,9 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
 
             # instance velocity
             velo = nusc.box_velocity(inst_latest_anno_tk[_idx]).reshape(1, 3)  # - [vx, vy, vz] in global frame
-            velo[np.isnan(velo)] = 0.0
             velo = apply_tf(target_from_glob, velo).reshape(3)[:2]  # [vx, vy] in target frame
             instances_last_box[_idx, 7: 9] = velo
 
-            instances_last_box[_idx, 9] = _idx
         out['instances_last_box'] = instances_last_box
         out['instances_name'] = np.array(instances_name)
 

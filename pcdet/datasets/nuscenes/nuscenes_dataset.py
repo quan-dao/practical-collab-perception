@@ -144,37 +144,26 @@ class NuScenesDataset(DatasetTemplate):
         points = _out['points']  # (N, C)
 
         sample_rec = self.nusc.get('sample', info['token'])
-        lidar_token = sample_rec['data']['LIDAR_TOP']
-        tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
+        tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, sample_rec['data']['LIDAR_TOP'])
 
         input_dict = {
             'points': points,
             'instances_tf': _out['instances_tf'],
-            'frame_id': Path(info['lidar_path']).stem,
             'metadata': {
                 'token': info['token'],
-                'num_original_instances': _out['instances_tf'].shape[0],
-                'num_sweeps': num_sweeps, 'max_num_sweeps': max(self.dataset_cfg.POSSIBLE_NUM_SWEEPS),
-                'location': get_nuscenes_sample_location(self.nusc, info['token']),
                 'tf_glob_from_lidar': tf_glob_from_lidar,  # (4, 4)
             }
         }
 
         # overwrite gt_boxes & gt_names
+        # ------
+        # NOTE: instances_last_box DON'T NEED TO BE CONSISTENT WITH instances_tf because aligner doesn't predict boxes
+        # ------
         input_dict.update({
             'gt_boxes': _out['instances_last_box'],
             'gt_names': _out['instances_name']
         })
-
-        # ------
-        # get HD Map
-        # ------
-        if self.dataset_cfg.get('USE_HD_MAP', False):
-            map_file = self.root_path / 'hd_map' / f"map_{info['token']}.npy"
-            try:
-                input_dict['img_map'] = np.load(map_file)
-            except:
-                input_dict['img_map'] = np.zeros((5, 512, 512))  # in case map_file is corrupted
+        input_dict['metadata']['num_original_boxes'] = input_dict['gt_boxes'].shape[0]
 
         # data augmentation & other stuff
         data_dict = self.prepare_data(data_dict=input_dict)
@@ -184,8 +173,8 @@ class NuScenesDataset(DatasetTemplate):
             gt_boxes[np.isnan(gt_boxes)] = 0
             data_dict['gt_boxes'] = gt_boxes
 
-        # if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
-        #     data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
+        if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
+            data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
 
         return data_dict
 
