@@ -34,9 +34,10 @@ class NuScenesDataset(DatasetTemplate):
 
         num_pts_raw_feat = 5  # x, y, z, intensity, time
         self.map_point_feat2idx = {
-            'inst_idx': num_pts_raw_feat,
-            'aug_inst_idx': num_pts_raw_feat + 1,
-            'cls_idx': num_pts_raw_feat + 2,
+            'sweep_idx': num_pts_raw_feat,
+            'inst_idx': num_pts_raw_feat + 1,
+            'aug_inst_idx': num_pts_raw_feat + 2,
+            'cls_idx': num_pts_raw_feat + 3,
         }
 
     def include_nuscenes_data(self, mode):
@@ -280,6 +281,7 @@ class NuScenesDataset(DatasetTemplate):
                 filepath = database_save_path / filename
                 gt_points = points[points_inst_idx == i]
 
+                # translate gt_points to frame whose origin @ gt_box center
                 gt_points[:, :3] -= gt_boxes[i, :3]
                 with open(filepath, 'w') as f:
                     gt_points.tofile(f)
