@@ -158,6 +158,8 @@ class NuScenesDataset(DatasetTemplate):
         # overwrite gt_boxes & gt_names
         # ------
         # NOTE: instances_last_box DON'T NEED TO BE CONSISTENT WITH instances_tf because aligner doesn't predict boxes
+        # NOTE: instances_last_box & instances_tf are consistent here, but this consistency will be broken when
+        # NOTE: boxes outside of range are removed by self.data_processor
         # ------
         input_dict.update({
             'gt_boxes': _out['instances_last_box'],
@@ -235,8 +237,6 @@ class NuScenesDataset(DatasetTemplate):
         return result_str, result_dict
 
     def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
-        import torch
-
         database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo'
         db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo.pkl'
 
@@ -245,17 +245,19 @@ class NuScenesDataset(DatasetTemplate):
 
         detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
                              'bicycle', 'pedestrian', 'traffic_cone')
+        movable_classes = ('car', 'truck', 'bus')
+        point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
 
         for idx in tqdm(range(len(self.infos))):
             sample_idx = idx
             info = self.infos[idx]
             _out = inst_centric_get_sweeps(self.nusc, info['token'], max_sweeps, return_instances_last_box=True,
-                                           point_cloud_range=self.point_cloud_range,
+                                           point_cloud_range=point_cloud_range,
                                            detection_classes=detection_classes,
                                            map_point_feat2idx=self.map_point_feat2idx)
 
             points = _out['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
-            points_inst_idx = points[:, -3].astype(int)
+            points_inst_idx = points[:, self.map_point_feat2idx['inst_idx']].astype(int)
 
             gt_boxes = _out['instances_last_box']  # (N_inst, 10) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, inst_index
             gt_names = _out['instances_name']
@@ -263,15 +265,20 @@ class NuScenesDataset(DatasetTemplate):
 
             # nuscenes stuff
             sample_rec = self.nusc.get('sample', info['token'])
-            lidar_token = sample_rec['data']['LIDAR_TOP']
-            tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
-            sample_location = get_nuscenes_sample_location(self.nusc, info['token'])
+            tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, sample_rec['data']['LIDAR_TOP'])
 
             for i in range(gt_boxes.shape[0]):
+
+                # filter movable class to include only actual moving stuff
+                if gt_names[i] in movable_classes:
+                    if np.linalg.norm(instances_tf[0, :2, -1]) < 1.0:
+                        # translation from the oldest to the presence < 1.0
+                        # skip this instance
+                        continue
+
                 filename = '%s_%s_%d.bin' % (sample_idx, gt_names[i], i)
                 filepath = database_save_path / filename
-                current_instance_idx = gt_boxes[i, -1].astype(int)
-                gt_points = points[points_inst_idx == current_instance_idx]
+                gt_points = points[points_inst_idx == i]
 
                 gt_points[:, :3] -= gt_boxes[i, :3]
                 with open(filepath, 'w') as f:
@@ -281,10 +288,10 @@ class NuScenesDataset(DatasetTemplate):
                     db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
                     db_info = {
                         'name': gt_names[i], 'path': db_path, 'image_idx': sample_idx, 'gt_idx': i,
-                        'box3d_lidar': gt_boxes[i], 'num_points_in_gt': gt_points.shape[0],
-                        'instance_idx': current_instance_idx,
-                        'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)  # TODO: filter by motion
-                        'location': sample_location,
+                        'num_points_in_gt': gt_points.shape[0],
+                        'box3d_lidar': gt_boxes[i],
+                        'instance_idx': i,
+                        'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)
                         'tf_glob_from_lidar': tf_glob_from_lidar,
                     }
                     if gt_names[i] in all_db_infos:

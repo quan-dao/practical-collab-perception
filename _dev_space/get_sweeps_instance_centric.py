@@ -182,6 +182,8 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
         # 10 == c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
         # ------
         # NOTE: instances_last_box DON'T NEED TO BE CONSISTENT WITH instances_tf because aligner doesn't predict boxes
+        # NOTE: instances_last_box & instances_tf are consistent here, but this consistency will be broken when
+        # NOTE: boxes outside of range are removed
         # ------
         for _idx, (_size, _poses) in enumerate(zip(instances_size, instances)):
             # find the pose that has center inside point cloud range & is closest to the target time step
