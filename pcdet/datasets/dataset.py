@@ -165,6 +165,7 @@ class DatasetTemplate(torch_data.Dataset):
             )
             if 'calib' in data_dict:
                 data_dict['calib'] = calib
+
         if data_dict.get('gt_boxes', None) is not None:
             selected = common_utils.keep_arrays_by_name(data_dict['gt_names'], self.class_names)
             data_dict['gt_boxes'] = data_dict['gt_boxes'][selected]

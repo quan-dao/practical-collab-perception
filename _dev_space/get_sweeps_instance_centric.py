@@ -126,7 +126,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                                          in_box_tolerance)
             cur_points[mask_in, map_point_feat2idx['inst_idx']] = inst_token_2_index[inst_token]
             # set points' class index
-            cur_points[mask_in, map_point_feat2idx['cls_idx']] = detection_classes.index(box_det_name)
+            cur_points[mask_in, map_point_feat2idx['cls_idx']] = 1 + detection_classes.index(box_det_name)
 
             if np.any(mask_in):
                 # this box has some points
