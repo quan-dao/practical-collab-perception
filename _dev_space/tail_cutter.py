@@ -1,65 +1,48 @@
 import torch
-from kornia.losses.focal import BinaryFocalLossWithLogits
+import torch.nn as nn
 from sklearn.cluster import DBSCAN
-from sklearn.neighbors import NearestNeighbors
-from _dev_space.unet_2d import UNet2D
-from _dev_space.resnet import PoseResNet
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from _dev_space.external_drop import DropBlock2d
 from _dev_space.tail_cutter_utils import *
 
 
 class PointAligner(nn.Module):
-    def __init__(self, full_model_cfg):
+    def __init__(self, cfg, num_bev_features: int, voxel_size: list, point_cloud_range: list, class_names: list):
         super().__init__()
-        self.cfg = full_model_cfg
-
-        pillar_cfg = full_model_cfg.PILLAR_ENCODER
-        self.pillar_encoder = PillarEncoder(
-            pillar_cfg.NUM_RAW_FEATURES, pillar_cfg.NUM_BEV_FEATURES, pillar_cfg.POINT_CLOUD_RANGE,
-            pillar_cfg.VOXEL_SIZE)
-
-        map_net_cfg = full_model_cfg.MAP_NET
-        if map_net_cfg.ENABLE:
-            if map_net_cfg.NAME == 'MapFusion':
-                map_net_channels = [map_net_cfg.NUM_MAP_LAYERS] + map_net_cfg.MAP_FUSION_CHANNELS
-                map_net_layers = []
-                for ch_idx in range(len(map_net_channels) - 1):
-                    is_last_layer = ch_idx == len(map_net_channels) - 2
-                    map_net_layers.append(
-                        nn.Conv2d(map_net_channels[ch_idx], map_net_channels[ch_idx + 1], 3, padding=1, bias=is_last_layer)
-                    )
-                    if not is_last_layer:
-                        map_net_layers.append(nn.BatchNorm2d(map_net_channels[ch_idx + 1], eps=1e-3, momentum=0.01))
-                        map_net_layers.append(nn.ReLU(True))
-                self.map_net = nn.Sequential(*map_net_layers)
-                num_map_features = map_net_cfg.MAP_FUSION_CHANNELS[-1]
-            else:
-                self.map_net = PoseResNet(map_net_cfg, map_net_cfg.NUM_MAP_LAYERS)
-                num_map_features = self.map_net.num_out_features
-            self.drop_map = DropBlock2d(map_net_cfg.DROP_PROB, map_net_cfg.DROP_BLOCK_SIZE)
-        else:
-            self.map_net, self.drop_map = None, None
-            num_map_features = 0
-
-        self.backbone2d = UNet2D(pillar_cfg.NUM_BEV_FEATURES + num_map_features, full_model_cfg.BEV_BACKBONE)
-        num_point_features = self.backbone2d.n_output_feat
-
-        # ------------------------------------------------------------------------------------------
-        # Aligner stage 1
-        # ------------------------------------------------------------------------------------------
-        cfg = full_model_cfg.ALIGNER_STAGE_1
-        self.max_num_sweeps = cfg.MAX_NUM_SWEEPS
+        self.cfg = cfg
+        self.num_sweeps = cfg.NUM_SWEEPS
         self.return_corrected_pc = cfg.RETURN_CORRECTED_POINT_CLOUD
         self.thresh_motion_prob = cfg.THRESHOLD_MOTION_RPOB
         self.thresh_foreground_prob = cfg.THRESHOLD_FOREGROUND_RPOB
+        self.voxel_size = voxel_size  # [vox_x, vox_y, vox_z]
+        self.bev_image_stride = cfg.BEV_IMAGE_STRIDE
+        self.point_cloud_range = point_cloud_range
+        self.vehicle_class_indices = tuple([1 + class_names.index(cls_name) for cls_name in cfg.VEHICLE_CLASSES])
+
+        num_pts_raw_feat = 1 + cfg.NUM_RAW_POINT_FEATURES  # batch_idx, x, y, z, intensity, time
+        idx_offset = cfg.POINT_FEAT_INDEX_OFFSET_FROM_RAW_FEAT
+        self.map_point_feat2idx = {
+            'sweep_idx': num_pts_raw_feat + idx_offset.SWEEP_INDEX,
+            'inst_idx': num_pts_raw_feat + idx_offset.INSTANCE_INDEX,
+            'aug_inst_idx': num_pts_raw_feat + idx_offset.AUGMENTED_INSTANCE_INDEX,
+            'cls_idx': num_pts_raw_feat + idx_offset.CLASS_INDEX,
+        }
+
+        self.shared_conv = nn.Sequential(
+            nn.Conv2d(
+                num_bev_features, self.model_cfg.SHARED_CONV_CHANNEL, 3, stride=1, padding=1,
+                bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False)
+            ),
+            nn.BatchNorm2d(self.model_cfg.SHARED_CONV_CHANNEL),
+            nn.ReLU(),
+        )
+
         # point heads
-        self.point_fg_seg = self._make_mlp(num_point_features, 1, cfg.get('HEAD_MID_CHANNELS', None))
-        self.point_mos_seg = self._make_mlp(num_point_features, 1, cfg.get('HEAD_MID_CHANNELS', None))
-        self.point_inst_assoc = self._make_mlp(num_point_features, 2, cfg.get('HEAD_MID_CHANNELS', None))
+        num_points_features = self.model_cfg.SHARED_CONV_CHANNEL
+        self.point_fg_seg = self._make_mlp(num_points_features, 1, cfg.get('HEAD_MID_CHANNELS', None))
+        self.point_inst_assoc = self._make_mlp(num_points_features, 2, cfg.get('HEAD_MID_CHANNELS', None))
 
         # ---
-        self.inst_global_mlp = self._make_mlp(num_point_features, cfg.INSTANCE_OUT_CHANNELS,
+        self.inst_global_mlp = self._make_mlp(num_points_features, cfg.INSTANCE_OUT_CHANNELS,
                                               cfg.get('INSTANCE_MID_CHANNELS', None))
         self.inst_local_mlp = self._make_mlp(3, cfg.INSTANCE_OUT_CHANNELS, cfg.get('INSTANCE_MID_CHANNELS', None))
         # input channels == 3 because: x - \bar{x}, y - \bar{y}, z - \bar{z}; \bar{} == center
@@ -68,13 +51,6 @@ class PointAligner(nn.Module):
         # instance heads
         self.inst_motion_seg = self._make_mlp(cfg.INSTANCE_OUT_CHANNELS, 1,
                                               cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
-
-        self.inst_proposal_gen = self._make_mlp(3 + 2 * cfg.INSTANCE_OUT_CHANNELS, 8,
-                                                cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
-        # in_ch == 3 + 2 * cfg.INSTANCE_OUT_CHANNELS because
-        # 3 = |centroid of the local @ target time step|
-        # 2 * cfg.INSTANCE_OUT_CHANNELS = |concatenation of feat of local @ target & global|
-        # out_ch == 8 because c_x, c_y, c_z, d_x, d_y, d_z, sin_yaw, cos_yaw
 
         self.inst_local_transl = self._make_mlp(6 + 3 * cfg.INSTANCE_OUT_CHANNELS, 3,
                                                 cfg.get('INSTANCE_MID_CHANNELS', None), cfg.INSTANCE_HEAD_USE_DROPOUT)
@@ -91,16 +67,10 @@ class PointAligner(nn.Module):
         # loss func
         self.loss_weights = cfg.LOSS.LOSS_WEIGHTS
         self.eval_segmentation = cfg.LOSS.get('EVAL_SEGMENTATION_WHILE_TRAINING', False)
-        self.segmentation_loss_type = cfg.LOSS.SEGMENTATION_LOSS
-        if self.segmentation_loss_type == 'focal':
-            self.seg_loss = BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0, reduction='sum')
-        elif self.segmentation_loss_type == 'ce_lovasz':
-            self.seg_loss = CELovaszLoss(num_classes=2)  # binary classification for both fg seg & motion seg
-        else:
-            raise NotImplementedError
+        self.seg_loss = CELovaszLoss(num_classes=2)  # binary classification for both fg seg & motion seg
 
+        # TODO: use PCAccumulation cluster.py
         self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS, metric='precomputed')
-        # self.neighbors_finder = NearestNeighbors(radius=cfg.CLUSTER.EPS)
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
@@ -127,35 +97,25 @@ class PointAligner(nn.Module):
             batch_dict:
                 'points': (N, 6 + C) - batch_idx, x, y, z, intensity, time, [...]
         """
-        for bidx in range(batch_dict['batch_size']):
-            assert batch_dict['metadata'][bidx]['max_num_sweeps'] == self.max_num_sweeps, \
-                f"{batch_dict['metadata'][bidx]['max_num_sweeps']} != {self.max_num_sweeps}"
-        self.forward_return_dict = dict()  # clear previous output
+        # sanity check
+        assert batch_dict['gt_boxes'].shape[1] == batch_dict['instances_tf'].shape[1], \
+            f"{batch_dict['gt_boxes'].shape[1]} != {batch_dict['instances_tf'].shape[1]}"
+        num_points = batch_dict['points'].shape[0]
+        self.forward_return_dict = {'prediction': {}, 'target': {}}  # clear previous output
 
-        # exclude sampled points
-        mask_sampled_points = batch_dict['points'][:, -2].long() == -2
-        if torch.any(mask_sampled_points):
-            sampled_points = batch_dict['points'][mask_sampled_points]  # (N_sp, 9)
-            batch_dict['points'] = batch_dict['points'][torch.logical_not(mask_sampled_points)]
-        else:
-            sampled_points = None
-
-        bev_img = self.pillar_encoder(batch_dict)  # (B, C_bev, H, W), (N, 2)-bev_x, bev_y
-
-        # concatenate hd_map with bev_img before passing to backbone_2d
-        if self.map_net is not None:
-            map_img = self.map_net(batch_dict['img_map'])
-            map_img = self.drop_map(map_img)
-            bev_img = torch.cat([bev_img, map_img], dim=1)  # (B, 64 + C_map, H, W)
-
-        bev_img = self.backbone2d(bev_img)  # (B, 64, H, W)
+        spatial_features_2d = batch_dict['spatial_features_2d']
+        bev_img = self.shared_conv(spatial_features_2d)  # (B, num_pts_feat, H, W)
 
         # interpolate points feature from bev_img
-        points_bev_coord = (batch_dict['points'][:, [1, 2]] - self.pillar_encoder.pc_range[:2]) / \
-                           self.pillar_encoder.voxel_size[:2]
         points_batch_idx = batch_dict['points'][:, 0].long()
-        points_feat = bev_img.new_zeros(points_batch_idx.shape[0], bev_img.shape[1])
 
+        points_bev_coord = batch_dict['points'].new_zeros(num_points, 2)
+        points_bev_coord[:, 0] = \
+            (batch_dict['points'][:, 1] - self.point_cloud_range[0]) / (self.voxel_size[0] * self.bev_image_stride)
+        points_bev_coord[:, 1] = \
+            (batch_dict['points'][:, 2] - self.point_cloud_range[1]) / (self.voxel_size[1] * self.bev_image_stride)
+
+        points_feat = bev_img.new_zeros(num_points, bev_img.shape[1])
         for b_idx in range(batch_dict['batch_size']):
             _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
             batch_mask = points_batch_idx == b_idx
@@ -166,39 +126,39 @@ class PointAligner(nn.Module):
 
         # invoke point heads
         pred_points_fg = self.point_fg_seg(points_feat)  # (N, 1)
-        pred_points_mos = self.point_mos_seg(points_feat)  # (N, 1)
         pred_points_inst_assoc = self.point_inst_assoc(points_feat)  # (N, 2) - x-,y-offset to mean of points in instance
-        pred_dict = {
-            'fg': pred_points_fg,  # (N, 1)
-            'points_mos': pred_points_mos,  # (N, 1)
-            'inst_assoc': pred_points_inst_assoc  # (N, 2)
-        }
-
-        # to debug points_mos
-        # batch_dict.update({
-        #     'original_points': torch.clone(batch_dict['points']),
-        #     'pred_fg_prob': sigmoid(pred_points_fg.squeeze(-1)),
-        #     'pred_points_mos_prob': sigmoid(pred_points_mos.squeeze(-1))
-        # })
+        self.add_to_forward_return_dict_('fg_logits', pred_points_fg, 'prediction')
+        self.add_to_forward_return_dict_('offset_to_centers', pred_points_inst_assoc, 'prediction')
 
         # ---------------------------------------------------------------
         # INSTANCE stuff
         # ---------------------------------------------------------------
 
         if self.training:
-            raise ValueError('This branch is not designed for training Alinger. Switch to main-car-as-meta')
-            # use AUGMENTED instance index
-            if kwargs.get('use_augmented_instance_idx', True):
-                mask_fg = batch_dict['points'][:, -1].long() > -1
-            else:
-                # use instance_index (just for debugging purpose)
-                mask_fg = batch_dict['points'][:, -2].long() > -1
+            gt_boxes_cls_idx = rearrange(batch_dict['gt_boxes'][:, :, -1].long(), 'B N_i -> (B N_i)')
+
+            max_num_inst = batch_dict['gt_boxes'].shape[1]
+            # max_num_inst is far bigger than number of instances of vehicle classes because instances_tf includes
+            # tf of all 10 classes (meaning it includes pedestrian, barrier, traffic cone)
+
+            points_merge_batch_aug_inst_idx = (points_batch_idx * max_num_inst
+                                               + batch_dict['points'][:, self.map_point_feat2idx['aug_inst_idx']])
+            points_aug_cls_idx = gt_boxes_cls_idx[points_merge_batch_aug_inst_idx]
+
+            # find points tagged with vehicle classes
+            mask_fg = points_aug_cls_idx.new_zeros(num_points).bool()
+            for vehicle_cls_idx in self.vehicle_class_indices:
+                mask_fg = torch.logical_or(mask_fg, points_aug_cls_idx == vehicle_cls_idx)
 
             fg = batch_dict['points'][mask_fg]
-            # (N_fg, 9) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx
-            max_num_inst = batch_dict['instances_tf'].shape[1]
+            # (N_fg, 10) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
+
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
+
+            meta = self.build_meta_dict(fg, max_num_inst, self.map_point_feat2idx['aug_inst_idx'])
+
         else:
+            raise NotImplementedError
             if self.thresh_foreground_prob > 0:
                 mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.thresh_foreground_prob
                 mask_motion = rearrange(sigmoid(pred_points_mos), 'N 1 -> N') > self.thresh_motion_prob
@@ -257,15 +217,13 @@ class PointAligner(nn.Module):
                 fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
                 bg = batch_dict['points'][torch.logical_not(mask_fg)]
 
-        if max_num_inst == 0:
-            # not id any instance -> no need for correction
-            # early return
-            print('no instance found, early return')
-            batch_dict['points'] = batch_dict['points'][:, :-3]
-            return batch_dict
+            if max_num_inst == 0:
+                # not id any instance -> no need for correction
+                # early return
+                batch_dict['points'] = batch_dict['points'][:, :-3]
+                return batch_dict
 
-        meta = self.build_meta_dict(fg, max_num_inst, kwargs.get('use_augmented_instance_idx', True))
-        self.forward_return_dict['meta'] = meta
+            meta = self.build_meta_dict(fg, max_num_inst, kwargs.get('use_augmented_instance_idx', True))
 
         # ------------
         # compute instance global feature
@@ -319,6 +277,7 @@ class PointAligner(nn.Module):
         if self.training:
             self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
         else:
+            raise NotImplementedError
             _ = correct_point_cloud(
                 fg,
                 rearrange(sigmoid(pred_inst_motion_stat), 'N_inst 1 -> N_inst'),
@@ -584,26 +543,24 @@ class PointAligner(nn.Module):
         return out
 
     @torch.no_grad()
-    def build_meta_dict(self, fg: torch.Tensor, max_num_instances: int, use_augmented_instance_idx=True) -> dict:
+    def build_meta_dict(self, fg: torch.Tensor, max_num_instances: int, index_of_instance_idx: int) -> dict:
         """
         Args:
-            fg: (N_fg, 9) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_idx
+            fg: (N_fg, 10) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_idx, cls_idx
             max_num_instances:
+            index_of_instance_idx: where is instance_index in point_feats
         """
         meta = {}
 
-        fg_sweep_idx = fg[:, -3].long()
+        fg_sweep_idx = fg[:, self.map_point_feat2idx['sweep_idx']].long()
         fg_batch_idx = fg[:, 0].long()
-        if use_augmented_instance_idx:
-            fg_inst_idx = fg[:, -1].long()
-        else:
-            fg_inst_idx = fg[:, -2].long()
+        fg_inst_idx = fg[:, index_of_instance_idx].long()
 
         # merge batch_idx & instance_idx
         fg_bi_idx = fg_batch_idx * max_num_instances + fg_inst_idx  # (N,)
 
         # merge batch_idx, instance_idx & sweep_idx
-        fg_bisw_idx = fg_bi_idx * self.max_num_sweeps + fg_sweep_idx
+        fg_bisw_idx = fg_bi_idx * self.num_sweeps + fg_sweep_idx
 
         # group foreground points to instance
         inst_bi, inst_bi_inv_indices = torch.unique(fg_bi_idx, sorted=True, return_inverse=True)
@@ -626,7 +583,7 @@ class PointAligner(nn.Module):
         # get the max sweep_index of each instance
         inst_max_sweep_idx = torch_scatter.scatter_max(fg_sweep_idx, inst_bi_inv_indices)[0]  # (N_inst,)
         # get bisw_index of each instance's max sweep
-        inst_target_bisw_idx = inst_bi * self.max_num_sweeps + inst_max_sweep_idx  # (N_inst,)
+        inst_target_bisw_idx = inst_bi * self.num_sweeps + inst_max_sweep_idx  # (N_inst,)
         # for each value in inst_target_bisw_idx find WHERE (i.e., index) it appear in local_bisw
         corr = local_bisw[:, None] == inst_target_bisw_idx[None, :]  # (N_local, N_inst)
         corr = corr.long() * torch.arange(local_bisw.shape[0]).unsqueeze(1).to(fg.device)
@@ -635,7 +592,7 @@ class PointAligner(nn.Module):
         # -----------------------------------------------------------------------------
         # the following is to establish correspondence between instances & locals
         # -----------------------------------------------------------------------------
-        local_bi = local_bisw // self.max_num_sweeps
+        local_bi = local_bisw // self.num_sweeps
         # for each value in local_bi find WHERE (i.e., index) it appear in inst_bi
         local_bi_in_inst_bi = inst_bi[:, None] == local_bi[None, :]  # (N_inst, N_local)
         local_bi_in_inst_bi = local_bi_in_inst_bi.long() * torch.arange(inst_bi.shape[0]).unsqueeze(1).to(fg.device)
@@ -645,4 +602,10 @@ class PointAligner(nn.Module):
         # broadcast inst_global_feat from (N_inst, C_inst) to (N_local, C_inst)
 
         return meta
+
+    def add_to_forward_return_dict_(self, name: str, value, name_sub_dict: str = None):
+        if name_sub_dict is not None:
+            self.forward_return_dict[name_sub_dict][name] = value
+        else:
+            self.forward_return_dict[name] = value
 
