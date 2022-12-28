@@ -184,10 +184,17 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict=data_dict
         )
 
-        has_gt = np.any(data_dict['points'][:, -3].astype(int) > -1) & (data_dict['gt_boxes'].shape[0] > 0)
-        if self.training and not has_gt:
-            new_index = np.random.randint(self.__len__())
-            return self.__getitem__(new_index)
+        # make sure a training sample has at least 1 gt_box of vehicle classes
+        if self.training:
+            has_gt = False
+            for cls_name in self.dataset_cfg.VEHICLE_CLASSES:
+                has_gt = has_gt or np.any(data_dict['gt_names'] == cls_name)
+                if has_gt:
+                    break
+
+            if not has_gt:
+                new_index = np.random.randint(self.__len__())
+                return self.__getitem__(new_index)
 
         data_dict.pop('gt_names', None)
 

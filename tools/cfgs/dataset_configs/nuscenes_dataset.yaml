@@ -21,7 +21,7 @@ INFO_PATH: {
 }
 
 POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
-
+VEHICLE_CLASSES: ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'motorcycle', 'bicycle']
 BALANCED_RESAMPLING: True 
 
 DATA_AUGMENTOR:
