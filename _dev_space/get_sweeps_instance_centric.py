@@ -137,7 +137,7 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                 large_mask_in = find_points_in_box(cur_points, target_from_box,
                                                    np.array([box.wlh[1], box.wlh[0], box.wlh[2]]), noise_factor)
                 # set aug inst index
-                cur_points[large_mask_in, -2] = inst_token_2_index[inst_token]
+                cur_points[large_mask_in, map_point_feat2idx['aug_inst_idx']] = inst_token_2_index[inst_token]
 
                 # --
                 # Drop points in box to simulate False Negative foreground
