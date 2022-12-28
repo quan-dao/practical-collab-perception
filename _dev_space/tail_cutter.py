@@ -100,20 +100,23 @@ class PointAligner(nn.Module):
         # sanity check
         assert batch_dict['gt_boxes'].shape[1] == batch_dict['instances_tf'].shape[1], \
             f"{batch_dict['gt_boxes'].shape[1]} != {batch_dict['instances_tf'].shape[1]}"
-        num_points = batch_dict['points'].shape[0]
+
+        points = batch_dict['points']
+        num_points = points.shape[0]
+
         self.forward_return_dict = {'prediction': {}}  # clear previous output
 
         spatial_features_2d = batch_dict['spatial_features_2d']
         bev_img = self.shared_conv(spatial_features_2d)  # (B, num_pts_feat, H, W)
 
         # interpolate points feature from bev_img
-        points_batch_idx = batch_dict['points'][:, 0].long()
+        points_batch_idx = points[:, 0].long()
 
-        points_bev_coord = batch_dict['points'].new_zeros(num_points, 2)
+        points_bev_coord = points.new_zeros(num_points, 2)
         points_bev_coord[:, 0] = \
-            (batch_dict['points'][:, 1] - self.point_cloud_range[0]) / (self.voxel_size[0] * self.bev_image_stride)
+            (points[:, 1] - self.point_cloud_range[0]) / (self.voxel_size[0] * self.bev_image_stride)
         points_bev_coord[:, 1] = \
-            (batch_dict['points'][:, 2] - self.point_cloud_range[1]) / (self.voxel_size[1] * self.bev_image_stride)
+            (points[:, 2] - self.point_cloud_range[1]) / (self.voxel_size[1] * self.bev_image_stride)
 
         points_feat = bev_img.new_zeros(num_points, bev_img.shape[1])
         for b_idx in range(batch_dict['batch_size']):
@@ -142,8 +145,13 @@ class PointAligner(nn.Module):
             # tf of all 10 classes (meaning it includes pedestrian, barrier, traffic cone)
 
             points_merge_batch_aug_inst_idx = (points_batch_idx * max_num_inst
-                                               + batch_dict['points'][:, self.map_point_feat2idx['aug_inst_idx']].long())
+                                               + points[:, self.map_point_feat2idx['aug_inst_idx']].long())
+            # Note: here all points, including those have aug_inst_idx == -1, are in play
+
             points_aug_cls_idx = gt_boxes_cls_idx[points_merge_batch_aug_inst_idx]
+            # zero-out cls_idx of points whose aug_inst_idx == -1
+            # Note: obj classes have index starting from 1 (ending at 10)
+            points_aug_cls_idx[points[:, self.map_point_feat2idx['aug_inst_idx']].long() == -1] = 0
 
             # find points tagged with vehicle classes
             mask_fg = points_aug_cls_idx.new_zeros(num_points).bool()
@@ -245,7 +253,6 @@ class PointAligner(nn.Module):
         # ------------
         # compute instance shape encoding of the local @ target time step (i.e. local having the largest sweep idx)
         inst_target_center = local_center[meta['indices_local_to_inst_target']]  # (N_inst, 3)
-        self.forward_return_dict['meta']['inst_target_center'] = inst_target_center  # (N_inst, 3)
 
         inst_target_center_shape = torch.cat(
             (inst_target_center, local_shape_enc[meta['indices_local_to_inst_target']]), dim=1)  # (N_inst, 3+C_inst)
@@ -270,6 +277,11 @@ class PointAligner(nn.Module):
         # update forward_return_dict with prediction & target for computing loss
         if self.training:
             self.forward_return_dict['target'] = self.assign_target(batch_dict)
+            target_meta = self.forward_return_dict['target']['meta']
+            # below to ensure inst_ computed based on aug_inst_idx & inst_idx are consistent
+            assert target_meta['inst_bi'].shape[0] == meta['inst_bi'].shape[0], \
+                f"{target_meta['inst_bi'].shape[0]} == {meta['inst_bi'].shape[0]}"
+            assert torch.all(target_meta['inst_bi'] == meta['inst_bi'])
         else:
             raise NotImplementedError
             _ = correct_point_cloud(
@@ -323,12 +335,10 @@ class PointAligner(nn.Module):
         # --------------
         # target of inst_assoc as offset toward mean of points inside each instance
         gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2].long(), 'B N_i C -> (B N_i) C')
-        points_merge_batch_inst_idx = (points[:, 0].long() * max_num_inst
-                                       + points[:, self.map_point_feat2idx['inst_idx']].long())
-        points_boxes_xy = gt_boxes_xy[points_merge_batch_inst_idx]  # (N_pts, 2)
-        target_inst_assoc = points_boxes_xy - points[:, 1: 3]  # (N_pts, 2)
-        # apply foreground mask to target_inst_assoc
-        target_inst_assoc = target_inst_assoc[mask_fg]  # (N_fg, 2) - TODO: test by displaying
+        fg_merge_batch_inst_idx = (points[mask_fg, 0].long() * max_num_inst
+                                   + points[mask_fg, self.map_point_feat2idx['inst_idx']].long())
+        fg_boxes_xy = gt_boxes_xy[fg_merge_batch_inst_idx]  # (N_fg, 2)
+        target_inst_assoc = fg_boxes_xy - points[mask_fg, 1: 3]  # (N_fg, 2) - TODO: test by displaying
 
         # -------------------------------------------------------
         # Instance-wise target
@@ -353,7 +363,8 @@ class PointAligner(nn.Module):
             'fg': target_fg,
             'inst_assoc': target_inst_assoc,
             'inst_motion_stat': inst_motion_stat,
-            'local_tf': local_tf
+            'local_tf': local_tf,
+            'meta': meta
         }
         return target_dict
 
@@ -361,56 +372,52 @@ class PointAligner(nn.Module):
         if tb_dict is None:
             tb_dict = dict()
 
-        pred_dict = self.forward_return_dict['pred_dict']
-        target_dict = self.forward_return_dict['target_dict']
+        pred_dict = self.forward_return_dict['prediction']
+        target_dict = self.forward_return_dict['target']
 
         # -----------------------
         # Point-wise loss
         # -----------------------
         # ---
         # foreground seg
-        fg_logit = pred_dict['fg']  # (N, 1)
-        fg_target = target_dict['fg']  # (N,)
-        assert torch.all(torch.isfinite(fg_logit))
-
-        num_gt_fg = fg_target.sum().item()
-        if self.segmentation_loss_type == 'focal':
-            loss_fg = self.seg_loss(fg_logit, fg_target[:, None].float()) / max(1., num_gt_fg)
-        else:
-            loss_fg = self.seg_loss(fg_logit, fg_target, tb_dict, loss_name='fg')
-        loss_fg = loss_fg * self.loss_weights.FOREGROUND
+        fg_logits = pred_dict['fg_logits']  # (N_pts, 1)
+        fg_target = target_dict['fg']  # (N_pts,)
+        assert torch.all(torch.isfinite(fg_logits))
+        loss_fg = self.seg_loss(fg_logits, fg_target, tb_dict, loss_name='fg') * self.loss_weights.FOREGROUND
         tb_dict['loss_fg'] = loss_fg.item()
+
+        device = loss_fg.device
 
         # ---
         # instance assoc
-        inst_assoc = pred_dict['inst_assoc']  # (N, 2)
-        if num_gt_fg > 0:
+        mask_fg = fg_target > 0
+        inst_assoc = pred_dict['offset_to_centers']  # (N_pts, 2)
+        if torch.any(mask_fg):
             inst_assoc_target = target_dict['inst_assoc']  # (N_fg, 2) ! target was already filtered by foreground mask
-            loss_inst_assoc = l2_loss(inst_assoc[fg_target == 1], inst_assoc_target, dim=1, reduction='mean')
+            loss_inst_assoc = nn.functional.smooth_l1_loss(inst_assoc[mask_fg], inst_assoc_target,
+                                                           reduction='mean') * self.loss_weights.INSTANCE_ASSOC
         else:
-            loss_inst_assoc = l2_loss(inst_assoc, torch.clone(inst_assoc).detach(), dim=1, reduction='mean')
-        loss_inst_assoc = loss_inst_assoc * self.loss_weights.INSTANCE_ASSOC
+            loss_inst_assoc = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
         tb_dict['loss_inst_assoc'] = loss_inst_assoc.item()
 
         # -----------------------
         # Instance-wise loss
         # -----------------------
+        meta = target_dict['meta']  # meta built based on inst_idx (not aug_inst_idx)
+
         # ---
         # motion seg
-        inst_mos_logit = pred_dict['inst_motion_stat']  # (N_inst, 1)
+        inst_mos_logits = pred_dict['inst_motion_logits']  # (N_inst, 1)
         inst_mos_target = target_dict['inst_motion_stat']  # (N_inst,)
-
-        num_gt_dyn_inst = float(inst_mos_target.sum().item())
-        if self.segmentation_loss_type == 'focal':
-            loss_inst_mos = self.seg_loss(inst_mos_logit, inst_mos_target[:, None].float()) / max(1., num_gt_dyn_inst)
+        if inst_mos_target.shape[0] > 0:
+            loss_inst_mos = self.seg_loss(inst_mos_logits, inst_mos_target, tb_dict,
+                                          loss_name='mos') * 2. * self.loss_weights.INSTANCE_MOTION_SEG
         else:
-            loss_inst_mos = self.seg_loss(inst_mos_logit, inst_mos_target, tb_dict, loss_name='mos')
-        loss_inst_mos = loss_inst_mos * self.loss_weights.INSTANCE_MOTION_SEG
+            loss_inst_mos = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
         tb_dict['loss_inst_mos'] = loss_inst_mos.item()
 
         # ---
         # Local tf - regression loss | ONLY FOR LOCAL OF DYNAMIC INSTANCE
-
         local_transl = pred_dict['local_transl']  # (N_local, 3)
         local_rot_mat = pred_dict['local_rot']  # (N_local, 3, 3)
 
@@ -421,105 +428,73 @@ class PointAligner(nn.Module):
         assert torch.all(torch.isfinite(local_tf_target))
 
         # which local are associated with dynamic instances
-        with torch.no_grad():
-            local_bi_in_inst_bi = self.forward_return_dict['meta']['local_bi_in_inst_bi']  # (N_local,)
-            local_mos_target = inst_mos_target[local_bi_in_inst_bi]  # (N_local,)
-            local_mos_mask = local_mos_target == 1  # (N_local,)
+        local_bi_in_inst_bi = meta['local_bi_in_inst_bi']  # (N_local,)
+        local_mos_target = inst_mos_target[local_bi_in_inst_bi]  # (N_local,)
+        local_mos_mask = local_mos_target == 1  # (N_local,)
 
-        # translation
-        # logger = logging.getLogger()
         if torch.any(local_mos_mask):
-            # logger.info('loss_local_transl has ground truth')
-            loss_local_transl = l2_loss(local_transl[local_mos_mask], local_tf_target[local_mos_mask, :, -1],
-                                        dim=-1, reduction='mean') * self.loss_weights.LOCAL_TRANSLATION
-        else:
-            # logger.info('loss_local_transl does not have ground truth')
-            loss_local_transl = l2_loss(local_transl, torch.clone(local_transl).detach(), dim=-1, reduction='mean')
-        tb_dict['loss_local_transl'] = loss_local_transl.item()
+            # translation
+            loss_local_transl = nn.functional.smooth_l1_loss(local_transl[local_mos_mask],
+                                                             local_tf_target[local_mos_mask, :, -1],
+                                                             reduction='mean') * 3. * self.loss_weights.LOCAL_TRANSLATION
 
-        # rotation
-        if torch.any(local_mos_mask):
-            # logger.info('loss_local_rot has ground truth')
+            # rotation
             loss_local_rot = torch.linalg.norm(
                 local_rot_mat[local_mos_mask] - local_tf_target[local_mos_mask, :, :3], dim=(1, 2), ord='fro'
             ).mean() * self.loss_weights.LOCAL_ROTATION
         else:
-            # logger.info('loss_local_rot does not have ground truth')
-            loss_local_rot = l2_loss(local_rot_mat.reshape(-1, 1), torch.clone(local_rot_mat).detach().reshape(-1, 1),
-                                     dim=-1, reduction='mean')
+            loss_local_transl = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+            loss_local_rot = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+        tb_dict['loss_local_transl'] = loss_local_transl.item()
         tb_dict['loss_local_rot'] = loss_local_rot.item()
 
         # ---
         # Local tf - reconstruction loss
-
         # get motion mask of foreground
-        inst_bi_inv_indices = self.forward_return_dict['meta']['inst_bi_inv_indices']  # (N_fg)
+        inst_bi_inv_indices = meta['inst_bi_inv_indices']  # (N_fg)
         fg_motion = inst_mos_target[inst_bi_inv_indices] == 1  # (N_fg)
 
-        aug_fg_mask = batch_dict['points'][:, -1].long() > -1  # (N,) - use aug inst index
-        fg = batch_dict['points'][aug_fg_mask]  # (N_fg)
+        fg = batch_dict['points'][mask_fg]  # (N_fg)
 
         if torch.any(fg_motion):
             # extract dyn fg points
             dyn_fg = fg[fg_motion, 1: 4]  # (N_dyn, 3)
 
             # reconstruct with ground truth
-            local_bisw_inv_indices = self.forward_return_dict['meta']['local_bisw_inv_indices']
+            local_bisw_inv_indices = meta['local_bisw_inv_indices']
             gt_fg_tf = local_tf_target[local_bisw_inv_indices]  # (N_fg, 3, 4)
             gt_dyn_fg_tf = gt_fg_tf[fg_motion]  # (N_dyn, 3, 4)
 
-            gt_recon_dyn_fg = torch.matmul(gt_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
-                              gt_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
+            gt_recon_dyn_fg = (torch.matmul(gt_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1)
+                               + gt_dyn_fg_tf[:, :, -1])  # (N_dyn, 3)
 
             # reconstruct with prediction
             local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
             pred_fg_tf = local_tf_pred[local_bisw_inv_indices]  # (N_fg, 3, 4)
             pred_dyn_fg_tf = pred_fg_tf[fg_motion]  # (N_dyn, 3, 4)
 
-            pred_recon_dyn_fg = torch.matmul(pred_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1) + \
-                                pred_dyn_fg_tf[:, :, -1]  # (N_dyn, 3)
+            pred_recon_dyn_fg = (torch.matmul(pred_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1)
+                                 + pred_dyn_fg_tf[:, :, -1])  # (N_dyn, 3)
 
-            loss_recon = l2_loss(pred_recon_dyn_fg, gt_recon_dyn_fg, dim=-1,
-                                 reduction='mean') * self.loss_weights.RECONSTRUCTION
+            loss_recon = nn.functional.smooth_l1_loss(pred_recon_dyn_fg, gt_recon_dyn_fg,
+                                                      reduction='mean') * 3.0 * self.loss_weights.RECONSTRUCTION
         else:
-            # there is no moving fg -> dummy loss
-            local_bisw_inv_indices = self.forward_return_dict['meta']['local_bisw_inv_indices']
-            local_tf_pred = torch.cat([local_rot_mat, local_transl.unsqueeze(-1)], dim=-1)  # (N_local, 3, 4)
-            pred_fg_tf = local_tf_pred[local_bisw_inv_indices]  # (N_fg, 3, 4)
-            pred_recon_dyn_fg = torch.matmul(pred_fg_tf[:, :, :3], fg[:, 1: 4, None]).squeeze(-1) + \
-                                pred_fg_tf[:, :, -1]  # (N_dyn, 3)
-            loss_recon = l2_loss(pred_recon_dyn_fg, torch.clone(pred_recon_dyn_fg).detach(), dim=-1, reduction='mean')
+            loss_recon = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
         tb_dict['loss_recon'] = loss_recon.item()
-
-        # add proposals loss
-        pred_proposals = pred_dict['proposals']  # (N_inst, 8)
-        target_proposals = target_dict['proposals']
-
-        loss_prop_offset = l2_loss(pred_proposals[:, :3], target_proposals['offset'], reduction='mean')
-        tb_dict['loss_prop_offset'] = loss_prop_offset.item()
-
-        loss_prop_size = l2_loss(pred_proposals[:, 3: 6], target_proposals['size'], reduction='mean')
-        tb_dict['loss_prop_size'] = loss_prop_size.item()
-
-        loss_prop_ori = l2_loss(pred_proposals[:, 6:], target_proposals['ori'], reduction='mean')
-        tb_dict['loss_prop_ori'] = loss_prop_ori.item()
-
-        loss_prop = (loss_prop_offset + loss_prop_size + loss_prop_ori) * self.loss_weights.PROPOSALS
-        tb_dict['loss_prop'] = loss_prop.item()
 
         # --------------
         # total loss
         # --------------
-        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon + loss_prop
+        loss = loss_fg + loss_inst_assoc + loss_inst_mos + loss_local_transl + loss_local_rot + loss_recon
         tb_dict['loss'] = loss.item()
 
         # eval foregound seg, motion seg during training
         if self.eval_segmentation:
-            fg_precision, fg_recall = eval_binary_segmentation(fg_logit.detach().squeeze(-1), fg_target, False)
+            fg_precision, fg_recall = eval_binary_segmentation(fg_logits.detach().squeeze(-1), fg_target, False)
             tb_dict['fg_P'] = fg_precision
             tb_dict['fg_R'] = fg_recall
 
-            mos_precision, mos_recall = eval_binary_segmentation(inst_mos_logit.detach().squeeze(-1),
+            mos_precision, mos_recall = eval_binary_segmentation(inst_mos_logits.detach().squeeze(-1),
                                                                  inst_mos_target, False)
             tb_dict['mos_P'] = mos_precision
             tb_dict['mos_R'] = mos_recall
