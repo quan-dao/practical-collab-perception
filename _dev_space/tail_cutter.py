@@ -101,7 +101,7 @@ class PointAligner(nn.Module):
         assert batch_dict['gt_boxes'].shape[1] == batch_dict['instances_tf'].shape[1], \
             f"{batch_dict['gt_boxes'].shape[1]} != {batch_dict['instances_tf'].shape[1]}"
         num_points = batch_dict['points'].shape[0]
-        self.forward_return_dict = {'prediction': {}, 'target': {}}  # clear previous output
+        self.forward_return_dict = {'prediction': {}}  # clear previous output
 
         spatial_features_2d = batch_dict['spatial_features_2d']
         bev_img = self.shared_conv(spatial_features_2d)  # (B, num_pts_feat, H, W)
@@ -142,7 +142,7 @@ class PointAligner(nn.Module):
             # tf of all 10 classes (meaning it includes pedestrian, barrier, traffic cone)
 
             points_merge_batch_aug_inst_idx = (points_batch_idx * max_num_inst
-                                               + batch_dict['points'][:, self.map_point_feat2idx['aug_inst_idx']])
+                                               + batch_dict['points'][:, self.map_point_feat2idx['aug_inst_idx']].long())
             points_aug_cls_idx = gt_boxes_cls_idx[points_merge_batch_aug_inst_idx]
 
             # find points tagged with vehicle classes
@@ -150,7 +150,7 @@ class PointAligner(nn.Module):
             for vehicle_cls_idx in self.vehicle_class_indices:
                 mask_fg = torch.logical_or(mask_fg, points_aug_cls_idx == vehicle_cls_idx)
 
-            fg = batch_dict['points'][mask_fg]
+            fg = batch_dict['points'][mask_fg]  # TODO: test this by displaying
             # (N_fg, 10) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
 
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
@@ -232,7 +232,7 @@ class PointAligner(nn.Module):
 
         # use inst_global_feat to predict motion stat
         pred_inst_motion_stat = self.inst_motion_seg(inst_global_feat)  # (N_inst, 1)
-        pred_dict['inst_motion_stat'] = pred_inst_motion_stat
+        self.add_to_forward_return_dict_('inst_motion_logits', pred_inst_motion_stat, 'prediction')
 
         # ------------
         # compute instance local shape encoding
@@ -252,12 +252,6 @@ class PointAligner(nn.Module):
         inst_global_feat = torch.cat((inst_global_feat, inst_target_center_shape), dim=1)  # (N_inst, 3+2*C_inst)
 
         # ------------------------------------
-        # generate 3D proposals
-        # ------------------------------------
-        proposals = self.inst_proposal_gen(inst_global_feat)  # (N_inst, 8)
-        pred_dict['proposals'] = proposals  # (N_inst, 8)
-
-        # ------------------------------------
         # generate local_tf
         # ------------------------------------
         local_global_feat = inst_global_feat[meta['local_bi_in_inst_bi']]  # (N_local, 3+2*C_inst)
@@ -267,15 +261,15 @@ class PointAligner(nn.Module):
 
         # use local_feat to predict local_tf of size (N_local, 3, 4)
         pred_local_transl = self.inst_local_transl(local_feat)  # (N_local, 3)
-        pred_dict['local_transl'] = pred_local_transl
+        self.add_to_forward_return_dict_('local_transl', pred_local_transl, 'prediction')
 
         pred_local_rot = self.inst_local_rot(local_feat)  # (N_local, 4)
-        pred_dict['local_rot'] = quat2mat(pred_local_rot)  # (N_local, 3, 3)
+        pred_local_rot = quat2mat(pred_local_rot)  # (N_local, 3, 3)
+        self.add_to_forward_return_dict_('local_rot', pred_local_rot, 'prediction')
 
         # update forward_return_dict with prediction & target for computing loss
-        self.forward_return_dict['pred_dict'] = pred_dict
         if self.training:
-            self.forward_return_dict['target_dict'] = self.assign_target(batch_dict)
+            self.forward_return_dict['target'] = self.assign_target(batch_dict)
         else:
             raise NotImplementedError
             _ = correct_point_cloud(
@@ -311,65 +305,55 @@ class PointAligner(nn.Module):
                 'instances_tf': (B, N_inst_max, N_sweeps, 3, 4)
         """
         points = batch_dict['points']
+        num_points = points.shape[0]
+        max_num_inst = batch_dict['gt_boxes'].shape[1]
+
         # -------------------------------------------------------
         # Point-wise target
         # use ORIGINAL instance index
         # -------------------------------------------------------
-        # --------------
-        # target foreground
-        mask_fg = points[:, -2].long() > -1
-        target_fg = mask_fg.long()  # (N,) - use original instance index for foreground seg
+
+        # target foreground := points belong to vehicle class (use cls_idx to have the same effect as inst_idx)
+        points_cls_idx = points[:, self.map_point_feat2idx['cls_idx']].long()
+        mask_fg = points.new_zeros(num_points).bool()
+        for vehicle_cls_idx in self.vehicle_class_indices:
+            mask_fg = torch.logical_or(mask_fg, points_cls_idx == vehicle_cls_idx)
+        target_fg = mask_fg.long()  # (N_pts,) - use original instance index for foreground seg - TODO: test by displaying
 
         # --------------
         # target of inst_assoc as offset toward mean of points inside each instance
-        _fg = points[mask_fg]
-        max_num_inst = batch_dict['instances_tf'].shape[1]
-        _fg_bi_idx = _fg[:, 0].long() * max_num_inst + _fg[:, -2].long()
-        _, _inst_bi_inv_indices = torch.unique(_fg_bi_idx, sorted=True, return_inverse=True)
-
-        inst_mean_xy = torch_scatter.scatter_mean(points[mask_fg, 1: 3], _inst_bi_inv_indices, dim=0)  # (N_inst, 2)
-        target_inst_assoc = inst_mean_xy[_inst_bi_inv_indices] - points[mask_fg, 1: 3]
+        gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2].long(), 'B N_i C -> (B N_i) C')
+        points_merge_batch_inst_idx = (points[:, 0].long() * max_num_inst
+                                       + points[:, self.map_point_feat2idx['inst_idx']].long())
+        points_boxes_xy = gt_boxes_xy[points_merge_batch_inst_idx]  # (N_pts, 2)
+        target_inst_assoc = points_boxes_xy - points[:, 1: 3]  # (N_pts, 2)
+        # apply foreground mask to target_inst_assoc
+        target_inst_assoc = target_inst_assoc[mask_fg]  # (N_fg, 2) - TODO: test by displaying
 
         # -------------------------------------------------------
         # Instance-wise target
-        # use AUGMENTED instance index
+        # use inst_idx
         # -------------------------------------------------------
         instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
+        meta = self.build_meta_dict(points[mask_fg], max_num_inst, self.map_point_feat2idx['inst_idx'])
 
         # --------------
-        inst_bi = self.forward_return_dict['meta']['inst_bi']
         # target motion
-        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > self.thresh_motion_prob
+        inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > 0.5  # translation more than 0.5m
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
-        inst_motion_stat = inst_motion_stat[inst_bi]  # (N_inst)
-
-        # target proposal
-        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, 11) -center (3), size (3), yaw, dummy_v (2), instance_index, class
-        assert gt_boxes.shape[1] == instances_tf.shape[1], f"{gt_boxes.shape[1]} != {instances_tf.shape[1]}"
-        batch_boxes = rearrange(gt_boxes, 'B N_inst_max C -> (B N_inst_max) C')
-        batch_boxes = batch_boxes[inst_bi]  # (N_inst, 11)
-
-        target_proposals = {
-            'offset': batch_boxes[:, :3] - self.forward_return_dict['meta']['inst_target_center'],
-            'size': batch_boxes[:, 3: 6],
-            'ori': torch.stack([torch.sin(batch_boxes[:, 6]), torch.cos(batch_boxes[:, 6])], dim=1)
-        }
+        inst_motion_stat = inst_motion_stat[meta['inst_bi']]  # (N_inst) - TODO: test by displaying
 
         # --------------
         # locals' transformation
-        local_bisw = self.forward_return_dict['meta']['local_bisw']
-        # local_bisw: (N_local,)
-
-        local_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
-        local_tf = local_tf[local_bisw]  # (N_local, 3, 4)
+        instances_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
+        local_tf = instances_tf[meta['local_bisw']]  # (N_local, 3, 4) - TODO: test by displaying oracle point cloud
 
         # format output
         target_dict = {
             'fg': target_fg,
             'inst_assoc': target_inst_assoc,
             'inst_motion_stat': inst_motion_stat,
-            'local_tf': local_tf,
-            'proposals': target_proposals
+            'local_tf': local_tf
         }
         return target_dict
 
