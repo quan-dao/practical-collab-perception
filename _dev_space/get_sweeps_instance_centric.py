@@ -98,6 +98,13 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
             glob_from_box = tf(box.center, box.orientation)
             target_from_box = target_from_glob @ glob_from_box
 
+            # find points inside this box
+            mask_in = find_points_in_box(cur_points, target_from_box, np.array([box.wlh[1], box.wlh[0], box.wlh[2]]),
+                                         in_box_tolerance)
+            if not np.any(mask_in):
+                # empty box -> move on to next box
+                continue
+
             # store box's pose according to the instance which it belongs to
             inst_token = anno_rec['instance_token']
             if inst_token not in inst_token_2_index:
@@ -122,8 +129,6 @@ def inst_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
             inst_tk_2_sample_tk[inst_token] = anno_rec['sample_token']
 
             # set points' instance index
-            mask_in = find_points_in_box(cur_points, target_from_box, np.array([box.wlh[1], box.wlh[0], box.wlh[2]]),
-                                         in_box_tolerance)
             cur_points[mask_in, map_point_feat2idx['inst_idx']] = inst_token_2_index[inst_token]
             # set points' class index
             cur_points[mask_in, map_point_feat2idx['cls_idx']] = 1 + detection_classes.index(box_det_name)
