@@ -158,7 +158,7 @@ class PointAligner(nn.Module):
             for vehicle_cls_idx in self.vehicle_class_indices:
                 mask_fg = torch.logical_or(mask_fg, points_aug_cls_idx == vehicle_cls_idx)
 
-            fg = batch_dict['points'][mask_fg]  # TODO: test this by displaying
+            fg = batch_dict['points'][mask_fg]
             # (N_fg, 10) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
 
             fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)

@@ -32,8 +32,8 @@ def viz_boxes(boxes: np.ndarray):
     return out
 
 
-def print_dict(d: dict):
-    print('{')
+def print_dict(d: dict, name=''):
+    print(f'{name}', ': {')
     for k, v in d.items():
         out = f"\t{k} | {type(v)} | "
         if isinstance(v, str):
@@ -49,7 +49,7 @@ def print_dict(d: dict):
         elif isinstance(v, dict):
             print_dict(v)
         print(out)
-    print('}\n')
+    print('} eod ', name)
 
 
 def viz_clusters2d(xy, labels, ax, marker='o', prefix=''):
