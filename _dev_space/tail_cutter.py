@@ -351,12 +351,12 @@ class PointAligner(nn.Module):
         # target motion
         inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > 0.5  # translation more than 0.5m
         inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
-        inst_motion_stat = inst_motion_stat[meta['inst_bi']]  # (N_inst) - TODO: test by displaying
+        inst_motion_stat = inst_motion_stat[meta['inst_bi']]  # (N_inst)
 
         # --------------
         # locals' transformation
         instances_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
-        local_tf = instances_tf[meta['local_bisw']]  # (N_local, 3, 4) - TODO: test by displaying oracle point cloud
+        local_tf = instances_tf[meta['local_bisw']]  # (N_local, 3, 4)
 
         # format output
         target_dict = {

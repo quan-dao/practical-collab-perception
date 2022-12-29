@@ -98,6 +98,58 @@ def check_assign_points_wise_target(batch_dict: dict, map_point_feat2idx: dict, 
                     pc_colors=torch.cat((points_color, centers_colors), dim=0))
 
 
+def check_assign_instance_wise_target(batch_dict: dict, map_point_feat2idx: dict, vehicle_class_indices: tuple):
+    print('----------check_assign_instance_wise_target----------')
+    boxes = batch_dict['gt_boxes']
+    points = batch_dict['points']
+    num_points = points.shape[0]
+    max_num_inst = batch_dict['gt_boxes'].shape[1]
+
+    points_cls_idx = points[:, map_point_feat2idx['cls_idx']].long()
+    mask_fg = points.new_zeros(num_points).bool()
+    for vehicle_cls_idx in vehicle_class_indices:
+        mask_fg = torch.logical_or(mask_fg, points_cls_idx == vehicle_cls_idx)
+
+    meta = build_meta_dict(points[mask_fg], max_num_inst, map_point_feat2idx['inst_idx'], map_point_feat2idx)
+
+    instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
+    # target motion
+    inst_motion_stat = torch.linalg.norm(instances_tf[:, :, 0, :, -1], dim=-1) > 0.5  # translation more than 0.5m
+    inst_motion_stat = rearrange(inst_motion_stat.long(), 'B N_inst_max -> (B N_inst_max)')
+    inst_motion_stat = inst_motion_stat[meta['inst_bi']]  # (N_inst)
+
+    # locals' transformation
+    instances_tf = rearrange(instances_tf, 'B N_inst_max N_sweep C1 C2 -> (B N_inst_max N_sweep) C1 C2', C1=3, C2=4)
+    local_tf = instances_tf[meta['local_bisw']]  # (N_local, 3, 4)
+
+    inst_bi_inv_indices = meta['inst_bi_inv_indices']  # (N_fg)
+    fg_motion = inst_motion_stat[inst_bi_inv_indices] == 1  # (N_fg)
+
+    print('showing: fg motion stat')
+    points_color = torch.zeros(num_points, 3)
+    fg_colors = torch.zeros(mask_fg.long().sum().item(), 3)
+    fg_colors[:, 2] = 1.0  # blue for static
+    fg_colors[fg_motion] = torch.tensor([1, 0, 0]).float()  # red for dynamic
+    points_color[mask_fg] = fg_colors
+    show_pointcloud(points[:, 1: 4], viz_boxes(boxes[0, :, :7]), pc_colors=points_color)
+
+    print('showing: oracle point cloud')
+    fg, bg = points[mask_fg], points[torch.logical_not(mask_fg)]
+    dyn_fg = fg[fg_motion, 1: 4]  # (N_dyn, 3)
+    # reconstruct with ground truth
+    local_bisw_inv_indices = meta['local_bisw_inv_indices']
+    gt_fg_tf = local_tf[local_bisw_inv_indices]  # (N_fg, 3, 4)
+    gt_dyn_fg_tf = gt_fg_tf[fg_motion]  # (N_dyn, 3, 4)
+
+    gt_recon_dyn_fg = (torch.matmul(gt_dyn_fg_tf[:, :, :3], dyn_fg[:, :, None]).squeeze(-1)
+                       + gt_dyn_fg_tf[:, :, -1])  # (N_dyn, 3)
+
+    fg[fg_motion, 1: 4] = gt_recon_dyn_fg
+    show_pointcloud(torch.cat([fg[:, 1: 4], bg[:, 1:4]], dim=0),
+                    viz_boxes(boxes[0, :, :7]),
+                    pc_colors=torch.cat([fg_colors, torch.zeros(bg.shape[0], 3)], dim=0))
+
+
 if __name__ == '__main__':
     is_training = True
     batch_size = 1
@@ -122,5 +174,6 @@ if __name__ == '__main__':
 
     # show_points_cls_and_boxes(batch_dict)
     # check_aligner_training_compute_fg(batch_dict, map_point_feat2idx, vehicle_class_indices)
-    # check_consistency_2metas(batch_dict, map_point_feat2idx, vehicle_class_indices)
-    check_assign_points_wise_target(batch_dict, map_point_feat2idx, vehicle_class_indices)
+    # check_consistency_2metas(batch_dict, map_point_feat2idx, vehicle_class_indices) # TODO: test this batch_size=2
+    # check_assign_points_wise_target(batch_dict, map_point_feat2idx, vehicle_class_indices)
+    check_assign_instance_wise_target(batch_dict, map_point_feat2idx, vehicle_class_indices)
