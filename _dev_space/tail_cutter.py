@@ -330,15 +330,15 @@ class PointAligner(nn.Module):
         mask_fg = points.new_zeros(num_points).bool()
         for vehicle_cls_idx in self.vehicle_class_indices:
             mask_fg = torch.logical_or(mask_fg, points_cls_idx == vehicle_cls_idx)
-        target_fg = mask_fg.long()  # (N_pts,) - use original instance index for foreground seg - TODO: test by displaying
+        target_fg = mask_fg.long()  # (N_pts,) - use original instance index for foreground seg
 
         # --------------
         # target of inst_assoc as offset toward mean of points inside each instance
-        gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2].long(), 'B N_i C -> (B N_i) C')
+        gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2], 'B N_i C -> (B N_i) C')
         fg_merge_batch_inst_idx = (points[mask_fg, 0].long() * max_num_inst
                                    + points[mask_fg, self.map_point_feat2idx['inst_idx']].long())
         fg_boxes_xy = gt_boxes_xy[fg_merge_batch_inst_idx]  # (N_fg, 2)
-        target_inst_assoc = fg_boxes_xy - points[mask_fg, 1: 3]  # (N_fg, 2) - TODO: test by displaying
+        target_inst_assoc = fg_boxes_xy - points[mask_fg, 1: 3]  # (N_fg, 2)
 
         # -------------------------------------------------------
         # Instance-wise target

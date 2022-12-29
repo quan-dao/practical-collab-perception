@@ -64,6 +64,39 @@ def check_consistency_2metas(batch_dict: dict, map_point_feat2idx: dict, vehicle
     assert torch.all(target_meta['inst_bi'] == meta['inst_bi'])
 
 
+def check_assign_points_wise_target(batch_dict: dict, map_point_feat2idx: dict, vehicle_class_indices: tuple):
+    print('----------check_assign_points_wise_target----------')
+    points = batch_dict['points']
+    num_points = points.shape[0]
+    boxes = batch_dict['gt_boxes']
+    max_num_inst = batch_dict['gt_boxes'].shape[1]
+
+    points_cls_idx = points[:, map_point_feat2idx['cls_idx']].long()
+    mask_fg = points.new_zeros(num_points).bool()
+    for vehicle_cls_idx in vehicle_class_indices:
+        mask_fg = torch.logical_or(mask_fg, points_cls_idx == vehicle_cls_idx)
+    target_fg = mask_fg.long()  # (N_pts,) - use original instance index for foreground seg
+
+    points_color = torch.zeros(num_points, 3)
+    points_color[target_fg == 1] = torch.tensor([1, 0, 0]).float()
+    print('showing: target_fg')
+    show_pointcloud(points[:, 1: 4], viz_boxes(boxes[0, :, :7]), pc_colors=points_color)
+
+    gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2], 'B N_i C -> (B N_i) C')
+    fg_merge_batch_inst_idx = (points[mask_fg, 0].long() * max_num_inst
+                               + points[mask_fg, map_point_feat2idx['inst_idx']].long())
+    fg_boxes_xy = gt_boxes_xy[fg_merge_batch_inst_idx]  # (N_fg, 2)
+    target_inst_assoc = fg_boxes_xy - points[mask_fg, 1: 3]  # (N_fg, 2)
+    print('showing offseted foreground')
+    points[mask_fg, 1: 3] = points[mask_fg, 1: 3] + target_inst_assoc
+
+    centers = boxes[0, :, :3]
+    centers_colors = centers.new_zeros(centers.shape[0], 3)
+    centers_colors[:, 2] = 1  # blue for center
+    show_pointcloud(torch.cat((points[:, 1: 4], centers), dim=0),
+                    viz_boxes(boxes[0, :, :7]),
+                    pc_colors=torch.cat((points_color, centers_colors), dim=0))
+
 
 if __name__ == '__main__':
     is_training = True
@@ -89,4 +122,5 @@ if __name__ == '__main__':
 
     # show_points_cls_and_boxes(batch_dict)
     # check_aligner_training_compute_fg(batch_dict, map_point_feat2idx, vehicle_class_indices)
-    check_consistency_2metas(batch_dict, map_point_feat2idx, vehicle_class_indices)
+    # check_consistency_2metas(batch_dict, map_point_feat2idx, vehicle_class_indices)
+    check_assign_points_wise_target(batch_dict, map_point_feat2idx, vehicle_class_indices)
