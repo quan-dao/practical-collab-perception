@@ -10,7 +10,6 @@ class PointAligner(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.num_sweeps = cfg.NUM_SWEEPS
-        self.return_corrected_pc = cfg.RETURN_CORRECTED_POINT_CLOUD
         self.thresh_motion_prob = cfg.THRESHOLD_MOTION_RPOB
         self.thresh_foreground_prob = cfg.THRESHOLD_FOREGROUND_RPOB
         self.voxel_size = voxel_size  # [vox_x, vox_y, vox_z]

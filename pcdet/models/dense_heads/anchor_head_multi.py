@@ -170,6 +170,8 @@ class AnchorHeadMulti(AnchorHeadTemplate):
             shared_conv_num_filter = input_channels
         self.rpn_heads = None
         self.make_multihead(shared_conv_num_filter)
+        self.point_cloud_range = torch.from_numpy(point_cloud_range).float().cuda() if \
+            isinstance(point_cloud_range, np.ndarray) else torch.tensor(point_cloud_range).float().cuda
 
     def make_multihead(self, input_channels):
         rpn_head_cfgs = self.model_cfg.RPN_HEAD_CFGS
@@ -218,8 +220,17 @@ class AnchorHeadMulti(AnchorHeadTemplate):
         self.forward_ret_dict.update(ret)
 
         if self.training:
+            # remove boxes that are outside of range because it didn't get taken care by data processing
+            valid_gt_boxes = torch.zeros_like(data_dict['gt_boxes'])  # (B, N_boxes_max, C)
+            for b_idx in range(data_dict['batch_size']):
+                current_boxes = data_dict['gt_boxes'][b_idx]
+                mask_in_range = torch.logical_and(current_boxes[:, :3] >= self.point_cloud_range[:3],
+                                                  current_boxes[:, :3] < self.point_cloud_range[3:] - 1e-3).all(dim=1)
+                num_boxes_in_range = mask_in_range.long().sum()
+                valid_gt_boxes[b_idx, :num_boxes_in_range] = current_boxes[mask_in_range]
+
             targets_dict = self.assign_targets(
-                gt_boxes=data_dict['gt_boxes']
+                gt_boxes=valid_gt_boxes
             )
             self.forward_ret_dict.update(targets_dict)
 
