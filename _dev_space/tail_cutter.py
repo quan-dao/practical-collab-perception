@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from sklearn.cluster import DBSCAN
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
 from _dev_space.tail_cutter_utils import *
+from _dev_space.cluster import Cluster
 
 
 class PointAligner(nn.Module):
@@ -69,7 +69,7 @@ class PointAligner(nn.Module):
         self.seg_loss = CELovaszLoss(num_classes=2)  # binary classification for both fg seg & motion seg
 
         # TODO: use PCAccumulation cluster.py
-        self.clusterer = DBSCAN(eps=cfg.CLUSTER.EPS, min_samples=cfg.CLUSTER.MIN_POINTS, metric='precomputed')
+        self.clusterer = Cluster(cfg.CLUSTER, self.point_cloud_range)
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
@@ -165,72 +165,38 @@ class PointAligner(nn.Module):
             meta = self.build_meta_dict(fg, max_num_inst, self.map_point_feat2idx['aug_inst_idx'])
 
         else:
-            raise NotImplementedError
-            if self.thresh_foreground_prob > 0:
-                mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.thresh_foreground_prob
-                mask_motion = rearrange(sigmoid(pred_points_mos), 'N 1 -> N') > self.thresh_motion_prob
-                mask_fg = torch.logical_and(mask_fg, mask_motion)
-                fg = batch_dict['points'][mask_fg]
-                # (N_fg, 9) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx
-                # during testing, inst_idx & aug_inst_idx can be -1
-                fg_batch_idx = points_batch_idx[mask_fg]  # (N_fg,)
-                fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
-                fg_inst_idx = -fg.new_ones(fg.shape[0]).long()
+            mask_fg = rearrange(sigmoid(pred_points_fg), 'N 1 -> N') > self.thresh_foreground_prob
+            fg = batch_dict['points'][mask_fg]
+            fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
+            # fg: (N_fg, 9) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
+            # during testing, inst_idx & aug_inst_idx can be -1
 
-                bg = batch_dict['points'][torch.logical_not(mask_fg)]
-                # ==
-                # DBSCAN to get instance_idx during inference
-                # ==
-                # apply inst_assoc
-                fg_embed = fg[:, 1: 3] + pred_points_inst_assoc[mask_fg]  # (N_fg, 2)
+            bg = batch_dict['points'][torch.logical_not(mask_fg)]
 
-                # invoke dbscan
-                max_num_inst = 0
-                for batch_idx in range(batch_dict['batch_size']):
-                    mask_batch = fg_batch_idx == batch_idx
-                    cur_fg_embed_numpy = fg_embed[mask_batch]  # (N_cur, 2)
-                    if cur_fg_embed_numpy.shape[0] == 0 or cur_fg_embed_numpy.shape[0] > 15000:
-                        # there is no fg for this data sample ==> no need for clustering
-                        print(f"skipping | num detected fg: {cur_fg_embed_numpy.shape[0]} | "
-                              f"num gt fg: {(batch_dict['points'][:, -2] > -1).long().sum()}")
-                        continue
-                    distances = rearrange(cur_fg_embed_numpy, 'N C -> N 1 C') - rearrange(cur_fg_embed_numpy, 'N C -> 1 N C')
-                    distances = distances.square_().sum(dim=-1).sqrt_().detach().cpu().numpy()
-                    self.clusterer.fit(distances)
-                    fg_labels = self.clusterer.labels_  # (N_cur,)
+            # apply inst_assoc
+            fg_embed = fg[:, 1: 3] + pred_points_inst_assoc[mask_fg]  # (N_fg, 2)
 
-                    # update fg_inst_idx
-                    fg_inst_idx[mask_batch] = torch.from_numpy(fg_labels).long().to(fg.device)
+            # clustering
+            fg_inst_idx, max_num_inst = self.clusterer(batch_dict['batch_size'], torch.cat([fg[:, [0]], fg_embed], dim=1))
 
-                    # update max_num_inst
-                    max_num_inst = max(max_num_inst, np.max(fg_labels))
+            # remove noisy foreground (i.e. foreground that don't get assigned to any clusters)
+            valid_fg = fg_inst_idx > -1
+            if not torch.all(valid_fg):
+                # have some invalid fg -> add them to background
+                bg = torch.cat([bg, fg[torch.logical_not(valid_fg)]], dim=0)  # (N_bg, 9)
 
-                # remove noisy foreground (i.e. foreground that don't get assigned to any clusters)
-                valid_fg = fg_inst_idx > -1
-                if not torch.all(valid_fg):
-                    # have some invalid fg -> add them to background
-                    bg = torch.cat([bg, fg[torch.logical_not(valid_fg)]], dim=0)  # (N_bg, 9)
-                fg = fg[valid_fg]  # (N_fg_valid, 9)
-                fg[:, -1] = fg_inst_idx[valid_fg]  # overwrite fg's dummy instance index with DBSCAN result
-                fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
-                if max_num_inst > 0:
-                    max_num_inst += 1  # because np.max(fg_labels) return the index (ranging from 0 to N_inst-1)
-            else:
-                # use for training detector, DBSCAN takes wait too long
-                mask_fg = batch_dict['points'][:, -1].long() > -1  # aug instance_idx (here drop less heavily)
-                fg = batch_dict['points'][mask_fg]
-                # (N_fg, 9) - batch_idx, x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx
-                max_num_inst = batch_dict['instances_tf'].shape[1]
-                fg_feat = points_feat[mask_fg]  # (N_fg, C_bev)
-                bg = batch_dict['points'][torch.logical_not(mask_fg)]
+            fg = fg[valid_fg]  # (N_fg_valid, 9)
+            fg_feat = fg_feat[valid_fg]  # (N_fg_valid, C_bev)
+            # overwrite inst_idx & augmented inst_idx with DBSCAN result
+            fg[:, self.map_point_feat2idx['inst_idx']] = fg_inst_idx[valid_fg]  # overwrite fg's dummy instance index with DBSCAN result
+            # fg[:, self.map_point_feat2idx['aug_inst_idx']] = fg_inst_idx[valid_fg]  # overwrite fg's dummy instance index with DBSCAN result
 
             if max_num_inst == 0:
                 # not id any instance -> no need for correction
                 # early return
-                batch_dict['points'] = batch_dict['points'][:, :-3]
                 return batch_dict
 
-            meta = self.build_meta_dict(fg, max_num_inst, kwargs.get('use_augmented_instance_idx', True))
+            meta = self.build_meta_dict(fg, max_num_inst, self.map_point_feat2idx['inst_idx'])
 
         # ------------
         # compute instance global feature
@@ -282,27 +248,14 @@ class PointAligner(nn.Module):
                 f"{target_meta['inst_bi'].shape[0]} == {meta['inst_bi'].shape[0]}"
             assert torch.all(target_meta['inst_bi'] == meta['inst_bi'])
         else:
-            raise NotImplementedError
             _ = correct_point_cloud(
                 fg,
                 rearrange(sigmoid(pred_inst_motion_stat), 'N_inst 1 -> N_inst'),
-                torch.cat([pred_dict['local_rot'], rearrange(pred_dict['local_transl'], 'N_local C -> N_local C 1')], dim=-1),
+                torch.cat([self.forward_return_dict['prediction']['local_rot'],
+                           rearrange(self.forward_return_dict['prediction']['local_transl'], 'N_l C -> N_l C 1')], dim=-1),
                 meta
             )
             batch_dict['points'] = torch.cat([fg, bg], dim=0)
-
-            mask_foreground = batch_dict['points'].new_zeros(batch_dict['points'].shape[0])
-            mask_foreground[:fg.shape[0]] = 1.0
-
-            if isinstance(sampled_points, torch.Tensor):
-                batch_dict['points'] = torch.cat([batch_dict['points'], sampled_points], dim=0)
-                mask_foreground = torch.cat([mask_foreground, sampled_points.new_ones(sampled_points.shape[0])], dim=0)
-
-            # remove sweep_idx, inst_idx, aug_inst_idx
-            batch_dict['points'] = batch_dict['points'][:, :-3]
-
-            # store mask_foreground for debugging purpose
-            batch_dict['debug_mask_foreground'] = mask_foreground
 
         return batch_dict
 
