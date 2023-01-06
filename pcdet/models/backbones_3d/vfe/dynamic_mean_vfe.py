@@ -14,7 +14,11 @@ from .vfe_template import VFETemplate
 class DynamicMeanVFE(VFETemplate):
     def __init__(self, model_cfg, num_point_features, voxel_size, grid_size, point_cloud_range, **kwargs):
         super().__init__(model_cfg=model_cfg)
+        # enable overwriting num_point_features from config file
+        if model_cfg.get('NUM_POINT_FEATURES', None) is not None:
+            num_point_features = model_cfg.NUM_POINT_FEATURES
         self.num_point_features = num_point_features
+        self.num_raw_point_features = num_point_features
 
         self.grid_size = torch.tensor(grid_size).cuda()
         self.voxel_size = torch.tensor(voxel_size).cuda()
@@ -46,8 +50,7 @@ class DynamicMeanVFE(VFETemplate):
         Returns:
             vfe_features: (num_voxels, C)
         """
-        batch_size = batch_dict['batch_size']
-        points = batch_dict['points'] # (batch_idx, x, y, z, i, e)
+        points = batch_dict['points'][:, :1 + self.num_raw_point_features] # (batch_idx, x, y, z, i, e)
 
         # # debug
         point_coords = torch.floor((points[:, 1:4] - self.point_cloud_range[0:3]) / self.voxel_size).int()

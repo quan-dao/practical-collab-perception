@@ -22,6 +22,7 @@ MODEL:
 
     VFE:
         NAME: DynMeanVFE
+        NUM_POINT_FEATURES: 5
 
     BACKBONE_3D:
         NAME: VoxelResBackBone8x

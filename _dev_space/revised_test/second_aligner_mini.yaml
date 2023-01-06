@@ -51,11 +51,26 @@ DATA_CONFIG:
 
             -   NAME: random_world_scaling
                 WORLD_SCALE_RANGE: [0.95, 1.05]
+
+    DATA_PROCESSOR:
+        -   NAME: mask_points_and_boxes_outside_range
+            REMOVE_OUTSIDE_BOXES: False
+
+        -   NAME: shuffle_points
+            SHUFFLE_ENABLED: {
+                'train': True,
+                'test': True
+            }
+
+        -   NAME: transform_points_to_voxels_placeholder
+            VOXEL_SIZE: [0.1, 0.1, 0.2]
+
 MODEL:
     NAME: SECONDNet
 
     VFE:
         NAME: DynMeanVFE
+        NUM_POINT_FEATURES: 5
 
     BACKBONE_3D:
         NAME: VoxelResBackBone8x
