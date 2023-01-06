@@ -30,5 +30,8 @@ class SECONDNet(Detector3DTemplate):
             **tb_dict
         }
 
-        loss = loss_rpn
+        loss_aligner, tb_dict = self.aligner.get_training_loss(tb_dict)
+        tb_dict['loss_aligner'] = loss_aligner.item()
+
+        loss = loss_rpn + loss_aligner
         return loss, tb_dict, disp_dict
