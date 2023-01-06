@@ -53,9 +53,6 @@ DATA_CONFIG:
                 WORLD_SCALE_RANGE: [0.95, 1.05]
 
     DATA_PROCESSOR:
-        -   NAME: mask_points_and_boxes_outside_range
-            REMOVE_OUTSIDE_BOXES: False
-
         -   NAME: shuffle_points
             SHUFFLE_ENABLED: {
                 'train': True,
@@ -98,12 +95,22 @@ MODEL:
             INSTANCE_INDEX: 1
             AUGMENTED_INSTANCE_INDEX: 2
             CLASS_INDEX: 3
+        VEHICLE_CLASSES: ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'motorcycle', 'bicycle']
 
         HEAD_MID_CHANNELS: [128]
         INSTANCE_MID_CHANNELS: [128]
         INSTANCE_OUT_CHANNELS: 128
         INSTANCE_HEAD_USE_DROPOUT: True
-        EVAL_SEGMENTATION_WHILE_TRAINING: False
+        LOSS:
+            LOSS_WEIGHTS:
+                FOREGROUND: 1.0
+                INSTANCE_ASSOC: 1.0
+                INSTANCE_MOTION_SEG: 1.0
+                LOCAL_TRANSLATION: 1.0
+                LOCAL_ROTATION: 1.0
+                RECONSTRUCTION: 1.0
+
+            EVAL_SEGMENTATION_WHILE_TRAINING: False
 
     DENSE_HEAD:
         NAME: AnchorHeadMulti
