@@ -384,8 +384,6 @@ class DataBaseSampler(object):
         num_point_features = points.shape[1]
         num_original_instances = data_dict['instances_tf'].shape[0]
 
-        tf_current_from_glob = LA.inv(data_dict['metadata']['tf_glob_from_lidar'])  # (4, 4)
-
         obj_points_list = list()
         instances_tf_list = list()
         sampled_boxes_list = list()
@@ -418,12 +416,8 @@ class DataBaseSampler(object):
             mask_aug_fg = obj_points[:, self.map_point_feat2idx['aug_inst_idx']].astype(int) > -1
             obj_points[mask_aug_fg, self.map_point_feat2idx['aug_inst_idx']] = num_original_instances + idx
 
-            # update sampled instance's tf
-            tf_glob_from_sampled = info['tf_glob_from_lidar']  # (4, 4)
-            tf_current_from_sampled = tf_current_from_glob @ tf_glob_from_sampled
+            # keep sampled instance's tf as their original value
             inst_tf = info['instance_tf']  # (max_sweeps, 4, 4)
-            # transform inst_tf from sampled's LiDAR to current's LiDAR
-            inst_tf = np.einsum('ij, bjk, kh -> bih', tf_current_from_sampled, inst_tf, LA.inv(tf_current_from_sampled))
             # zero-out padded tf
             max_sweep_idx = np.max(obj_points[:, self.map_point_feat2idx['sweep_idx']].astype(int))
             inst_tf[max_sweep_idx:] *= 0.0
