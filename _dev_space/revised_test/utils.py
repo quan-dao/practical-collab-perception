@@ -27,6 +27,9 @@ def make_batch_dict(is_training: bool, batch_size=1, target_batch_idx=5) -> dict
 
 
 def color_points_by_detection_cls(points) -> np.ndarray:
+    if not isinstance(points, np.ndarray):
+        assert isinstance(points, torch.Tensor)
+        points = points.numpy()
     cls_colors = plt.cm.rainbow(np.linspace(0, 1, 11))[:, :3]
     idx_cls = 9
     points_cls_idx = points[:, idx_cls].astype(int)

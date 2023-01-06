@@ -154,6 +154,7 @@ class NuScenesDataset(DatasetTemplate):
                 'token': info['token'],
                 'tf_glob_from_lidar': tf_glob_from_lidar,  # (4, 4)
                 'num_sweeps': num_sweeps,
+                'num_original_instances': _out['instances_tf'].shape[0]
             }
         }
 

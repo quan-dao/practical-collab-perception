@@ -432,7 +432,7 @@ class DataBaseSampler(object):
             sampled_box = info['box3d_lidar']   # (9,)
 
             # nearest neighbor to put sampled_box & obj_points on the ground
-            idx_nearest_gt = tree_gt_boxes.query(sampled_box[:3].reshape(1, 3), k=1, return_distance=False)[0]
+            idx_nearest_gt = tree_gt_boxes.query(sampled_box[:2].reshape(1, 2), k=1, return_distance=False)[0]
             offset_z = gt_boxes[idx_nearest_gt, 2] - sampled_box[2]
             obj_points[:, 2] += offset_z
             sampled_box[2] = gt_boxes[idx_nearest_gt, 2]
