@@ -412,11 +412,11 @@ class DataBaseSampler(object):
             obj_points[:, :3] += info['box3d_lidar'][:3].astype(np.float32)
 
             # update obj_points instance_idx
-            obj_points[:, self.map_point_feat2idx['inst_idx']] += num_original_instances
+            obj_points[:, self.map_point_feat2idx['inst_idx']] = num_original_instances + idx
 
             # update obj_points' aug_inst_idx
             mask_aug_fg = obj_points[:, self.map_point_feat2idx['aug_inst_idx']].astype(int) > -1
-            obj_points[mask_aug_fg, self.map_point_feat2idx['aug_inst_idx']] += num_original_instances
+            obj_points[mask_aug_fg, self.map_point_feat2idx['aug_inst_idx']] = num_original_instances + idx
 
             # update sampled instance's tf
             tf_glob_from_sampled = info['tf_glob_from_lidar']  # (4, 4)
