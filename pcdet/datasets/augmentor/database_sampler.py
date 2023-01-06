@@ -418,9 +418,6 @@ class DataBaseSampler(object):
 
             # keep sampled instance's tf as their original value
             inst_tf = info['instance_tf']  # (max_sweeps, 4, 4)
-            # zero-out padded tf
-            max_sweep_idx = np.max(obj_points[:, self.map_point_feat2idx['sweep_idx']].astype(int))
-            inst_tf[max_sweep_idx:] *= 0.0
 
             # get sampled gt box & update its instance index
             sampled_box = info['box3d_lidar']   # (9,)
