@@ -6,7 +6,7 @@ from _dev_space.viz_tools import print_dict
 from _dev_space._test.tools_4testing import load_data_to_tensor, load_dict_to_gpu, load_dict_to_cpu
 from _dev_space.pc_corrector import PointCloudCorrector
 from utils import show_pointcloud, viz_boxes
-import matplotlib.pyplot as plt
+import sys
 
 
 def make_target(target_batch_idx=1, batch_size=3, is_training=True):
@@ -82,9 +82,9 @@ def show_target(batch_dict, chosen_batch_idx=1):
           '-----')
     fg_embedding = target['fg_embedding']  # (N_fg, 2)
     to_center_fg = torch.clone(fg)
-    to_center_fg[:, :2] += fg_embedding
+    to_center_fg[:, 1: 3] += fg_embedding
 
-    cur_to_center_fg = to_center_fg[to_center_fg[:, 0].long() == chosen_batch_idx, 1: 4]
+    cur_to_center_fg = to_center_fg[fg[:, 0].long() == chosen_batch_idx, 1: 4]
     cur_bg = bg[bg[:, 0].long() == chosen_batch_idx, 1: 4]
 
     color_to_center = torch.zeros(cur_to_center_fg.shape[0] + cur_bg.shape[0], 3)
@@ -112,6 +112,12 @@ def show_target(batch_dict, chosen_batch_idx=1):
 
 
 if __name__ == '__main__':
-    batch_dict = torch.load('corrector_target_batch_dict.pth')
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'make_target':
+            batch_dict = make_target(target_batch_idx=1, batch_size=3, is_training=True)
+        else:
+            raise ValueError
+    else:
+        batch_dict = torch.load('corrector_target_batch_dict.pth')
     show_target(batch_dict, chosen_batch_idx=1)
 

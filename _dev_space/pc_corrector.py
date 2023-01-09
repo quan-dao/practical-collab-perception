@@ -251,7 +251,7 @@ class PointCloudCorrector(nn.Module):
         # --
         # points' embedding
         # --
-        gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2], 'B N_inst_max C -> (B N_inst_max) C')
+        gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2], 'B N_inst_max C -> (B N_inst_max) C')[meta['instance_bi']]
         locals_box_xy = gt_boxes_xy[meta['inst2locals']]  # # (N_local, 2)
         fg_box_xy = locals_box_xy[meta['locals2fg']]  # (N_fg, 2)
         fg_embedding = fg_box_xy - points[mask_fg, 1: 3]  # (N_fg, 2)
@@ -290,7 +290,7 @@ class PointCloudCorrector(nn.Module):
 
         batch_valid_gt_boxes = gt_boxes.new_zeros(batch_dict['batch_size'], max_num_valid_boxes, gt_boxes.shape[2])
         for bidx, valid_boxes in enumerate(valid_gt_boxes):
-            batch_valid_gt_boxes[bidx, valid_boxes.shape[0]] = valid_boxes
+            batch_valid_gt_boxes[bidx, :valid_boxes.shape[0]] = valid_boxes
 
         batch_dict.pop('gt_boxes')
         batch_dict['gt_boxes'] = batch_valid_gt_boxes
