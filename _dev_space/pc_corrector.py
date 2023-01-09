@@ -72,9 +72,9 @@ class PointCloudCorrector(nn.Module):
         self.loss_instance_mos = CELovaszLoss(num_classes=2)
 
         # --
-        self.eval_segmentation = model_cfg.get('EVAL_SEGMENTATION_WHILE_TRAINING', False)  # TODO: multi class P/R
-        self.precision_points_cls = Precision(task='multiclass', average='marco', num_classes=3, threshold=0.5)
-        self.recall_points_cls = Recall(task='multiclass', average='marco', num_classes=3, threshold=0.5)
+        self.eval_segmentation = model_cfg.get('EVAL_SEGMENTATION_WHILE_TRAINING', False)
+        self.precision_points_cls = Precision(task='multiclass', average='macro', num_classes=3, threshold=0.5, top_k=1)
+        self.recall_points_cls = Recall(task='multiclass', average='macro', num_classes=3, threshold=0.5, top_k=1)
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
@@ -236,7 +236,7 @@ class PointCloudCorrector(nn.Module):
         # points' class
         # --
         points_cls = points.new_zeros(num_points, 3)  # bg | static fg | dynamic fg
-        mask_fg = meta['fg_mask']
+        mask_fg = meta['mask_fg']
         # background
         points_cls[torch.logical_not(mask_fg), 0] = 1
 

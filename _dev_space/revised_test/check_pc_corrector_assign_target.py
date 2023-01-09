@@ -3,14 +3,14 @@ from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
 from pcdet.utils import common_utils
 from _dev_space.viz_tools import print_dict
-from _dev_space._test.tools_4testing import load_data_to_tensor
+from _dev_space._test.tools_4testing import load_data_to_tensor, load_dict_to_gpu, load_dict_to_cpu
 from _dev_space.pc_corrector import PointCloudCorrector
 from utils import show_pointcloud, viz_boxes
 import matplotlib.pyplot as plt
 
 
 def make_target(target_batch_idx=1, batch_size=3, is_training=True):
-    cfg_file = './second_aligner_mini.yaml'
+    cfg_file = './second_corrector_mini.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./a_dummy_log.txt')
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES,
@@ -23,8 +23,9 @@ def make_target(target_batch_idx=1, batch_size=3, is_training=True):
         batch_dict = next(iter_dataloader)
     load_data_to_tensor(batch_dict)
     print_dict(batch_dict, 'batch_dict')
+    load_dict_to_gpu(batch_dict)
 
-    corrector = PointCloudCorrector(cfg.CORRECTOR, num_bev_features=1, voxel_size=[0.1, 0.1, 0.2],
+    corrector = PointCloudCorrector(cfg.MODEL.CORRECTOR, num_bev_features=1, voxel_size=[0.1, 0.1, 0.2],
                                     point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
 
     # extract fg
@@ -42,6 +43,8 @@ def make_target(target_batch_idx=1, batch_size=3, is_training=True):
 
     batch_dict['target'] = target
     batch_dict['meta'] = meta
+
+    load_dict_to_cpu(batch_dict)
     torch.save(batch_dict, 'corrector_target_batch_dict.pth')
     return batch_dict
 
