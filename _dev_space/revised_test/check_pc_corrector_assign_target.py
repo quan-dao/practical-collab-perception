@@ -104,7 +104,7 @@ def show_target(batch_dict, chosen_batch_idx=1):
         color_corrected_fg[mask_dyn_fg, 0] = 1  # red: dynamic fg
         color_corrected_fg[torch.logical_not(mask_dyn_fg), 2] = 1  # blue: static fg
 
-        show_pointcloud(torch.cat([corrected_fg[:, 1: 4], cur_bg], dim=0), viz_gt_boxes,
+        show_pointcloud(torch.cat([corrected_fg[fg[:, 0].long() == chosen_batch_idx, 1: 4], cur_bg], dim=0), viz_gt_boxes,
                         torch.cat([color_corrected_fg[fg[:, 0].long() == chosen_batch_idx], torch.zeros(cur_bg.shape[0], 3)], dim=0))
 
     else:
@@ -119,5 +119,5 @@ if __name__ == '__main__':
             raise ValueError
     else:
         batch_dict = torch.load('corrector_target_batch_dict.pth')
-    show_target(batch_dict, chosen_batch_idx=1)
+        show_target(batch_dict, chosen_batch_idx=2)
 
