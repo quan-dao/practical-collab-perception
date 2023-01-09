@@ -3,8 +3,9 @@ import torch.nn as nn
 from torch_scatter import scatter_max, scatter_min, scatter_mean
 from einops import rearrange
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, eval_binary_segmentation
+from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, eval_binary_segmentation, quat2mat
 from typing import List
+from torchmetrics import Precision, Recall
 
 
 class PointCloudCorrector(nn.Module):
@@ -69,7 +70,11 @@ class PointCloudCorrector(nn.Module):
         # -------
         self.loss_points_seg = CELovaszLoss(num_classes=3)
         self.loss_instance_mos = CELovaszLoss(num_classes=2)
+
+        # --
         self.eval_segmentation = model_cfg.get('EVAL_SEGMENTATION_WHILE_TRAINING', False)  # TODO: multi class P/R
+        self.precision_points_cls = Precision(task='multiclass', average='marco', num_classes=3, threshold=0.5)
+        self.recall_points_cls = Recall(task='multiclass', average='marco', num_classes=3, threshold=0.5)
 
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
@@ -198,9 +203,11 @@ class PointCloudCorrector(nn.Module):
             target_dict = self.assign_target(batch_dict, meta)
 
             # save prediction & target for computing loss
+            meta['fg'] = fg
             self.forward_return_dict.update({
                 'prediction': prediction_dict,
-                'target': target_dict
+                'target': target_dict,
+                'meta': meta
             })
 
         else:
@@ -264,7 +271,7 @@ class PointCloudCorrector(nn.Module):
             fg_offset = None
 
         target_dict = {'locals_tf': locals_tf,
-                       'mask_inst_mos': mask_inst_mos.long(),
+                       'inst_mos': mask_inst_mos.long(),
                        'points_cls': points_cls.long(),
                        'fg_embedding': fg_embedding,
                        'fg_offset': fg_offset}
@@ -289,3 +296,128 @@ class PointCloudCorrector(nn.Module):
         batch_dict['gt_boxes'] = batch_valid_gt_boxes
 
         return target_dict
+
+    def get_training_loss(self, tb_dict=None):
+        if tb_dict is None:
+            tb_dict = dict()
+
+        pred = self.forward_return_dict['prediction']
+        target = self.forward_return_dict['target']
+        meta = self.forward_return_dict['meta']
+
+        mask_fg = meta['mask_fg']
+        device = mask_fg.device
+
+        # -----------
+        # point-wise loss
+        # -----------
+
+        # ---
+        # points cls
+        # ---
+        # convert points_cls from one-hot encoding to integer
+        target_points_cls = torch.argmax(target['points_cls'], dim=1)  # (N,)
+
+        l_points_cls = self.loss_points_seg(pred['points_cls_logit'], target_points_cls)
+        tb_dict['l_points_cls'] = l_points_cls.item()
+
+        # ---
+        # [foreground] points embedding
+        # ---
+        l_points_embed = nn.functional.smooth_l1_loss(pred['points_embedding'][mask_fg], target['fg_embedding'],
+                                                      reduction='none').sum(dim=1).mean()
+        tb_dict['l_points_embed'] = l_points_embed.item()
+
+        # ---
+        # [dynamic foreground] points offset
+        # ---
+        if target['fg_offset'] is not None:
+            # compute offset loss for every fg, then zero-out loss of static fg
+            pred_fg_offset = pred['points_offset'][mask_fg]  # (N_fg, 3)
+            l_dyn_fg_offset = nn.functional.smooth_l1_loss(pred_fg_offset, target['fg_offset'], reduction='none')  # (N_fg, 3)
+
+            mask_dyn_fg = target['points_cls'][mask_fg, 2] > 0  # (N_fg,)
+            assert torch.any(mask_dyn_fg)
+            l_dyn_fg_offset = torch.sum(l_dyn_fg_offset * mask_dyn_fg.float().unsqueeze(1), dim=1).mean()
+
+        else:
+            l_dyn_fg_offset = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+        tb_dict['l_dyn_fg_offset'] = l_dyn_fg_offset.item()
+
+        # -----------
+        # instance-wise loss
+        # -----------
+        l_inst_mos = self.loss_instance_mos(pred['inst_mos'], target['inst_mos'])
+        tb_dict['l_inst_mos'] = l_inst_mos.item()
+
+        mask_inst_mos = target['inst_mos'] > 0
+        mask_locals_mos = mask_inst_mos[meta['inst2locals']]  # (N_local,)
+        if torch.any(mask_locals_mos):
+            target_dyn_locals_tf = target['locals_tf'][mask_locals_mos]  # (N_dyn_locals, 3, 4)
+
+            # translation
+            pred_dyn_locals_trans = pred['locals_tf'][mask_locals_mos, :3]  # (N_dyn_locals, 3)
+            l_locals_transl = nn.functional.smooth_l1_loss(pred_dyn_locals_trans, target_dyn_locals_tf[:, :, -1],
+                                                           reduction='none').sum(dim=1).mean()
+
+            # rotation
+            pred_locals_rot = quat2mat(pred['locals_tf'][:, 3:])  # (N_local, 3, 3)
+            pred_dyn_locals_rot = pred_locals_rot[mask_locals_mos]  # (N_dyn_locals, 3, 3)
+            l_locals_rot = torch.linalg.norm(pred_dyn_locals_rot - target_dyn_locals_tf[:, :, :3],
+                                             dim=(1, 2), ord='fro').mean()
+
+            # reconstruction
+            mask_fg_mos = mask_locals_mos[meta['locals2fg']]  # (N_fg,)
+            dyn_fg_xyz = meta['fg'][mask_fg_mos, 1: 4]  # (N_dyn_fg, 3)
+
+            fg_tf = target['locals_tf'][meta['locals2fg']]  # (N_fg, 3, 4)
+            dyn_fg_tf = fg_tf[mask_fg_mos]  # (N_dyn_fg, 3, 4)
+
+            gt_corrected_dyn_fg = (torch.matmul(dyn_fg_tf[:, :3, :3], dyn_fg_xyz.unsqueeze(-1)).squeeze(-1)
+                                   + dyn_fg_tf[:, :3, -1])  # (N_dyn_fg, 3)
+            # --
+            pred_local_tf = torch.cat((pred_locals_rot, pred['locals_tf'][:, :3].unsqueeze(-1)), dim=-1)  # (N_local, 3, 4)
+            pred_fg_tf = pred_local_tf[meta['locals2fg']]
+            pred_dyn_fg_tf = pred_fg_tf[mask_fg_mos]
+
+            corrected_dyn_fg = (torch.matmul(pred_dyn_fg_tf[:, :3, :3], dyn_fg_xyz.unsqueeze(-1)).squeeze(-1)
+                                + pred_dyn_fg_tf[:, :3, -1])  # (N_dyn_fg, 3)
+
+            l_recon = nn.functional.smooth_l1_loss(corrected_dyn_fg, gt_corrected_dyn_fg,
+                                                   reduction='none').sum(dim=1).mean()
+
+            # -----
+            # consistency loss
+            # -----
+            assert target['fg_offset'] is not None
+            pred_dyn_fg_offset = pred_fg_offset[mask_fg_mos]  # (N_dyn_fg, 3)
+            offseted_dyn_fg = pred_dyn_fg_offset + dyn_fg_xyz
+            l_consist = nn.functional.smooth_l1_loss(offseted_dyn_fg, corrected_dyn_fg, reduction='none').sum(dim=1).mean()
+
+        else:
+            l_locals_transl = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+            l_locals_rot = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+            l_recon = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+            l_consist = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+
+        tb_dict.update({
+            'l_locals_transl': l_locals_transl.item(),
+            'l_locals_rot': l_locals_rot.item(),
+            'l_recon': l_recon.item(),
+            'l_consist': l_consist.item()
+        })
+
+        loss = (l_points_cls + l_points_embed + l_dyn_fg_offset
+                + l_inst_mos + l_locals_transl + l_locals_rot + l_recon
+                + l_consist)
+
+        with torch.no_grad():
+            if self.eval_segmentation:
+                points_cls_precision = self.precision_points_cls(pred['points_cls_logit'], target_points_cls)
+                points_cls_recall = self.recall_points_cls(pred['points_cls_logit'], target_points_cls)
+                tb_dict.update({
+                    'points_cls_P': points_cls_precision,
+                    'points_cls_R': points_cls_recall
+                })
+
+        return loss, tb_dict
