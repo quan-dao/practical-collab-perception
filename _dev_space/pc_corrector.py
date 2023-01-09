@@ -213,6 +213,8 @@ class PointCloudCorrector(nn.Module):
         else:
             pass  # TODO: apply points_offset on dynamic foreground points
 
+        return batch_dict
+
     def assign_target(self, batch_dict, meta):
 
         # -------------------
@@ -416,8 +418,8 @@ class PointCloudCorrector(nn.Module):
                 points_cls_precision = self.precision_points_cls(pred['points_cls_logit'], target_points_cls)
                 points_cls_recall = self.recall_points_cls(pred['points_cls_logit'], target_points_cls)
                 tb_dict.update({
-                    'points_cls_P': points_cls_precision,
-                    'points_cls_R': points_cls_recall
+                    'points_cls_P': points_cls_precision.item(),
+                    'points_cls_R': points_cls_recall.item()
                 })
 
         return loss, tb_dict

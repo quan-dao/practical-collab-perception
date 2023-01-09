@@ -29,7 +29,8 @@ class SECONDNet(Detector3DTemplate):
         loss = loss_corrector
 
         if self.dense_head is not None:
-            loss_rpn, tb_dict = self.dense_head.get_loss()
+            loss_rpn, dense_head_tb_dict = self.dense_head.get_loss()
             loss = loss + loss_rpn
+            tb_dict.update(dense_head_tb_dict)
 
         return loss, tb_dict, disp_dict
