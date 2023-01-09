@@ -11,7 +11,7 @@ class SECONDNet(Detector3DTemplate):
             batch_dict = cur_module(batch_dict)
 
         if self.training:
-            loss, tb_dict, disp_dict = self.get_training_loss(batch_dict)
+            loss, tb_dict, disp_dict = self.get_training_loss()
 
             ret_dict = {
                 'loss': loss
@@ -21,17 +21,15 @@ class SECONDNet(Detector3DTemplate):
             pred_dicts, recall_dicts = self.post_processing(batch_dict)
             return pred_dicts, recall_dicts
 
-    def get_training_loss(self, batch_dict):
+    def get_training_loss(self):
         disp_dict = {}
 
-        loss_rpn, tb_dict = self.dense_head.get_loss()
-        tb_dict = {
-            'loss_rpn': loss_rpn.item(),
-            **tb_dict
-        }
+        loss_corrector, tb_dict = self.aligner.get_training_loss()
+        tb_dict['loss_corrector'] = loss_corrector.item()
+        loss = loss_corrector
 
-        loss_aligner, tb_dict = self.aligner.get_training_loss(batch_dict, tb_dict)
-        tb_dict['loss_aligner'] = loss_aligner.item()
+        if self.dense_head is not None:
+            loss_rpn, tb_dict = self.dense_head.get_loss()
+            loss = loss_rpn
 
-        loss = loss_rpn + loss_aligner
         return loss, tb_dict, disp_dict

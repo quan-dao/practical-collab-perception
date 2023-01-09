@@ -10,6 +10,7 @@ from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
 from ..model_utils import model_nms_utils
 from _dev_space.tail_cutter import PointAligner
+from _dev_space.pc_corrector import PointCloudCorrector
 
 
 class Detector3DTemplate(nn.Module):
@@ -23,7 +24,7 @@ class Detector3DTemplate(nn.Module):
 
         self.module_topology = [
             'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
-            'backbone_2d', 'aligner', 'dense_head', 'point_head', 'roi_head'
+            'backbone_2d', 'corrector', 'dense_head', 'point_head', 'roi_head'
         ]
 
     @property
@@ -107,19 +108,18 @@ class Detector3DTemplate(nn.Module):
         model_info_dict['num_bev_features'] = backbone_2d_module.num_bev_features
         return backbone_2d_module, model_info_dict
 
-    def build_aligner(self, model_info_dict):
-        if self.model_cfg.get('ALIGNER', None) is None:
+    def build_corrector(self, model_info_dict):
+        if self.model_cfg.get('CORRECTOR', None) is None:
             return None, model_info_dict
 
-        aligner = PointAligner(
-            cfg=self.model_cfg.ALIGNER,
+        corrector = PointCloudCorrector(
+            model_cfg=self.model_cfg.CORRECTOR,
             num_bev_features=model_info_dict['num_bev_features'],
             voxel_size=model_info_dict['voxel_size'],
             point_cloud_range=model_info_dict['point_cloud_range'],
-            class_names=self.class_names
         )
-        model_info_dict['module_list'].append(aligner)
-        return aligner, model_info_dict
+        model_info_dict['module_list'].append(corrector)
+        return corrector, model_info_dict
 
     def build_pfe(self, model_info_dict):
         if self.model_cfg.get('PFE', None) is None:
@@ -140,6 +140,10 @@ class Detector3DTemplate(nn.Module):
     def build_dense_head(self, model_info_dict):
         if self.model_cfg.get('DENSE_HEAD', None) is None:
             return None, model_info_dict
+
+        if not self.model_cfg.DENSE_HEAD.get('ENABLE', True):
+            return None, model_info_dict
+
         dense_head_module = dense_heads.__all__[self.model_cfg.DENSE_HEAD.NAME](
             model_cfg=self.model_cfg.DENSE_HEAD,
             input_channels=model_info_dict['num_bev_features'],

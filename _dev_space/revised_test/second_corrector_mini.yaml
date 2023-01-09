@@ -59,6 +59,7 @@ MODEL:
         EVAL_SEGMENTATION_WHILE_TRAINING: True
 
     DENSE_HEAD:
+        ENABLE: False
         NAME: AnchorHeadMulti
         CLASS_AGNOSTIC: False
 
