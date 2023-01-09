@@ -110,6 +110,32 @@ def show_target(batch_dict, chosen_batch_idx=1):
     else:
         print('there is no dynamic foreground points')
 
+    print('-----\n'
+          'showing gt reconstruction\n'
+          '-----')
+    mask_inst_mos = target['inst_mos'] > 0
+    mask_locals_mos = mask_inst_mos[meta['inst2locals']]  # (N_local,)
+    if torch.any(mask_locals_mos):
+        mask_fg_mos = mask_locals_mos[meta['locals2fg']]  # (N_fg,)
+        assert torch.all(mask_fg_mos == mask_dyn_fg)
+
+        fg_batch_mask = fg[:, 0].long() == chosen_batch_idx  # (N_fg,)
+
+        dyn_fg_xyz = meta['fg'][mask_fg_mos, 1: 4]  # (N_dyn_fg, 3)
+
+        fg_tf = target['locals_tf'][meta['locals2fg']]  # (N_fg, 3, 4)
+        dyn_fg_tf = fg_tf[mask_fg_mos]  # (N_dyn_fg, 3, 4)
+
+        gt_corrected_dyn_fg = (torch.matmul(dyn_fg_tf[:, :3, :3], dyn_fg_xyz.unsqueeze(-1)).squeeze(-1)
+                               + dyn_fg_tf[:, :3, -1])  # (N_dyn_fg, 3)
+
+        cur_corr_dyn_fg = gt_corrected_dyn_fg[fg_batch_mask[mask_fg_mos]]  # (N_curr_dyn_fg, 3)
+        cur_static_fg = fg[torch.logical_and(fg_batch_mask, torch.logical_not(mask_fg_mos)), 1: 4]
+        show_pointcloud(torch.cat([cur_corr_dyn_fg, cur_static_fg, cur_bg]), viz_gt_boxes,
+                        torch.cat([torch.tensor([[1, 0, 0]]).repeat(cur_corr_dyn_fg.shape[0], 1),
+                                   torch.tensor([[0, 0, 1]]).repeat(cur_static_fg.shape[0], 1),
+                                   torch.zeros(cur_bg.shape[0], 3)]))
+
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
@@ -119,5 +145,5 @@ if __name__ == '__main__':
             raise ValueError
     else:
         batch_dict = torch.load('corrector_target_batch_dict.pth')
-        show_target(batch_dict, chosen_batch_idx=2)
+        show_target(batch_dict, chosen_batch_idx=1)
 
