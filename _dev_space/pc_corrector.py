@@ -170,17 +170,17 @@ class PointCloudCorrector(nn.Module):
             meta = self.build_meta(fg, batch_dict['gt_boxes'].shape[1], mask_fg)
 
             # compute locals' shape encoding
-            locals_centroid = scatter_mean(fg[:, 1: 4], meta['locals2fg'], dim=1)  # (N_local, 3)
+            locals_centroid = scatter_mean(fg[:, 1: 4], meta['locals2fg'], dim=0)  # (N_local, 3)
             centered_fg = fg[:, 1: 4] - locals_centroid[meta['locals2fg']]  # (N_fg, 3)
             locals_shape_encoding = scatter_max(self.local_shape_encoder(centered_fg), meta['locals2fg'],
-                                                dim=1)[0]  # (N_local, C)
+                                                dim=0)[0]  # (N_local, C)
 
             # compute locals feat
-            locals_feat = scatter_max(fg_feat, meta['locals2fg'], dim=1)[0]  # (N_local, C)
+            locals_feat = scatter_max(fg_feat, meta['locals2fg'], dim=0)[0]  # (N_local, C)
             locals_feat = locals_feat + locals_shape_encoding  # (N_local, C)
 
             # compute globals stuff
-            globals_feat = scatter_max(locals_feat, meta['inst2locals'], dim=1)[0]  # (N_global, C)
+            globals_feat = scatter_max(locals_feat, meta['inst2locals'], dim=0)[0]  # (N_global, C)
             globals_init_local_center = locals_centroid[meta['indices_locals_min_sweep']]  # (N_global, 3)
             globals_target_local_center = locals_centroid[meta['indices_locals_max_sweep']]  # (N_global, 3)
 

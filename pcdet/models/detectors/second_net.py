@@ -24,12 +24,12 @@ class SECONDNet(Detector3DTemplate):
     def get_training_loss(self):
         disp_dict = {}
 
-        loss_corrector, tb_dict = self.aligner.get_training_loss()
+        loss_corrector, tb_dict = self.corrector.get_training_loss()
         tb_dict['loss_corrector'] = loss_corrector.item()
         loss = loss_corrector
 
         if self.dense_head is not None:
             loss_rpn, tb_dict = self.dense_head.get_loss()
-            loss = loss_rpn
+            loss = loss + loss_rpn
 
         return loss, tb_dict, disp_dict

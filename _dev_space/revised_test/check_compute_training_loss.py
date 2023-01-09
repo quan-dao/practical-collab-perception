@@ -7,7 +7,7 @@ from pcdet.models.detectors import SECONDNet
 
 
 def main(target_batch_idx=1, batch_size=1, is_training=True):
-    cfg_file = './second_aligner_mini.yaml'
+    cfg_file = './second_corrector_mini.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./a_dummy_log.txt')
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES,
