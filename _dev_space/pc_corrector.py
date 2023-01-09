@@ -90,7 +90,7 @@ class PointCloudCorrector(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def build_meta(self, foreground: torch.Tensor, max_num_instances_in_batch: int):
+    def build_meta(self, foreground: torch.Tensor, max_num_instances_in_batch: int, mask_fg: torch.Tensor):
         fg_batch_inst_sw = (foreground[:, 0].long() * max_num_instances_in_batch
                             + foreground[:, self.map_point_feat2idx['inst_idx']].long()) * self.num_sweeps \
                            + foreground[:, self.map_point_feat2idx['sweep_idx']].long()
@@ -113,7 +113,11 @@ class PointCloudCorrector(nn.Module):
         meta = {'locals2fg': locals2fg,
                 'inst2locals': inst2locals,
                 'indices_locals_max_sweep': indices_locals_max_sweep,
-                'indices_locals_min_sweep': indices_locals_min_sweep}
+                'indices_locals_min_sweep': indices_locals_min_sweep,
+                'locals_bis': locals_bis,
+                'instance_bi': instance_bi,
+                'mask_fg': mask_fg,
+                'num_fg': mask_fg.long().sum().item()}
         return meta
 
     def forward(self, batch_dict: dict):
@@ -154,11 +158,11 @@ class PointCloudCorrector(nn.Module):
             # -------
             # instance stuff
             # -------
-            fg_mask = points[:, self.map_point_feat2idx['inst_idx']] > -1  # all 10 classes
-            fg = points[fg_mask]
-            fg_feat = points_feat[fg_mask]  # (N_fg, C)
+            mask_fg = points[:, self.map_point_feat2idx['inst_idx']] > -1  # all 10 classes
+            fg = points[mask_fg]
+            fg_feat = points_feat[mask_fg]  # (N_fg, C)
 
-            meta = self.build_meta(fg, batch_dict['gt_boxes'].shape[1])
+            meta = self.build_meta(fg, batch_dict['gt_boxes'].shape[1], mask_fg)
 
             # compute locals' shape encoding
             locals_centroid = scatter_mean(fg[:, 1: 4], meta['locals2fg'], dim=1)  # (N_local, 3)
@@ -203,9 +207,85 @@ class PointCloudCorrector(nn.Module):
             pass  # TODO: apply points_offset on dynamic foreground points
 
     def assign_target(self, batch_dict, meta):
-        pass
 
+        # -------------------
+        # Instances target
+        # -------------------
+        all_locals_tf = rearrange(batch_dict['instances_tf'], 'B N_i N_sw C1 C2 -> (B N_i N_sw) C1 C2', C1=3, C2=4)
+        locals_tf = all_locals_tf[meta['locals_bis']]  # (N_local, 3, 4)
 
+        # instances' motion status
+        # translation of the init_local_tf >= 0.5m
+        all_inst_mos = torch.linalg.norm(batch_dict['instances_tf'][:, :, 0, :, -1], dim=-1) > 0.5  # (B, N_inst_max)
+        mask_inst_mos = rearrange(all_inst_mos, 'B N_inst_max -> (B N_inst_max)')[meta['instance_bi']]  # (N_i,)
 
+        # -------------------
+        # Point-wise target
+        # -------------------
+        points = batch_dict['points']  # (N, C)
+        num_points = points.shape[0]
 
+        # --
+        # points' class
+        # --
+        points_cls = points.new_zeros(num_points, 3)  # bg | static fg | dynamic fg
+        mask_fg = meta['fg_mask']
+        # background
+        points_cls[torch.logical_not(mask_fg), 0] = 1
 
+        # broadcast mask_inst_mos -> local -> foreground
+        mask_locals_mos = mask_inst_mos[meta['inst2locals']]
+        mask_fg_mos = mask_locals_mos[meta['locals2fg']]
+        if meta['num_fg'] > 0:
+            fg_cls = mask_fg.new_zeros(meta['num_fg'], 2).float()  # static fg | dynamic fg
+            fg_cls.scatter_(dim=1, index=mask_fg_mos.view(meta['num_fg'], 1).long(), value=1.0)
+            points_cls[mask_fg, 1:] = fg_cls
+
+        # --
+        # points' embedding
+        # --
+        gt_boxes_xy = rearrange(batch_dict['gt_boxes'][:, :, :2], 'B N_inst_max C -> (B N_inst_max) C')
+        locals_box_xy = gt_boxes_xy[meta['inst2locals']]  # # (N_local, 2)
+        fg_box_xy = locals_box_xy[meta['locals2fg']]  # (N_fg, 2)
+        fg_embedding = fg_box_xy - points[mask_fg, 1: 3]  # (N_fg, 2)
+
+        # --
+        # points' offset
+        # --
+        if torch.any(points_cls[:, 2] > 0):  # if there are any dynamic fg
+            # broadcast locals_tf -> fg
+            fg_tf = locals_tf[meta['locals2fg']]  # (N_fg, 3, 4)
+            # correct fg
+            fg = points[mask_fg]  # (N_fg, C)
+            corrected_fg = torch.matmul(fg_tf[:, :3, :3], fg[:, 1: 4].unsqueeze(-1)).squeeze(-1) + fg_tf[:, :, -1]
+            # target fg offset
+            fg_offset = corrected_fg - fg[:, 1: 4]  # (N_fg, 3)
+        else:
+            fg_offset = None
+
+        target_dict = {'locals_tf': locals_tf,
+                       'mask_inst_mos': mask_inst_mos.long(),
+                       'points_cls': points_cls.long(),
+                       'fg_embedding': fg_embedding,
+                       'fg_offset': fg_offset}
+
+        # --
+        # remove gt_boxes that are outside of pc range
+        # --
+        valid_gt_boxes = list()
+        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, C)
+        max_num_valid_boxes = 0
+        for bidx in range(batch_dict['batch_size']):
+            mask_in_range = torch.logical_and(gt_boxes[bidx, :, :3] >= self.point_cloud_range[:3],
+                                              gt_boxes[bidx, :, :3] < self.point_cloud_range[3:]).all(dim=1)
+            valid_gt_boxes.append(gt_boxes[bidx, mask_in_range])
+            max_num_valid_boxes = max(max_num_valid_boxes, valid_gt_boxes[-1].shape[0])
+
+        batch_valid_gt_boxes = gt_boxes.new_zeros(batch_dict['batch_size'], max_num_valid_boxes, gt_boxes.shape[2])
+        for bidx, valid_boxes in enumerate(valid_gt_boxes):
+            batch_valid_gt_boxes[bidx, valid_boxes.shape[0]] = valid_boxes
+
+        batch_dict.pop('gt_boxes')
+        batch_dict['gt_boxes'] = batch_valid_gt_boxes
+
+        return target_dict
