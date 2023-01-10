@@ -3,10 +3,11 @@ from pcdet.datasets import build_dataloader
 from pcdet.utils import common_utils
 from _dev_space.viz_tools import print_dict
 from _dev_space._test.tools_4testing import load_data_to_tensor, load_dict_to_gpu, BackwardHook
-from pcdet.models.detectors import SECONDNet
+from pcdet.models.detectors import SECONDNet, CenterPoint
+import sys
 
 
-def main(target_batch_idx=1, batch_size=1, is_training=True):
+def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
     cfg_file = './second_corrector_mini.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./a_dummy_log.txt')
@@ -22,7 +23,12 @@ def main(target_batch_idx=1, batch_size=1, is_training=True):
     print_dict(batch_dict, 'batch_dict')
     load_dict_to_gpu(batch_dict)
 
-    model = SECONDNet(cfg.MODEL, num_class=10, dataset=dataset)
+    if model_name == 'second':
+        model = SECONDNet(cfg.MODEL, num_class=10, dataset=dataset)
+    elif model_name == 'pillar':
+        model = CenterPoint(cfg.MODEL, num_class=10, dataset=dataset)
+    else:
+        raise ValueError(f"{model_name} is unknown")
     print('---\n',
           model,
           '\n---')
@@ -43,8 +49,4 @@ def main(target_batch_idx=1, batch_size=1, is_training=True):
 if __name__ == '__main__':
     # set this in the terminal:
     # CUDA_VISIBLE_DEVICES=2
-    main()
-
-
-
-
+    main(sys.argv[1])
