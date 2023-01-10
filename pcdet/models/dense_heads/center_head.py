@@ -191,17 +191,7 @@ class CenterHead(nn.Module):
                 for idx, name in enumerate(gt_class_names):
                     if name not in cur_class_names:
                         continue
-
-                    # check if box's center is outside of point cloud range
                     temp_box = cur_gt_boxes[idx]
-                    valid_box = True
-                    for coord_idx in range(3):
-                        valid_box = valid_box & \
-                                    (temp_box[coord_idx] >= self.point_cloud_range[coord_idx]) & \
-                                    (temp_box[coord_idx] < self.point_cloud_range[coord_idx + 3] - 1e-3)
-                    if not valid_box:
-                        continue
-
                     temp_box[-1] = cur_class_names.index(name) + 1
                     gt_boxes_single_head.append(temp_box[None, :])
 
@@ -334,7 +324,6 @@ class CenterHead(nn.Module):
     def forward(self, data_dict):
         spatial_features_2d = data_dict['spatial_features_2d']
         x = self.shared_conv(spatial_features_2d)
-        data_dict['decoded_spatial_features_2d'] = x
 
         pred_dicts = []
         for head in self.heads_list:
@@ -348,10 +337,6 @@ class CenterHead(nn.Module):
             self.forward_ret_dict['target_dicts'] = target_dict
 
         self.forward_ret_dict['pred_dicts'] = pred_dicts
-
-        data_dict['pred_heatmaps'] = [_pred_dict['hm'] for _pred_dict in pred_dicts]
-        if self.model_cfg.get('IS_TEACHING', False):
-            return data_dict  # early stop in case of the head belong to Teacher
 
         if not self.training or self.predict_boxes_when_training:
             pred_dicts = self.generate_predicted_boxes(
