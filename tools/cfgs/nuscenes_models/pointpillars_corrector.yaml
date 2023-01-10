@@ -58,6 +58,7 @@ MODEL:
         EVAL_SEGMENTATION_WHILE_TRAINING: False
         CORRECT_POINTS_WHILE_TRAINING: False
         THRESH_CLS_PROB: 0.5
+        CONSISTENT_WITH: both
 
     DENSE_HEAD:
         NAME: CenterHead
