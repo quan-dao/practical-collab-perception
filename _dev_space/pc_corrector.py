@@ -400,8 +400,23 @@ class PointCloudCorrector(nn.Module):
             assert target['fg_offset'] is not None
             pred_dyn_fg_offset = pred_fg_offset[mask_fg_mos]  # (N_dyn_fg, 3)
             offseted_dyn_fg = pred_dyn_fg_offset + dyn_fg_xyz
-            l_consist = nn.functional.smooth_l1_loss(offseted_dyn_fg, corrected_dyn_fg, reduction='none').sum(dim=1).mean()
 
+            consistent_with = self.model_cfg.get('CONSISTENT_WITH', 'pred_locals_tf')
+            if consistent_with == 'pred_locals_tf':
+                # consistent with pc corrected by predicted locals_tf
+                l_consist = nn.functional.smooth_l1_loss(offseted_dyn_fg, corrected_dyn_fg,
+                                                         reduction='none').sum(dim=1).mean()
+            elif consistent_with == 'gt_locals_tf':
+                # consistent with pc corrected by ground truth locals_tf
+                l_consist = nn.functional.smooth_l1_loss(offseted_dyn_fg, gt_corrected_dyn_fg,
+                                                         reduction='none').sum(dim=1).mean()
+            else:
+                # consistent with pc corrected by predicted locals_tf & ground truth locals_tf
+                l_consist_pred = nn.functional.smooth_l1_loss(offseted_dyn_fg, corrected_dyn_fg,
+                                                              reduction='none').sum(dim=1).mean()
+                l_consist_gt = nn.functional.smooth_l1_loss(offseted_dyn_fg, gt_corrected_dyn_fg,
+                                                            reduction='none').sum(dim=1).mean()
+                l_consist = l_consist_pred + l_consist_gt
         else:
             l_locals_transl = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
             l_locals_rot = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)

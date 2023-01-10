@@ -7,6 +7,10 @@ from _dev_space._test.tools_4testing import load_data_to_tensor, load_dict_to_gp
 from _dev_space.pc_corrector import PointCloudCorrector
 from utils import show_pointcloud, viz_boxes
 import sys
+import lovely_tensors as lt
+
+
+lt.monkey_patch()
 
 
 def make_target(target_batch_idx=1, batch_size=3, is_training=True):
@@ -98,6 +102,7 @@ def show_target(batch_dict, chosen_batch_idx=1):
     if torch.any(mask_dyn_fg):
         fg_offset = target['fg_offset']  # (N_fg, 3)
         corrected_fg = torch.clone(fg)
+        print("fg_offset[mask_dyn_fg]: ", fg_offset[mask_dyn_fg])
         corrected_fg[mask_dyn_fg, 1: 4] += fg_offset[mask_dyn_fg]
 
         color_corrected_fg = torch.zeros(fg.shape[0], 3)
