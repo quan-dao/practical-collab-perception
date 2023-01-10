@@ -210,8 +210,15 @@ class PointCloudCorrector(nn.Module):
                 'meta': meta
             })
 
-        else:
-            pass  # TODO: apply points_offset on dynamic foreground points
+        if not self.training or self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
+            # apply points_offset on dynamic foreground points
+            points_all_cls_prob = nn.functional.softmax(points_cls_logit, dim=1)  # (N, 3)
+            points_cls_prob, points_cls_indices = torch.max(points_all_cls_prob, dim=1)  # (N,), (N,)
+            mask_dyn_fg = torch.logical_and(points_cls_prob > self.model_cfg.get('THRESH_CLS_PROB', 0.5),
+                                            points_cls_indices == 2)  # (N,)
+
+            # mutate xyz-coord of points where mask_dyn_fg == True using predict offset
+            points[mask_dyn_fg, 1: 4] += points_offset[mask_dyn_fg]
 
         return batch_dict
 
