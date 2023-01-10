@@ -8,7 +8,13 @@ import sys
 
 
 def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
-    cfg_file = './second_corrector_mini.yaml'
+    if model_name == 'second':
+        cfg_file = './second_corrector_mini.yaml'
+    elif model_name == 'pillar':
+        cfg_file = './pointpillars_corrector_mini.yaml'
+    else:
+        raise ValueError(f"{model_name} is unknown")
+
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./a_dummy_log.txt')
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES,
