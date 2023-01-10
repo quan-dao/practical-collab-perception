@@ -5,7 +5,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
     VERSION: 'v1.0-trainval'
     USE_MINI_TRAINVAL: True
-
+    PRED_VELOCITY: False
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: False
@@ -55,7 +55,7 @@ MODEL:
         SHARED_CONV_CHANNEL: 256
         POINT_HEAD_MID_CHANNELS: [128]
         INSTANCE_HEAD_MID_CHANNELS: [128]
-        EVAL_SEGMENTATION_WHILE_TRAINING: True
+        EVAL_SEGMENTATION_WHILE_TRAINING: False
 
     DENSE_HEAD:
         ENABLE: True
@@ -196,7 +196,7 @@ MODEL:
         SEPARATE_REG_CONFIG:
             NUM_MIDDLE_CONV: 1
             NUM_MIDDLE_FILTER: 64
-            REG_LIST: [ 'reg:2', 'height:1', 'size:3', 'angle:2', 'velo:2' ]
+            REG_LIST: ['reg:2', 'height:1', 'size:3', 'angle:2']
 
         TARGET_ASSIGNER_CONFIG:
             NAME: AxisAlignedTargetAssigner
@@ -206,7 +206,7 @@ MODEL:
             MATCH_HEIGHT: False
             BOX_CODER: ResidualCoder
             BOX_CODER_CONFIG: {
-                'code_size': 9,
+                'code_size': 7,
                 'encode_angle_by_sincos': True
             }
 
@@ -219,7 +219,7 @@ MODEL:
                 'cls_weight': 1.0,
                 'loc_weight': 0.25,
                 'dir_weight': 0.2,
-                'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2 ]
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
 
     POST_PROCESSING:
