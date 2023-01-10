@@ -220,6 +220,24 @@ class PointCloudCorrector(nn.Module):
             # mutate xyz-coord of points where mask_dyn_fg == True using predict offset
             points[mask_dyn_fg, 1: 4] += points_offset[mask_dyn_fg]
 
+        if 'gt_boxes' in batch_dict:  # => training 1st-stage or 2nd-stage or both (end-to-end)
+            # remove gt_boxes that are outside of pc range
+            valid_gt_boxes = list()
+            gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, C)
+            max_num_valid_boxes = 0
+            for bidx in range(batch_dict['batch_size']):
+                mask_in_range = torch.logical_and(gt_boxes[bidx, :, :3] >= self.point_cloud_range[:3],
+                                                  gt_boxes[bidx, :, :3] < self.point_cloud_range[3:]).all(dim=1)
+                valid_gt_boxes.append(gt_boxes[bidx, mask_in_range])
+                max_num_valid_boxes = max(max_num_valid_boxes, valid_gt_boxes[-1].shape[0])
+
+            batch_valid_gt_boxes = gt_boxes.new_zeros(batch_dict['batch_size'], max_num_valid_boxes, gt_boxes.shape[2])
+            for bidx, valid_boxes in enumerate(valid_gt_boxes):
+                batch_valid_gt_boxes[bidx, :valid_boxes.shape[0]] = valid_boxes
+
+            batch_dict.pop('gt_boxes')
+            batch_dict['gt_boxes'] = batch_valid_gt_boxes
+
         return batch_dict
 
     def assign_target(self, batch_dict, meta):
@@ -284,25 +302,6 @@ class PointCloudCorrector(nn.Module):
                        'points_cls': points_cls.long(),
                        'fg_embedding': fg_embedding,
                        'fg_offset': fg_offset}
-
-        # --
-        # remove gt_boxes that are outside of pc range
-        # --
-        valid_gt_boxes = list()
-        gt_boxes = batch_dict['gt_boxes']  # (B, N_inst_max, C)
-        max_num_valid_boxes = 0
-        for bidx in range(batch_dict['batch_size']):
-            mask_in_range = torch.logical_and(gt_boxes[bidx, :, :3] >= self.point_cloud_range[:3],
-                                              gt_boxes[bidx, :, :3] < self.point_cloud_range[3:]).all(dim=1)
-            valid_gt_boxes.append(gt_boxes[bidx, mask_in_range])
-            max_num_valid_boxes = max(max_num_valid_boxes, valid_gt_boxes[-1].shape[0])
-
-        batch_valid_gt_boxes = gt_boxes.new_zeros(batch_dict['batch_size'], max_num_valid_boxes, gt_boxes.shape[2])
-        for bidx, valid_boxes in enumerate(valid_gt_boxes):
-            batch_valid_gt_boxes[bidx, :valid_boxes.shape[0]] = valid_boxes
-
-        batch_dict.pop('gt_boxes')
-        batch_dict['gt_boxes'] = batch_valid_gt_boxes
 
         return target_dict
 
