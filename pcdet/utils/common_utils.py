@@ -156,11 +156,11 @@ def init_dist_slurm():
     Returns:
 
     """
-    # get SLURM var
-    rank = int(os.environ['SLURM_PROCID'])
-    local_rank = int(os.environ['SLURM_LOCALID'])
-    size = int(os.environ['SLURM_NTASKS'])
-    cpus_per_task = int(os.environ['SLURM_CPUS_PER_TASK'])
+    # # get SLURM var
+    # rank = int(os.environ['SLURM_PROCID'])
+    # local_rank = int(os.environ['SLURM_LOCALID'])
+    # size = int(os.environ['SLURM_NTASKS'])
+    # cpus_per_task = int(os.environ['SLURM_CPUS_PER_TASK'])
     # get node list from slurm
     hostnames = hostlist.expand_hostlist(os.environ['SLURM_JOB_NODELIST'])
     # get IDs of reserved GPU
@@ -177,8 +177,7 @@ def init_dist_slurm():
     torch.cuda.set_device(idr_torch.local_rank)
 
     total_gpus = dist.get_world_size()
-    rank = idr_torch.local_rank
-    return total_gpus, rank
+    return total_gpus, idr_torch.rank
 
 
 def init_dist_pytorch():
