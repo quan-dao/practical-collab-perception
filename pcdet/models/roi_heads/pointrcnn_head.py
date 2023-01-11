@@ -27,12 +27,12 @@ class PointRCNNHead(RoIHeadTemplate):
 
         c_out = self.model_cfg.XYZ_UP_LAYER[-1]
         self.merge_down_layer = nn.Sequential(
-            nn.Conv2d(c_out * 2, c_out, kernel_size=1, bias=not use_bn),
+            nn.Conv2d(c_out + input_channels, c_out, kernel_size=1, bias=not use_bn),
             *[nn.BatchNorm2d(c_out), nn.ReLU()] if use_bn else [nn.ReLU()]
         )
 
         for k in range(self.model_cfg.SA_CONFIG.NPOINTS.__len__()):
-            mlps = [channel_in] + self.model_cfg.SA_CONFIG.MLPS[k]
+            mlps = [c_out] + self.model_cfg.SA_CONFIG.MLPS[k]
 
             npoint = self.model_cfg.SA_CONFIG.NPOINTS[k] if self.model_cfg.SA_CONFIG.NPOINTS[k] != -1 else None
             self.SA_modules.append(

@@ -57,9 +57,13 @@ MODEL:
         POINT_HEAD_MID_CHANNELS: [128]
         INSTANCE_HEAD_MID_CHANNELS: [128]
         EVAL_SEGMENTATION_WHILE_TRAINING: False
+        CORRECT_POINTS_WHILE_TRAINING: True
+        THRESH_CLS_PROB: 0.35
+        HAS_ROI_HEAD: True
 
     DENSE_HEAD:
         ENABLE: True
+        HAS_ROI_HEAD: True
         NAME: AnchorHeadMulti
         CLASS_AGNOSTIC: False
 
@@ -231,11 +235,11 @@ MODEL:
         EVAL_METRIC: kitti
 
         NMS_CONFIG:
-            MULTI_CLASSES_NMS: True
+            MULTI_CLASSES_NMS: False
             NMS_TYPE: nms_gpu
-            NMS_THRESH: 0.2
-            NMS_PRE_MAXSIZE: 1000
-            NMS_POST_MAXSIZE: 83
+            NMS_THRESH: 0.1
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4
