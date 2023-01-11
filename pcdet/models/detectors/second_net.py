@@ -6,7 +6,17 @@ class SECONDNet(Detector3DTemplate):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
         self.module_list = self.build_networks()
 
+        # freeze everything up to (not include) roi_head
+        for name, param in self.named_parameters():
+            if 'roi_head' not in name:
+                param.requires_grad = False
+
     def forward(self, batch_dict):
+        # set every module up to (not include) roi_head to eval
+        for name, module in self.named_modules():
+            if 'roi_head' not in name:
+                self.__getattr__(name).eval()
+
         for cur_module in self.module_list:
             batch_dict = cur_module(batch_dict)
 

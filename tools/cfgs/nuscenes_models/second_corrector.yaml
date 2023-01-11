@@ -56,8 +56,9 @@ MODEL:
         POINT_HEAD_MID_CHANNELS: [128]
         INSTANCE_HEAD_MID_CHANNELS: [128]
         EVAL_SEGMENTATION_WHILE_TRAINING: False
-        CORRECT_POINTS_WHILE_TRAINING: False
-        THRESH_CLS_PROB: 0.5
+        CORRECT_POINTS_WHILE_TRAINING: True
+        THRESH_CLS_PROB: 0.35
+        HAS_ROI_HEAD: True
 
     DENSE_HEAD:
         ENABLE: True
@@ -224,8 +225,71 @@ MODEL:
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
 
+    ROI_HEAD:
+        NAME: PointRCNNHead
+        CLASS_AGNOSTIC: True
+
+        ROI_POINT_POOL:
+            POOL_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+            NUM_SAMPLED_POINTS: 512
+            DEPTH_NORMALIZER: 70.0
+
+        XYZ_UP_LAYER: [128, 128]
+        CLS_FC: [256, 256]
+        REG_FC: [256, 256]
+        DP_RATIO: 0.0
+        USE_BN: False
+
+        SA_CONFIG:
+            NPOINTS: [128, 32, -1]
+            RADIUS: [0.2, 0.4, 100]
+            NSAMPLE: [16, 16, 16]
+            MLPS: [[128],
+                   [128],
+                   [256]]
+
+        NMS_CONFIG:
+            TRAIN:
+                NMS_TYPE: nms_gpu
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 9000
+                NMS_POST_MAXSIZE: 512
+                NMS_THRESH: 0.8
+            TEST:
+                NMS_TYPE: nms_gpu
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 9000
+                NMS_POST_MAXSIZE: 100
+                NMS_THRESH: 0.85
+
+        TARGET_CONFIG:
+            BOX_CODER: ResidualCoder
+            ROI_PER_IMAGE: 128
+            FG_RATIO: 0.5
+
+            SAMPLE_ROI_BY_EACH_CLASS: True
+            CLS_SCORE_TYPE: roi_iou
+
+            CLS_FG_THRESH: 0.7
+            CLS_BG_THRESH: 0.25
+            CLS_BG_THRESH_LO: 0.1
+            HARD_BG_RATIO: 0.8
+
+            REG_FG_THRESH: 0.55
+
+        LOSS_CONFIG:
+            CLS_LOSS: BinaryCrossEntropy
+            REG_LOSS: smooth-l1
+            CORNER_LOSS_REGULARIZATION: True
+            LOSS_WEIGHTS: {
+                'rcnn_cls_weight': 1.0,
+                'rcnn_reg_weight': 1.0,
+                'rcnn_corner_weight': 1.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+
     POST_PROCESSING:
-        RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
         SCORE_THRESH: 0.1
         OUTPUT_RAW_SCORE: False
 

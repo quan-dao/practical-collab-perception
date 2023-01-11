@@ -76,6 +76,13 @@ class PointCloudCorrector(nn.Module):
         self.precision_points_cls = Precision(task='multiclass', average='macro', num_classes=3, threshold=0.5, top_k=1)
         self.recall_points_cls = Recall(task='multiclass', average='macro', num_classes=3, threshold=0.5, top_k=1)
 
+        # ---
+        # for 2nd stage
+        # ---
+        self.num_points_feat = num_points_features
+        if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
+            self.num_points_feat += 2  # concatenation with bg & fg (=static fg + dyn fg) prob
+
     @staticmethod
     def _make_mlp(in_c: int, out_c: int, mid_c: List = None, use_drop_out=False):
         if mid_c is None:
@@ -238,6 +245,38 @@ class PointCloudCorrector(nn.Module):
             batch_dict.pop('gt_boxes')
             batch_dict['gt_boxes'] = batch_valid_gt_boxes
 
+        if self.model_cfg.get('HAS_ROI_HEAD', False):
+            points_batch_idx = points[:, 0].long()
+
+            points_batch_mask, points_batch_count = list(), list()
+            for bs_idx in range(batch_dict['batch_size']):
+                current_mask = points_batch_idx == bs_idx
+                points_batch_mask.append(current_mask)
+                points_batch_count.append(current_mask.long().sum().item())
+
+            # init point_coords
+            point_coords = points.new_zeros(batch_dict['batch_size'], max(points_batch_count), 4)
+            # fill point_coords with points outside of point cloud range -> padded points don't get pooled
+            point_coords[:, 1:] = point_coords[:, 1:] + (self.point_cloud_range[:3] - 2.)
+
+            # init point_features
+            if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
+                points_feat = torch.cat((points_feat,
+                                         points_all_cls_prob[:, [0]],  # background prob
+                                         1.0 - points_all_cls_prob[:, [0]]),  # foreground prob (both static & dynamic)
+                                        dim=1)
+            num_points_feat = points_feat.shape[1]
+            point_features = points_feat.new_zeros(batch_dict['batch_size'], max(points_batch_count), num_points_feat)
+
+            # put points & points_feat to point_coords & point_features
+            for bs_idx, (current_mask, current_count) in enumerate(zip(points_batch_mask, points_batch_count)):
+                point_coords[bs_idx, :current_count] = points[current_mask, :4]
+                point_features[bs_idx, :current_count] = points_feat[current_mask]
+
+            batch_dict.update({
+                'point_coords': point_coords.view(-1, 4),
+                'point_features': point_features.view(-1, num_points_feat)
+            })
         return batch_dict
 
     def assign_target(self, batch_dict, meta):

@@ -118,6 +118,7 @@ class Detector3DTemplate(nn.Module):
             voxel_size=model_info_dict['voxel_size'],
             point_cloud_range=model_info_dict['point_cloud_range'],
         )
+        model_info_dict['num_point_features'] = corrector.num_points_feat
         model_info_dict['module_list'].append(corrector)
         return corrector, model_info_dict
 
