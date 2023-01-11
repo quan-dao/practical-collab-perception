@@ -258,7 +258,7 @@ class PointCloudCorrector(nn.Module):
             # init point_coords
             point_coords = points.new_zeros(batch_dict['batch_size'], max(points_batch_count), 4)
             # fill point_coords with points outside of point cloud range -> padded points don't get pooled
-            point_coords[:, 1:] = point_coords[:, 1:] + (self.point_cloud_range[:3] - 2.)
+            point_coords[:, :, 1:] = point_coords[:, :, 1:] + (self.point_cloud_range[:3] - 2.)
 
             # init point_features
             num_points_feat = points_feat.shape[1]

@@ -62,6 +62,7 @@ MODEL:
 
     DENSE_HEAD:
         ENABLE: True
+        HAS_ROI_HEAD: True
         NAME: AnchorHeadMulti
         CLASS_AGNOSTIC: False
 
