@@ -218,7 +218,7 @@ class PointCloudCorrector(nn.Module):
                 'meta': meta
             })
 
-        if not self.training or self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
+        if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
             # apply points_offset on dynamic foreground points
             points_all_cls_prob = nn.functional.softmax(points_cls_logit, dim=1)  # (N, 3)
             points_cls_prob, points_cls_indices = torch.max(points_all_cls_prob, dim=1)  # (N,), (N,)
