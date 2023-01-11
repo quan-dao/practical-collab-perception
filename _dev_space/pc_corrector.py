@@ -273,8 +273,8 @@ class PointCloudCorrector(nn.Module):
                 point_coords[bs_idx, :, 0] = bs_idx
 
                 point_features[bs_idx, :current_count] = points_feat[current_mask]
-
-                point_scores[bs_idx, :current_count] = 1.0 - points_all_cls_prob[current_mask, 0]
+                if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
+                    point_scores[bs_idx, :current_count] = 1.0 - points_all_cls_prob[current_mask, 0]
 
             batch_dict.update({
                 'point_coords': rearrange(point_coords, 'B N C -> (B N) C'),
