@@ -1,4 +1,5 @@
 from .detector3d_template import Detector3DTemplate
+import torch
 
 
 class SECONDNet(Detector3DTemplate):
@@ -21,7 +22,11 @@ class SECONDNet(Detector3DTemplate):
                     pass
 
         for cur_module in self.module_list:
-            batch_dict = cur_module(batch_dict)
+            if not cur_module.training:
+                with torch.no_grad():
+                    batch_dict = cur_module(batch_dict)
+            else:
+                batch_dict = cur_module(batch_dict)
 
         if self.training:
             loss, tb_dict, disp_dict = self.get_training_loss()
