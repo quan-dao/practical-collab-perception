@@ -252,7 +252,8 @@ class PointCloudCorrector(nn.Module):
             if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
                 point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
             else:
-                point_scores = points.new_zeros(points.shape[0])
+                points_all_cls_prob = nn.functional.softmax(points_cls_logit, dim=1)  # (N, 3)
+                point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
 
             batch_dict.update({
                 'point_coords': point_coords,
