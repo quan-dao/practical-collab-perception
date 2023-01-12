@@ -247,39 +247,17 @@ class PointCloudCorrector(nn.Module):
             batch_dict['gt_boxes'] = batch_valid_gt_boxes
 
         if self.model_cfg.get('HAS_ROI_HEAD', False):
-            points_batch_idx = points[:, 0].long()
-
-            points_batch_mask, points_batch_count = list(), list()
-            for bs_idx in range(batch_dict['batch_size']):
-                current_mask = points_batch_idx == bs_idx
-                points_batch_mask.append(current_mask)
-                points_batch_count.append(current_mask.long().sum().item())
-
-            # init point_coords
-            point_coords = points.new_zeros(batch_dict['batch_size'], max(points_batch_count), 4)
-            # fill point_coords with points outside of point cloud range -> padded points don't get pooled
-            point_coords[:, :, 1:] = point_coords[:, :, 1:] + (self.point_cloud_range[:3] - 2.)
-
-            # init point_features
-            num_points_feat = points_feat.shape[1]
-            point_features = points_feat.new_zeros(batch_dict['batch_size'], max(points_batch_count), num_points_feat)
-
-            # init point_scores
-            point_scores = points_feat.new_zeros(batch_dict['batch_size'], max(points_batch_count))
-
-            # put points & points_feat to point_coords & point_features
-            for bs_idx, (current_mask, current_count) in enumerate(zip(points_batch_mask, points_batch_count)):
-                point_coords[bs_idx, :current_count, 1:] = points[current_mask, 1: 4]
-                point_coords[bs_idx, :, 0] = bs_idx
-
-                point_features[bs_idx, :current_count] = points_feat[current_mask]
-                if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
-                    point_scores[bs_idx, :current_count] = 1.0 - points_all_cls_prob[current_mask, 0]
+            point_coords = points[:, :4].contiguous()
+            point_features = points_feat.detach().contiguous()
+            if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
+                point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
+            else:
+                point_scores = points.new_zeros(points.shape[0])
 
             batch_dict.update({
-                'point_coords': rearrange(point_coords, 'B N C -> (B N) C'),
-                'point_features': rearrange(point_features, 'B N C -> (B N) C'),
-                'point_cls_scores': rearrange(point_scores, 'B N -> (B N)')
+                'point_coords': point_coords,
+                'point_features': point_features,
+                'point_cls_scores': point_scores
             })
         return batch_dict
 

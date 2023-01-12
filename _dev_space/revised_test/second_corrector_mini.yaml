@@ -228,27 +228,16 @@ MODEL:
             }
 
     ROI_HEAD:
-        NAME: PointRCNNHead
+        NAME: PartA2FCHead
         CLASS_AGNOSTIC: True
+        DISABLE_PART: True
 
-        ROI_POINT_POOL:
-            POOL_EXTRA_WIDTH: [0.0, 0.0, 0.0]
-            NUM_SAMPLED_POINTS: 512
-            DEPTH_NORMALIZER: 70.0
+        SHARED_FC: [ 256, 256, 256 ]
+        CLS_FC: [ 256, 256 ]
+        REG_FC: [ 256, 256 ]
+        DP_RATIO: 0.3
 
-        XYZ_UP_LAYER: [128, 128]
-        CLS_FC: [256, 256]
-        REG_FC: [256, 256]
-        DP_RATIO: 0.0
-        USE_BN: False
-
-        SA_CONFIG:
-            NPOINTS: [128, 32, -1]
-            RADIUS: [0.2, 0.4, 100]
-            NSAMPLE: [16, 16, 16]
-            MLPS: [[128],
-                   [128],
-                   [256]]
+        SEG_MASK_SCORE_THRESH: 0.3
 
         NMS_CONFIG:
             TRAIN:
@@ -260,9 +249,14 @@ MODEL:
             TEST:
                 NMS_TYPE: nms_gpu
                 MULTI_CLASSES_NMS: False
-                NMS_PRE_MAXSIZE: 9000
+                NMS_PRE_MAXSIZE: 1024
                 NMS_POST_MAXSIZE: 100
-                NMS_THRESH: 0.85
+                NMS_THRESH: 0.7
+
+        ROI_AWARE_POOL:
+            POOL_SIZE: 12
+            NUM_FEATURES: 128
+            MAX_POINTS_PER_VOXEL: 128
 
         TARGET_CONFIG:
             BOX_CODER: ResidualCoder
@@ -272,12 +266,12 @@ MODEL:
             SAMPLE_ROI_BY_EACH_CLASS: True
             CLS_SCORE_TYPE: roi_iou
 
-            CLS_FG_THRESH: 0.7
+            CLS_FG_THRESH: 0.75
             CLS_BG_THRESH: 0.25
             CLS_BG_THRESH_LO: 0.1
             HARD_BG_RATIO: 0.8
 
-            REG_FG_THRESH: 0.55
+            REG_FG_THRESH: 0.65
 
         LOSS_CONFIG:
             CLS_LOSS: BinaryCrossEntropy
@@ -287,11 +281,11 @@ MODEL:
                 'rcnn_cls_weight': 1.0,
                 'rcnn_reg_weight': 1.0,
                 'rcnn_corner_weight': 1.0,
-                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
             }
 
     POST_PROCESSING:
-        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
         SCORE_THRESH: 0.1
         OUTPUT_RAW_SCORE: False
 
