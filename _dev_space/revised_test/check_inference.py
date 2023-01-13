@@ -5,6 +5,7 @@ from _dev_space.viz_tools import print_dict
 from _dev_space._test.tools_4testing import load_data_to_tensor, load_dict_to_gpu, BackwardHook
 from pcdet.models.detectors import SECONDNet, CenterPoint
 import sys
+import torch
 
 
 def main(model_name, target_batch_idx=1, batch_size=1, is_training=True, use_correction=True):
@@ -66,7 +67,9 @@ def main(model_name, target_batch_idx=1, batch_size=1, is_training=True, use_cor
         print('sample_tk: ', sample_tk)
         torch.save(batch_dict, f"{model_name}_stage_pred_{sample_tk}.pth")
     else:
-        torch.save(batch_dict, f"{model_name}_2stage_{int(use_correction)}corr_pred_batch_size{batch_size}.pth")
+        filename = f"{model_name}_2stage_{int(use_correction)}corr_pred_batch_size{batch_size}.pth"
+        torch.save(batch_dict, filename)
+        print(filename)
 
 
 if __name__ == '__main__':

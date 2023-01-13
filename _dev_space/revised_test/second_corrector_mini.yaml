@@ -60,6 +60,7 @@ MODEL:
         CORRECT_POINTS_WHILE_TRAINING: True
         THRESH_CLS_PROB: 0.35
         HAS_ROI_HEAD: True
+        SAVE_POINT_WISE_PREDICTION: True
 
     DENSE_HEAD:
         ENABLE: True
@@ -292,11 +293,11 @@ MODEL:
         EVAL_METRIC: kitti
 
         NMS_CONFIG:
-            MULTI_CLASSES_NMS: True
+            MULTI_CLASSES_NMS: False
             NMS_TYPE: nms_gpu
-            NMS_THRESH: 0.2
-            NMS_PRE_MAXSIZE: 1024
-            NMS_POST_MAXSIZE: 83
+            NMS_THRESH: 0.1
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4
