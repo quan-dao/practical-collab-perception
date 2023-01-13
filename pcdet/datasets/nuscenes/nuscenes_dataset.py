@@ -150,9 +150,9 @@ class NuScenesDataset(DatasetTemplate):
         input_dict = {
             'points': points,
             'instances_tf': _out['instances_tf'],
+            'frame_id': Path(info['lidar_path']).stem,
             'metadata': {
                 'token': info['token'],
-                'frame_id': Path(info['lidar_path']).stem,
                 'tf_glob_from_lidar': tf_glob_from_lidar,  # (4, 4)
                 'num_sweeps': num_sweeps,
                 'num_original_instances': _out['instances_tf'].shape[0]
