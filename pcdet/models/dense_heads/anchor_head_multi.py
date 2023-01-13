@@ -236,20 +236,6 @@ class AnchorHeadMulti(AnchorHeadTemplate):
 
                 data_dict['multihead_label_mapping'] = multihead_label_mapping
 
-                if self.model_cfg.get('HAS_ROI_HEAD', False):
-                    # organize batch_cls_preds from list to (B, num_anchors_total, num_cls)
-                    batch_size, num_anchor_total = batch_box_preds.shape[:2]
-                    cls_preds = batch_box_preds.new_zeros(batch_size, num_anchor_total, 10)
-
-                    start_idx = 0
-                    for cur_cls_preds, cur_label_mapping in zip(batch_cls_preds, multihead_label_mapping):
-                        cur_num_anchor = cur_cls_preds.shape[1]
-                        cls_preds[:, start_idx: start_idx + cur_num_anchor, cur_label_mapping - 1] = cur_cls_preds
-                        start_idx += cur_num_anchor
-
-                    # overwrite batch_cls_preds
-                    batch_cls_preds = cls_preds
-
             data_dict['batch_cls_preds'] = batch_cls_preds
             data_dict['batch_box_preds'] = batch_box_preds
             data_dict['cls_preds_normalized'] = False

@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ...utils import box_coder_utils, common_utils, loss_utils
-from ..model_utils.model_nms_utils import class_agnostic_nms
+from ..model_utils.model_nms_utils import class_agnostic_nms, multi_classes_nms
 from .target_assigner.proposal_target_layer import ProposalTargetLayer
 
 
@@ -79,20 +79,46 @@ class RoIHeadTemplate(nn.Module):
                 assert batch_dict['batch_cls_preds'].shape.__len__() == 3
                 batch_mask = index
             box_preds = batch_box_preds[batch_mask]
-            cls_preds = batch_cls_preds[batch_mask]
-
-            cur_roi_scores, cur_roi_labels = torch.max(cls_preds, dim=1)
 
             if nms_config.MULTI_CLASSES_NMS:
-                raise NotImplementedError
+                cls_preds = [x[batch_mask] for x in batch_dict['batch_cls_preds']]
+                if not batch_dict['cls_preds_normalized']:
+                    cls_preds = [torch.softmax(x, dim=1) for x in cls_preds]
+
+                multihead_label_mapping = batch_dict['multihead_label_mapping']
+
+                cur_start_idx = 0
+                pred_scores, pred_labels, pred_boxes = [], [], []
+                for cur_cls_preds, cur_label_mapping in zip(cls_preds, multihead_label_mapping):
+                    assert cur_cls_preds.shape[1] == len(cur_label_mapping)
+                    cur_box_preds = box_preds[cur_start_idx: cur_start_idx + cur_cls_preds.shape[0]]
+                    cur_pred_scores, cur_pred_labels, cur_pred_boxes = multi_classes_nms(
+                        cls_scores=cur_cls_preds, box_preds=cur_box_preds,
+                        nms_config=nms_config.NMS_CONFIG,
+                        score_thresh=nms_config.SCORE_THRESH
+                    )
+                    cur_pred_labels = cur_label_mapping[cur_pred_labels]
+                    pred_scores.append(cur_pred_scores)
+                    pred_labels.append(cur_pred_labels)
+                    pred_boxes.append(cur_pred_boxes)
+                    cur_start_idx += cur_cls_preds.shape[0]
+
+                num_rois = len(pred_scores)
+                rois[index, :num_rois] = torch.cat(pred_boxes, dim=0)
+                roi_scores[index, :num_rois] = torch.cat(pred_scores, dim=0)
+                roi_labels[index, :num_rois] = torch.cat(pred_labels, dim=0)
+
             else:
+                cls_preds = batch_cls_preds[batch_mask]
+                cur_roi_scores, cur_roi_labels = torch.max(cls_preds, dim=1)
+
                 selected, selected_scores = class_agnostic_nms(
                     box_scores=cur_roi_scores, box_preds=box_preds, nms_config=nms_config
                 )
 
-            rois[index, :len(selected), :] = box_preds[selected]
-            roi_scores[index, :len(selected)] = cur_roi_scores[selected]
-            roi_labels[index, :len(selected)] = cur_roi_labels[selected]
+                rois[index, :len(selected), :] = box_preds[selected]
+                roi_scores[index, :len(selected)] = cur_roi_scores[selected]
+                roi_labels[index, :len(selected)] = cur_roi_labels[selected]
 
         batch_dict['rois'] = rois
         batch_dict['roi_scores'] = roi_scores
