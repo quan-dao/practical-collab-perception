@@ -242,15 +242,15 @@ MODEL:
         NMS_CONFIG:
             TRAIN:
                 NMS_TYPE: nms_gpu
-                MULTI_CLASSES_NMS: False
+                MULTI_CLASSES_NMS: True
                 NMS_PRE_MAXSIZE: 9000
-                NMS_POST_MAXSIZE: 512
+                NMS_POST_MAXSIZE: 100  # actually becomes 100 * 10
                 NMS_THRESH: 0.8
             TEST:
                 NMS_TYPE: nms_gpu
-                MULTI_CLASSES_NMS: False
+                MULTI_CLASSES_NMS: True
                 NMS_PRE_MAXSIZE: 1024
-                NMS_POST_MAXSIZE: 100
+                NMS_POST_MAXSIZE: 83  # actually becomes 83 * 10
                 NMS_THRESH: 0.7
 
         ROI_AWARE_POOL:
@@ -292,11 +292,11 @@ MODEL:
         EVAL_METRIC: kitti
 
         NMS_CONFIG:
-            MULTI_CLASSES_NMS: False
+            MULTI_CLASSES_NMS: True
             NMS_TYPE: nms_gpu
-            NMS_THRESH: 0.1
-            NMS_PRE_MAXSIZE: 4096
-            NMS_POST_MAXSIZE: 500
+            NMS_THRESH: 0.2
+            NMS_PRE_MAXSIZE: 1024
+            NMS_POST_MAXSIZE: 83
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4

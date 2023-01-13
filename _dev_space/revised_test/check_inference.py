@@ -10,7 +10,8 @@ import sys
 def main(model_name, target_batch_idx=1, batch_size=1, is_training=True, use_correction=True):
     if model_name == 'second':
         cfg_file = './second_corrector_mini.yaml'
-        ckpt = 'second_corrector_partA2_ep10.pth' if use_correction else 'second_corrector_partA2_nocorr_ep10.pth'
+        ckpt = 'second_corr_new_hope_novelo_latest.pth'  # to viz batch_dict['rois']
+        # ckpt = 'second_corrector_partA2_ep10.pth' if use_correction else 'second_corrector_partA2_nocorr_ep10.pth'
     elif model_name == 'pillar':
         raise ValueError("pointpillar hasn't been trained with 2nd stage")
         cfg_file = './pointpillars_corrector_mini.yaml'
@@ -55,10 +56,8 @@ def main(model_name, target_batch_idx=1, batch_size=1, is_training=True, use_cor
     batch_dict.update({'pred_dicts': pred_dicts})
     print_dict(batch_dict, 'batch_dict')
 
-    for k in (
-    'encoded_spconv_tensor', 'encoded_spconv_tensor_stride', 'multi_scale_3d_features', 'multi_scale_3d_strides',
-    'spatial_features',
-    'spatial_features_stride', 'spatial_features_2d'):
+    for k in ('encoded_spconv_tensor', 'encoded_spconv_tensor_stride', 'multi_scale_3d_features',
+              'multi_scale_3d_strides', 'spatial_features', 'spatial_features_stride', 'spatial_features_2d'):
         if k in batch_dict:
             batch_dict.pop(k)
 
@@ -73,4 +72,4 @@ def main(model_name, target_batch_idx=1, batch_size=1, is_training=True, use_cor
 if __name__ == '__main__':
     # set this in the terminal:
     # CUDA_VISIBLE_DEVICES=2
-    main(sys.argv[1], is_training=False, target_batch_idx=3, batch_size=10, use_correction=sys.argv[2] == 'use_correction')
+    main(sys.argv[1], is_training=False, target_batch_idx=3, batch_size=2, use_correction=sys.argv[2] == 'use_correction')

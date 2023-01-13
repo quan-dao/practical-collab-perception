@@ -167,6 +167,10 @@ class PointCloudCorrector(nn.Module):
             'points_embedding': points_embedding
         }
 
+        if self.model_cfg.get('SAVE_POINT_WISE_PREDICTION', False):
+            batch_dict.update(prediction_dict)
+            batch_dict['points_original'] = torch.clone(points)
+
         if self.training:
             # -------
             # instance stuff

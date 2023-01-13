@@ -67,23 +67,24 @@ class RoIHeadTemplate(nn.Module):
         batch_size = batch_dict['batch_size']
         batch_box_preds = batch_dict['batch_box_preds']
         batch_cls_preds = batch_dict['batch_cls_preds']
-        rois = batch_box_preds.new_zeros((batch_size, nms_config.NMS_POST_MAXSIZE, batch_box_preds.shape[-1]))
-        roi_scores = batch_box_preds.new_zeros((batch_size, nms_config.NMS_POST_MAXSIZE))
-        roi_labels = batch_box_preds.new_zeros((batch_size, nms_config.NMS_POST_MAXSIZE), dtype=torch.long)
+        nms_post_maxsize = nms_config.NMS_POST_MAXSIZE if not nms_config.MULTI_CLASSES_NMS \
+            else nms_config.NMS_POST_MAXSIZE * 10
+        rois = batch_box_preds.new_zeros((batch_size, nms_post_maxsize, batch_box_preds.shape[-1]))
+        roi_scores = batch_box_preds.new_zeros((batch_size, nms_post_maxsize))
+        roi_labels = batch_box_preds.new_zeros((batch_size, nms_post_maxsize), dtype=torch.long)
 
         for index in range(batch_size):
             if batch_dict.get('batch_index', None) is not None:
                 assert batch_cls_preds.shape.__len__() == 2
                 batch_mask = (batch_dict['batch_index'] == index)
             else:
-                assert batch_dict['batch_cls_preds'].shape.__len__() == 3
                 batch_mask = index
             box_preds = batch_box_preds[batch_mask]
 
             if nms_config.MULTI_CLASSES_NMS:
                 cls_preds = [x[batch_mask] for x in batch_dict['batch_cls_preds']]
                 if not batch_dict['cls_preds_normalized']:
-                    cls_preds = [torch.softmax(x, dim=1) for x in cls_preds]
+                    cls_preds = [torch.sigmoid(x) for x in cls_preds]
 
                 multihead_label_mapping = batch_dict['multihead_label_mapping']
 
@@ -94,20 +95,21 @@ class RoIHeadTemplate(nn.Module):
                     cur_box_preds = box_preds[cur_start_idx: cur_start_idx + cur_cls_preds.shape[0]]
                     cur_pred_scores, cur_pred_labels, cur_pred_boxes = multi_classes_nms(
                         cls_scores=cur_cls_preds, box_preds=cur_box_preds,
-                        nms_config=nms_config.NMS_CONFIG,
-                        score_thresh=nms_config.SCORE_THRESH
+                        nms_config=nms_config
                     )
                     cur_pred_labels = cur_label_mapping[cur_pred_labels]
                     pred_scores.append(cur_pred_scores)
                     pred_labels.append(cur_pred_labels)
                     pred_boxes.append(cur_pred_boxes)
+
                     cur_start_idx += cur_cls_preds.shape[0]
 
-                num_rois = len(pred_scores)
-                rois[index, :num_rois] = torch.cat(pred_boxes, dim=0)
-                roi_scores[index, :num_rois] = torch.cat(pred_scores, dim=0)
-                roi_labels[index, :num_rois] = torch.cat(pred_labels, dim=0)
-
+                pred_boxes = torch.cat(pred_boxes, dim=0)
+                pred_scores = torch.cat(pred_scores, dim=0)
+                pred_labels = torch.cat(pred_labels, dim=0)
+                rois[index, :pred_boxes.shape[0]] = pred_boxes
+                roi_scores[index, :pred_scores.shape[0]] = pred_scores
+                roi_labels[index, :pred_labels.shape[0]] = pred_labels
             else:
                 cls_preds = batch_cls_preds[batch_mask]
                 cur_roi_scores, cur_roi_labels = torch.max(cls_preds, dim=1)
@@ -122,8 +124,8 @@ class RoIHeadTemplate(nn.Module):
 
         batch_dict['rois'] = rois
         batch_dict['roi_scores'] = roi_scores
-        batch_dict['roi_labels'] = roi_labels + 1
-        batch_dict['has_class_labels'] = True if batch_cls_preds.shape[-1] > 1 else False
+        batch_dict['roi_labels'] = roi_labels if nms_config.MULTI_CLASSES_NMS else roi_labels + 1
+        batch_dict['has_class_labels'] = True
         batch_dict.pop('batch_index', None)
         return batch_dict
 
@@ -172,7 +174,8 @@ class RoIHeadTemplate(nn.Module):
         fg_mask = (reg_valid_mask > 0)
         fg_sum = fg_mask.long().sum().item()
 
-        tb_dict = {}
+        tb_dict = dict()
+        tb_dict['roi_fg_sum'] = fg_sum
 
         if loss_cfgs.REG_LOSS == 'smooth-l1':
             rois_anchor = roi_boxes3d.clone().detach().view(-1, code_size)
