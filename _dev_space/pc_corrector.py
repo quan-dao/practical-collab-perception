@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_scatter import scatter_max, scatter_min, scatter_mean
 from einops import rearrange
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, eval_binary_segmentation, quat2mat
+from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, eval_binary_segmentation, quat2mat, voxelize
 from typing import List
 from torchmetrics import Precision, Recall
 
@@ -259,10 +259,15 @@ class PointCloudCorrector(nn.Module):
                 points_all_cls_prob = nn.functional.softmax(points_cls_logit, dim=1)  # (N, 3)
                 point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
 
+            # voxelize point_coord & point_features
+            voxel_coord, voxel_feat = voxelize(point_coords,
+                                               torch.cat([point_features, point_scores.view(-1, 1)], dim=1),
+                                               self.voxel_size, self.point_cloud_range, return_xyz=True)
+
             batch_dict.update({
-                'point_coords': point_coords,
-                'point_features': point_features,
-                'point_cls_scores': point_scores
+                'point_coords': voxel_coord,
+                'point_features': voxel_feat[:, :-1].contiguous(),
+                'point_cls_scores': voxel_feat[:, -1].contiguous()
             })
         return batch_dict
 

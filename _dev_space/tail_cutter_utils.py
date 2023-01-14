@@ -293,3 +293,41 @@ def generate_predicted_boxes(batch_size: int, proposals: torch.Tensor, fg_prob: 
     return out
 
 
+@torch.no_grad()
+def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, voxel_size: torch.Tensor,
+             point_cloud_range: torch.Tensor, return_xyz=True):
+    """
+    Args:
+        points_coord: (N, 4) - batch_idx, x, y, z
+        points_feat: (N, C)
+        voxel_size: (3) - vx, vy, vz
+        point_cloud_range: (6) - x_min, y_min, z_min, x_max, y_max, z_max
+    """
+    grid_size = torch.round((point_cloud_range[3:] - point_cloud_range[:3]) / voxel_size).long()  # [size_x, size_y, size_z]
+    points_vox_coord = torch.floor((points_coord[:, 1:] - point_cloud_range[:3]) / voxel_size).long()  # (N, 3)
+
+    mask_valid_points = torch.logical_and(points_vox_coord >= 0, points_vox_coord < grid_size).all(dim=1)  # (N,)
+    points_feat = points_feat[mask_valid_points]
+    points_vox_coord = points_vox_coord[mask_valid_points]
+    points_batch_idx = points_coord[mask_valid_points, 0].long()
+
+    volume = grid_size[0] * grid_size[1] * grid_size[2]
+    area_xy = grid_size[0] * grid_size[1]
+    size_x = grid_size[0]
+    points_merge_coord = (points_batch_idx * volume
+                          + points_vox_coord[:, 2] * area_xy  # z
+                          + points_vox_coord[:, 1] * size_x   # y
+                          + points_vox_coord[:, 0])  # x
+    unq_coord, inv, cnt = torch.unique(points_merge_coord, return_inverse=True, return_counts=True)
+
+    mean_feat = torch_scatter.scatter_mean(points_feat, inv, dim=0)
+
+    voxels_coord = torch.stack((unq_coord // volume,  # batch_idx
+                                (unq_coord % volume) // area_xy,  # z
+                                (unq_coord % area_xy) // size_x,  # y
+                                unq_coord % size_x,  # x
+                                ), dim=1)
+    if return_xyz:
+        voxels_coord = voxels_coord[:, [0, 3, 2, 1]]
+
+    return voxels_coord.contiguous(), mean_feat.contiguous()
