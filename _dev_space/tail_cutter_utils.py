@@ -318,7 +318,7 @@ def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, voxel_size: 
                           + points_vox_coord[:, 2] * area_xy  # z
                           + points_vox_coord[:, 1] * size_x   # y
                           + points_vox_coord[:, 0])  # x
-    unq_coord, inv, cnt = torch.unique(points_merge_coord, return_inverse=True, return_counts=True)
+    unq_coord, inv = torch.unique(points_merge_coord, return_inverse=True)
 
     mean_feat = torch_scatter.scatter_mean(points_feat, inv, dim=0)
 

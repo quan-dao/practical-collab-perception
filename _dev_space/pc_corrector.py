@@ -263,9 +263,12 @@ class PointCloudCorrector(nn.Module):
             voxel_coord, voxel_feat = voxelize(point_coords,
                                                torch.cat([point_features, point_scores.view(-1, 1)], dim=1),
                                                self.voxel_size, self.point_cloud_range, return_xyz=True)
+            # convert voxel_coord to voxel_centers
+            voxel_coord = voxel_coord.float()
+            voxel_coord[:, 1:] = (voxel_coord[:, 1:] + 0.5) * self.voxel_size + self.point_cloud_range[:3]
 
             batch_dict.update({
-                'point_coords': voxel_coord,
+                'point_coords': voxel_coord.contiguous(),
                 'point_features': voxel_feat[:, :-1].contiguous(),
                 'point_cls_scores': voxel_feat[:, -1].contiguous()
             })
