@@ -252,7 +252,8 @@ class PointCloudCorrector(nn.Module):
 
         if self.model_cfg.get('HAS_ROI_HEAD', False):
             point_coords = points[:, :4].contiguous()
-            point_features = points_feat.detach().contiguous()
+            point_features = points_feat.detach().contiguous() if self.model_cfg.get('BEV_FEAT_TO_ROI_HEAD', True) \
+                else point_features = points[:, 1: 6].contiguous()  # [x, y, z, intensity, time]
             if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
                 point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
             else:

@@ -59,6 +59,7 @@ MODEL:
         CORRECT_POINTS_WHILE_TRAINING: True
         THRESH_CLS_PROB: 0.35
         HAS_ROI_HEAD: True
+        BEV_FEAT_TO_ROI_HEAD: True
 
     DENSE_HEAD:
         ENABLE: True
