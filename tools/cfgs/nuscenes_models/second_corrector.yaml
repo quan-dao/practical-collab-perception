@@ -57,9 +57,10 @@ MODEL:
         INSTANCE_HEAD_MID_CHANNELS: [128]
         EVAL_SEGMENTATION_WHILE_TRAINING: False
         CORRECT_POINTS_WHILE_TRAINING: True
-        THRESH_CLS_PROB: 0.35
+        THRESH_CLS_PROB: 0.35  # will be reduced to 0.3
         HAS_ROI_HEAD: True
         BEV_FEAT_TO_ROI_HEAD: True
+        INTERPOLATE_CORRECTED_POINTS: False
 
     DENSE_HEAD:
         ENABLE: True

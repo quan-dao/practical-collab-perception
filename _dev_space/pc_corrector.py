@@ -232,6 +232,16 @@ class PointCloudCorrector(nn.Module):
             # mutate xyz-coord of points where mask_dyn_fg == True using predict offset
             points[mask_dyn_fg, 1: 4] += points_offset[mask_dyn_fg]
 
+            if self.model_cfg.get('INTERPOLATE_CORRECTED_POINTS', False):
+                points_bev_coord = (points[:, 1: 3] - self.point_cloud_range[:2]) / (self.voxel_size[:2] * self.bev_image_stride)
+                points_feat = points.new_zeros(num_points, bev_img.shape[1])
+                for b_idx in range(batch_dict['batch_size']):
+                    _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
+                    batch_mask = points_batch_idx == b_idx
+                    cur_points_feat = bilinear_interpolate_torch(_img, points_bev_coord[batch_mask, 0],
+                                                                 points_bev_coord[batch_mask, 1])
+                    points_feat[batch_mask] = cur_points_feat
+
         if 'gt_boxes' in batch_dict:  # => training 1st-stage or 2nd-stage or both (end-to-end)
             # remove gt_boxes that are outside of pc range
             valid_gt_boxes = list()
@@ -252,8 +262,7 @@ class PointCloudCorrector(nn.Module):
 
         if self.model_cfg.get('HAS_ROI_HEAD', False):
             point_coords = points[:, :4].contiguous()
-            point_features = points_feat.detach().contiguous() if self.model_cfg.get('BEV_FEAT_TO_ROI_HEAD', True) \
-                else points[:, 1: 6].contiguous()  # [x, y, z, intensity, time]
+            point_features = points_feat.detach().contiguous()
             if self.model_cfg.get('CORRECT_POINTS_WHILE_TRAINING', False):
                 point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
             else:
