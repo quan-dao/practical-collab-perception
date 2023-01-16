@@ -63,15 +63,14 @@ MODEL:
     DENSE_HEAD:
         ENABLE: True
         HAS_ROI_HEAD: True
-        NAME: AnchorHeadMulti
+        NAME: AnchorHeadSingle
         CLASS_AGNOSTIC: False
 
+        USE_DIRECTION_CLASSIFIER: True
         DIR_OFFSET: 0.78539
         DIR_LIMIT_OFFSET: 0.0
         NUM_DIR_BINS: 2
 
-        USE_MULTIHEAD: True
-        SEPARATE_MULTIHEAD: True
         ANCHOR_GENERATOR_CONFIG: [
             {
                 'class_name': car,
@@ -175,33 +174,6 @@ MODEL:
             },
         ]
 
-        SHARED_CONV_NUM_FILTER: 64
-        RPN_HEAD_CFGS: [
-            {
-                'HEAD_CLS_NAME': [ 'car' ],
-            },
-            {
-                'HEAD_CLS_NAME': [ 'truck', 'construction_vehicle' ],
-            },
-            {
-                'HEAD_CLS_NAME': [ 'bus', 'trailer' ],
-            },
-            {
-                'HEAD_CLS_NAME': [ 'barrier' ],
-            },
-            {
-                'HEAD_CLS_NAME': [ 'motorcycle', 'bicycle' ],
-            },
-            {
-                'HEAD_CLS_NAME': [ 'pedestrian', 'traffic_cone' ],
-            },
-        ]
-
-        SEPARATE_REG_CONFIG:
-            NUM_MIDDLE_CONV: 1
-            NUM_MIDDLE_FILTER: 64
-            REG_LIST: ['reg:2', 'height:1', 'size:3', 'angle:2']
-
         TARGET_ASSIGNER_CONFIG:
             NAME: AxisAlignedTargetAssigner
             POS_FRACTION: -1.0
@@ -209,19 +181,11 @@ MODEL:
             NORM_BY_NUM_EXAMPLES: False
             MATCH_HEIGHT: False
             BOX_CODER: ResidualCoder
-            BOX_CODER_CONFIG: {
-                'code_size': 7,
-                'encode_angle_by_sincos': True
-            }
-
 
         LOSS_CONFIG:
-            REG_LOSS_TYPE: WeightedL1Loss
             LOSS_WEIGHTS: {
-                'pos_cls_weight': 1.0,
-                'neg_cls_weight': 2.0,
                 'cls_weight': 1.0,
-                'loc_weight': 0.25,
+                'loc_weight': 2.0,
                 'dir_weight': 0.2,
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
@@ -241,16 +205,16 @@ MODEL:
         NMS_CONFIG:
             TRAIN:
                 NMS_TYPE: nms_gpu
-                MULTI_CLASSES_NMS: True
+                MULTI_CLASSES_NMS: False
                 NMS_PRE_MAXSIZE: 9000
-                NMS_POST_MAXSIZE: 100  # actually becomes 100 * 10
+                NMS_POST_MAXSIZE: 512
                 NMS_THRESH: 0.8
             TEST:
                 NMS_TYPE: nms_gpu
-                MULTI_CLASSES_NMS: True
-                NMS_PRE_MAXSIZE: 1024
-                NMS_POST_MAXSIZE: 83  # actually becomes 83 * 10
-                NMS_THRESH: 0.7
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 4096
+                NMS_POST_MAXSIZE: 300
+                NMS_THRESH: 0.85
 
         ROI_AWARE_POOL:
             POOL_SIZE: 12
@@ -259,7 +223,7 @@ MODEL:
 
         TARGET_CONFIG:
             BOX_CODER: ResidualCoder
-            ROI_PER_IMAGE: 128
+            ROI_PER_IMAGE: 256
             FG_RATIO: 0.5
 
             SAMPLE_ROI_BY_EACH_CLASS: True
@@ -293,7 +257,7 @@ MODEL:
         NMS_CONFIG:
             MULTI_CLASSES_NMS: False
             NMS_TYPE: nms_gpu
-            NMS_THRESH: 0.1
+            NMS_THRESH: 0.2
             NMS_PRE_MAXSIZE: 4096
             NMS_POST_MAXSIZE: 500
 
