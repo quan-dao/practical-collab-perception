@@ -13,11 +13,15 @@ class PointIntraPartOffsetHead(PointHeadTemplate):
     def __init__(self, num_class, input_channels, model_cfg, predict_boxes_when_training=False, **kwargs):
         super().__init__(model_cfg=model_cfg, num_class=num_class)
         self.predict_boxes_when_training = predict_boxes_when_training
-        self.cls_layers = self.make_fc_layers(
-            fc_cfg=self.model_cfg.CLS_FC,
-            input_channels=input_channels,
-            output_channels=num_class
-        )
+        if self.model_cfg.get('DISABLE_CLS_LAYER', False):
+            self.cls_layers = None
+        else:
+            self.cls_layers = self.make_fc_layers(
+                fc_cfg=self.model_cfg.CLS_FC,
+                input_channels=input_channels,
+                output_channels=num_class
+            )
+
         self.part_reg_layers = self.make_fc_layers(
             fc_cfg=self.model_cfg.PART_FC,
             input_channels=input_channels,
@@ -67,9 +71,14 @@ class PointIntraPartOffsetHead(PointHeadTemplate):
 
     def get_loss(self, tb_dict=None):
         tb_dict = {} if tb_dict is None else tb_dict
-        point_loss_cls, tb_dict = self.get_cls_layer_loss(tb_dict)
+
         point_loss_part, tb_dict = self.get_part_layer_loss(tb_dict)
-        point_loss = point_loss_cls + point_loss_part
+
+        if not self.model_cfg.get('DISABLE_CLS_LAYER', False):
+            point_loss_cls, tb_dict = self.get_cls_layer_loss(tb_dict)
+            point_loss = point_loss_cls + point_loss_part
+        else:
+            point_loss = point_loss_part
 
         if self.box_layers is not None:
             point_loss_box, tb_dict = self.get_box_layer_loss(tb_dict)
@@ -91,21 +100,21 @@ class PointIntraPartOffsetHead(PointHeadTemplate):
                 point_part_offset: (N1 + N2 + N3 + ..., 3)
         """
         point_features = batch_dict['point_features']
-        point_cls_preds = self.cls_layers(point_features)  # (total_points, num_class)
-        point_part_preds = self.part_reg_layers(point_features)
 
-        ret_dict = {
-            'point_cls_preds': point_cls_preds,
-            'point_part_preds': point_part_preds,
-        }
+        point_part_preds = self.part_reg_layers(point_features)
+        ret_dict = {'point_part_preds': point_part_preds}
+        point_part_offset = torch.sigmoid(point_part_preds)
+        batch_dict['point_part_offset'] = point_part_offset
+
+        if not self.model_cfg.get('DISABLE_CLS_LAYER', False):
+            point_cls_preds = self.cls_layers(point_features)  # (total_points, num_class)
+            ret_dict['point_cls_preds'] = point_cls_preds
+            point_cls_scores = torch.sigmoid(point_cls_preds)
+            batch_dict['point_cls_scores'], _ = point_cls_scores.max(dim=-1)
+
         if self.box_layers is not None:
             point_box_preds = self.box_layers(point_features)
             ret_dict['point_box_preds'] = point_box_preds
-
-        point_cls_scores = torch.sigmoid(point_cls_preds)
-        point_part_offset = torch.sigmoid(point_part_preds)
-        batch_dict['point_cls_scores'], _ = point_cls_scores.max(dim=-1)
-        batch_dict['point_part_offset'] = point_part_offset
 
         if self.training:
             targets_dict = self.assign_targets(batch_dict)

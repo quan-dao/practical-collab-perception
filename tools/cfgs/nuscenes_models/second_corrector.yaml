@@ -57,10 +57,9 @@ MODEL:
         INSTANCE_HEAD_MID_CHANNELS: [128]
         EVAL_SEGMENTATION_WHILE_TRAINING: False
         CORRECT_POINTS_WHILE_TRAINING: True
-        THRESH_CLS_PROB: 0.35  # will be reduced to 0.3
+        THRESH_CLS_PROB: 0.3
         HAS_ROI_HEAD: True
-        BEV_FEAT_TO_ROI_HEAD: True
-        INTERPOLATE_CORRECTED_POINTS: False
+        INTERPOLATE_CORRECTED_POINTS: True
 
     DENSE_HEAD:
         ENABLE: True
@@ -192,10 +191,24 @@ MODEL:
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
 
+    POINT_HEAD:
+        NAME: PointIntraPartOffsetHead
+        DISABLE_CLS_LAYER: True
+        CLS_FC: [ ]
+        PART_FC: [ ]
+        CLASS_AGNOSTIC: True
+        TARGET_CONFIG:
+            GT_EXTRA_WIDTH: [0.1, 0.1, 0.1]
+        LOSS_CONFIG:
+            LOSS_REG: smooth-l1
+            LOSS_WEIGHTS: {
+                'point_cls_weight': 1.0,
+                'point_part_weight': 1.0
+            }
+
     ROI_HEAD:
         NAME: PartA2FCHead
         CLASS_AGNOSTIC: True
-        DISABLE_PART: True
 
         SHARED_FC: [ 256, 256, 256 ]
         CLS_FC: [ 256, 256 ]
@@ -265,21 +278,21 @@ MODEL:
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4
-    NUM_EPOCHS: 20
+    NUM_EPOCHS: 10
 
-    OPTIMIZER: adam_onecycle
-    LR: 0.003
+    OPTIMIZER: adam
+    LR: 0.001
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 
-    MOMS: [ 0.95, 0.85 ]
+    MOMS: [0.95, 0.85]
     PCT_START: 0.4
     DIV_FACTOR: 10
-    DECAY_STEP_LIST: [ 35, 45 ]
+    DECAY_STEP_LIST: [7, 9]
     LR_DECAY: 0.1
     LR_CLIP: 0.0000001
 
-    LR_WARMUP: False
+    LR_WARMUP: True
     WARMUP_EPOCH: 1
 
     GRAD_NORM_CLIP: 10
