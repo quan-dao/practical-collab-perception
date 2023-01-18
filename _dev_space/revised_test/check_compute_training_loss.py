@@ -10,7 +10,7 @@ import sys
 def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
     if model_name == 'second':
         cfg_file = './second_corrector_mini.yaml'
-        ckpt = 'second_corr_new_hope_novelo_latest.pth'
+        ckpt = 'second_corr_anchor_single_ep20.pth'
     elif model_name == 'pillar':
         cfg_file = './pointpillars_corrector_mini.yaml'
         ckpt = ''  # TODO
@@ -42,7 +42,7 @@ def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
           '\n---')
     model.load_params_from_file(filename=ckpt, to_cpu=True, logger=logger)
     model.cuda()
-    bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters() if 'roi_head' in name]
+    bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters() if 'roi_head' in name or 'point_head' in name]
 
     model.train()
     ret_dict, tb_dict, disp_dict = model(batch_dict)

@@ -9,13 +9,13 @@ class SECONDNet(Detector3DTemplate):
 
         # freeze everything up to (not include) roi_head
         for name, param in self.named_parameters():
-            if 'roi_head' not in name:
+            if not ('roi_head' in name or 'point_head' in name):
                 param.requires_grad = False
 
     def forward(self, batch_dict):
         # set every module up to (not include) roi_head to eval
         for name in self.module_topology:
-            if 'roi_head' not in name:
+            if not ('roi_head' in name or 'point_head' in name):
                 try:
                     self.__getattr__(name).eval()
                 except:
@@ -52,6 +52,8 @@ class SECONDNet(Detector3DTemplate):
         #     tb_dict.update(dense_head_tb_dict)
 
         loss_rcnn, tb_dict = self.roi_head.get_loss()
-        loss = loss_rcnn
+        loss_point_head, tb_dict = self.point_head.get_loss(tb_dict)
+        loss = loss_rcnn + loss_point_head
+        tb_dict['loss_total'] = loss.item()
 
         return loss, tb_dict, disp_dict
