@@ -124,7 +124,7 @@ class PartA2FCHead(RoIHeadTemplate):
             point_features = point_features.detach()
 
         part_features = torch.cat((
-            batch_dict['point_part_offset'] if not self.model_cfg.get('DISABLE_PART', False) else point_coords,
+            batch_dict['point_part_offset'] if not self.model_cfg.get('DISABLE_PART', False) else point_coords.detach(),
             batch_dict['point_cls_scores'].view(-1, 1).detach()
         ), dim=1)
         part_features[part_features[:, -1] < self.model_cfg.SEG_MASK_SCORE_THRESH, 0:3] = 0
@@ -151,7 +151,7 @@ class PartA2FCHead(RoIHeadTemplate):
                 pooled_xyz = pooled_xyz - rearrange(cur_roi[:, :3], 'N C -> N 1 C')
                 pooled_xyz = rotate_points_along_z(pooled_xyz, -cur_roi[:, 6])
                 # convert canonical coord to part
-                pooled_part = pooled_xyz / torch.clamp(cur_roi[:, 3: 6], min=1e-3) + 0.5
+                pooled_part = pooled_xyz / torch.clamp(rearrange(cur_roi[:, 3: 6], 'N C -> N 1 C'), min=1e-3) + 0.5
 
                 # overwrite
                 pooled_part_features[..., :3] = rearrange(pooled_part,

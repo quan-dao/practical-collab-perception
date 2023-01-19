@@ -23,6 +23,7 @@ DATA_CONFIG:
 
 MODEL:
     NAME: SECONDNet
+    TRAIN_ROI_HEAD_ONLY: True
 
     VFE:
         NAME: DynMeanVFE
@@ -193,24 +194,13 @@ MODEL:
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
 
-    POINT_HEAD:
-        NAME: PointIntraPartOffsetHead
-        DISABLE_CLS_LAYER: True
-        CLS_FC: [ ]
-        PART_FC: [ ]
-        CLASS_AGNOSTIC: True
-        TARGET_CONFIG:
-            GT_EXTRA_WIDTH: [0.1, 0.1, 0.1]
-        LOSS_CONFIG:
-            LOSS_REG: smooth-l1
-            LOSS_WEIGHTS: {
-                'point_cls_weight': 1.0,
-                'point_part_weight': 1.0
-            }
-
     ROI_HEAD:
         NAME: PartA2FCHead
         CLASS_AGNOSTIC: True
+
+        DETACH_POINT_FEATURES: True
+        DISABLE_PART: True
+        CONVERT_COORD_TO_PART: True
 
         SHARED_FC: [ 256, 256, 256 ]
         CLS_FC: [ 256, 256 ]

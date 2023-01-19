@@ -14,7 +14,7 @@ torch.autograd.set_detect_anomaly(True)
 def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
     if model_name == 'second':
         cfg_file = './second_corrector_mini.yaml'
-        ckpt = 'second_corr_anchor_single_ep20.pth'
+        ckpt = 'second_anchor_single_bs16_ep20.pth'
     elif model_name == 'pillar':
         cfg_file = './pointpillars_corrector_mini.yaml'
         ckpt = ''  # TODO
@@ -44,9 +44,9 @@ def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
     print('---\n',
           model,
           '\n---')
-    # model.load_params_from_file(filename=ckpt, to_cpu=True, logger=logger)
+    model.load_params_from_file(filename=ckpt, to_cpu=True, logger=logger)
     model.cuda()
-    bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters()]
+    bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters() if param.requires_grad]
 
     model.train()
     ret_dict, tb_dict, disp_dict = model(batch_dict)
