@@ -1,10 +1,12 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils.spconv_utils import spconv
 from .roi_head_template import RoIHeadTemplate
+from pcdet.utils.common_utils import rotate_points_along_z
 
 
 class PartA2FCHead(RoIHeadTemplate):
@@ -118,6 +120,9 @@ class PartA2FCHead(RoIHeadTemplate):
         batch_idx = batch_dict['point_coords'][:, 0]
         point_coords = batch_dict['point_coords'][:, 1:4]
         point_features = batch_dict['point_features']
+        if self.model_cfg.get('DETACH_POINT_FEATURES', False):
+            point_features = point_features.detach()
+
         part_features = torch.cat((
             batch_dict['point_part_offset'] if not self.model_cfg.get('DISABLE_PART', False) else point_coords,
             batch_dict['point_cls_scores'].view(-1, 1).detach()
@@ -138,6 +143,22 @@ class PartA2FCHead(RoIHeadTemplate):
             pooled_part_features = self.roiaware_pool3d_layer.forward(
                 cur_roi, cur_point_coords, cur_part_features, pool_method='avg'
             )  # (N, out_x, out_y, out_z, 4)
+            num_cur_roi, out_x, out_y, out_z, _ = pooled_part_features.shape
+
+            if self.model_cfg.get('DISABLE_PART', False) and self.model_cfg.get('CONVERT_COORD_TO_PART', False):
+                pooled_xyz = rearrange(pooled_part_features[..., :3], 'N out_x out_y out_z C -> N (out_x out_y out_z) C')
+                # transform pooled_xyz to roi canonical coord
+                pooled_xyz = pooled_xyz - rearrange(cur_roi[:, :3], 'N C -> N 1 C')
+                pooled_xyz = rotate_points_along_z(pooled_xyz, -cur_roi[:, 6])
+                # convert canonical coord to part
+                pooled_part = pooled_xyz / torch.clamp(cur_roi[:, 3: 6], min=1e-3) + 0.5
+
+                # overwrite
+                pooled_part_features[..., :3] = rearrange(pooled_part,
+                                                          'N (out_x out_y out_z) C -> N out_x out_y out_z C',
+                                                          N=num_cur_roi, out_x=out_x, out_y=out_y, out_z=out_z, C=3)
+                pooled_part_features = pooled_part_features.contiguous()
+
             pooled_rpn_features = self.roiaware_pool3d_layer.forward(
                 cur_roi, cur_point_coords, cur_rpn_features, pool_method='max'
             )  # (N, out_x, out_y, out_z, C)
