@@ -134,8 +134,6 @@ class PointCloudCorrector(nn.Module):
         assert batch_dict['gt_boxes'].shape[1] == batch_dict['instances_tf'].shape[1], \
             f"{batch_dict['gt_boxes'].shape[1]} != {batch_dict['instances_tf'].shape[1]}"
 
-        assert not self.training, f"training 2nd stage requires corrector in eval mode"
-
         self.forward_return_dict = {}
 
         points = batch_dict['points']
@@ -230,20 +228,18 @@ class PointCloudCorrector(nn.Module):
                                             points_cls_indices == 2)  # (N,)
 
             # mutate xyz-coord of points where mask_dyn_fg == True using predict offset
-            points[mask_dyn_fg, 1: 4] += points_offset[mask_dyn_fg]
+            points[mask_dyn_fg, 1: 4] = points[mask_dyn_fg, 1: 4] + points_offset[mask_dyn_fg]
 
             if self.model_cfg.get('INTERPOLATE_CORRECTED_POINTS', False) and torch.any(mask_dyn_fg):
-                dyn_fg_bev_coord = (points[mask_dyn_fg, 1: 3] - self.point_cloud_range[:2]) / (self.voxel_size[:2] * self.bev_image_stride)
-                dyn_fg_batch_idx = points[mask_dyn_fg, 0].long()
-                dyn_fg_new_feat = dyn_fg_bev_coord.new_zeros(torch.sum(mask_dyn_fg), bev_img.shape[1]).float()
+                correct_bev_coord = (points[:, 1: 3] - self.point_cloud_range[:2]) / (self.voxel_size[:2] * self.bev_image_stride)
+                correct_feat = points.new_zeros(num_points, bev_img.shape[1]).float()
                 for b_idx in range(batch_dict['batch_size']):
                     _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
-                    batch_mask = dyn_fg_batch_idx == b_idx
-                    dyn_fg_new_feat[batch_mask] = bilinear_interpolate_torch(_img,
-                                                                             dyn_fg_bev_coord[batch_mask, 0],
-                                                                             dyn_fg_bev_coord[batch_mask, 1])
+                    batch_mask = points_batch_idx == b_idx
+                    correct_feat[batch_mask] = bilinear_interpolate_torch(_img, correct_bev_coord[batch_mask, 0], correct_bev_coord[batch_mask, 1])
+
                 # update feat of dynamic foreground
-                points_feat[mask_dyn_fg] = points_feat[mask_dyn_fg] + dyn_fg_new_feat
+                points_feat = points_feat + correct_feat * mask_dyn_fg.float().unsqueeze(1)
 
         if 'gt_boxes' in batch_dict:  # => training 1st-stage or 2nd-stage or both (end-to-end)
             # remove gt_boxes that are outside of pc range
@@ -276,7 +272,7 @@ class PointCloudCorrector(nn.Module):
             voxel_coord[:, 1:] = (voxel_coord[:, 1:] + 0.5) * self.voxel_size + self.point_cloud_range[:3]
 
             batch_dict.update({
-                'point_coords': voxel_coord.contiguous(),
+                'point_coords': voxel_coord.contiguous().detach(),  # to prevent grad from point_head & roi_head
                 'point_features': voxel_feat.contiguous(),
                 'point_cls_scores': voxel_score.contiguous()
             })

@@ -5,6 +5,10 @@ from _dev_space.viz_tools import print_dict
 from _dev_space._test.tools_4testing import load_data_to_tensor, load_dict_to_gpu, BackwardHook
 from pcdet.models.detectors import SECONDNet, CenterPoint
 import sys
+import torch
+
+
+torch.autograd.set_detect_anomaly(True)
 
 
 def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
@@ -40,9 +44,9 @@ def main(model_name, target_batch_idx=1, batch_size=1, is_training=True):
     print('---\n',
           model,
           '\n---')
-    model.load_params_from_file(filename=ckpt, to_cpu=True, logger=logger)
+    # model.load_params_from_file(filename=ckpt, to_cpu=True, logger=logger)
     model.cuda()
-    bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters() if 'roi_head' in name or 'point_head' in name]
+    bw_hooks = [BackwardHook(name, param) for name, param in model.named_parameters()]
 
     model.train()
     ret_dict, tb_dict, disp_dict = model(batch_dict)

@@ -308,6 +308,7 @@ def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, points_score
 
     mask_valid_points = torch.logical_and(points_vox_coord >= 0, points_vox_coord < grid_size).all(dim=1)  # (N,)
     points_feat = points_feat[mask_valid_points]
+    points_score = points_score[mask_valid_points]
     points_vox_coord = points_vox_coord[mask_valid_points]
     points_batch_idx = points_coord[mask_valid_points, 0].long()
 
