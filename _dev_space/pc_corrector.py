@@ -265,21 +265,20 @@ class PointCloudCorrector(nn.Module):
 
         if self.model_cfg.get('HAS_ROI_HEAD', False):
             point_coords = points[:, :4].contiguous()
-            point_features = points_feat.detach().contiguous()
-            point_scores = (1.0 - points_all_cls_prob[:, 0].detach()).contiguous()
+            point_features = points_feat.contiguous()
+            point_scores = (1.0 - points_all_cls_prob[:, 0]).contiguous()
 
             # voxelize point_coord & point_features
-            voxel_coord, voxel_feat = voxelize(point_coords,
-                                               torch.cat([point_features, point_scores.view(-1, 1)], dim=1),
-                                               self.voxel_size, self.point_cloud_range, return_xyz=True)
+            voxel_coord, voxel_feat, voxel_score = voxelize(point_coords, point_features, point_scores,
+                                                            self.voxel_size, self.point_cloud_range, return_xyz=True)
             # convert voxel_coord to voxel_centers
             voxel_coord = voxel_coord.float()
             voxel_coord[:, 1:] = (voxel_coord[:, 1:] + 0.5) * self.voxel_size + self.point_cloud_range[:3]
 
             batch_dict.update({
                 'point_coords': voxel_coord.contiguous(),
-                'point_features': voxel_feat[:, :-1].contiguous(),
-                'point_cls_scores': voxel_feat[:, -1].contiguous()
+                'point_features': voxel_feat.contiguous(),
+                'point_cls_scores': voxel_score.contiguous()
             })
         return batch_dict
 

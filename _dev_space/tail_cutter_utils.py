@@ -294,8 +294,8 @@ def generate_predicted_boxes(batch_size: int, proposals: torch.Tensor, fg_prob: 
 
 
 @torch.no_grad()
-def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, voxel_size: torch.Tensor,
-             point_cloud_range: torch.Tensor, return_xyz=True):
+def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, points_score: torch.Tensor,
+             voxel_size: torch.Tensor, point_cloud_range: torch.Tensor, return_xyz=True):
     """
     Args:
         points_coord: (N, 4) - batch_idx, x, y, z
@@ -321,6 +321,7 @@ def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, voxel_size: 
     unq_coord, inv = torch.unique(points_merge_coord, return_inverse=True)
 
     mean_feat = torch_scatter.scatter_mean(points_feat, inv, dim=0)
+    max_score = torch_scatter.scatter_max(points_score, inv, dim=0)[0]
 
     voxels_coord = torch.stack((unq_coord // volume,  # batch_idx
                                 (unq_coord % volume) // area_xy,  # z
@@ -330,4 +331,4 @@ def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, voxel_size: 
     if return_xyz:
         voxels_coord = voxels_coord[:, [0, 3, 2, 1]]
 
-    return voxels_coord.contiguous(), mean_feat.contiguous()
+    return voxels_coord.contiguous(), mean_feat.contiguous(), max_score.contiguous()

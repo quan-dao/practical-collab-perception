@@ -238,7 +238,7 @@ MODEL:
 
         TARGET_CONFIG:
             BOX_CODER: ResidualCoder
-            ROI_PER_IMAGE: 256
+            ROI_PER_IMAGE: 128
             FG_RATIO: 0.5
 
             SAMPLE_ROI_BY_EACH_CLASS: True
