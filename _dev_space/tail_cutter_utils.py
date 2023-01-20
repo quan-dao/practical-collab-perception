@@ -358,7 +358,7 @@ def bev_scatter(points_bev_coord: torch.Tensor, points_batch_idx: torch.Tensor, 
 
     unq, inv = torch.unique(points_merge, return_inverse=True)
     bev_img = points_feat.new_zeros(batch_size * height * width, num_channels)
-    bev_img[unq] = torch_scatter.scatter_mean(points_feat, inv, dim=0)
+    bev_img[unq] = torch_scatter.scatter_mean(points_feat[mask_in], inv, dim=0)
 
     bev_img = rearrange(bev_img, '(B H W) C -> B C H W', B=batch_size, H=height, W=width).contiguous()
     return bev_img
