@@ -349,8 +349,12 @@ def bev_scatter(points_bev_coord: torch.Tensor, points_batch_idx: torch.Tensor, 
     height, width = bev_img_size
     area = height * width
 
-    points_bev_coord = points_bev_coord.long()  # (N, 2) - bev_x, bev_y
-    points_merge = points_batch_idx * area + points_bev_coord[:, 1] * width + points_bev_coord[:, 0]
+    # make sure points are in range
+    mask_in = ((points_bev_coord[:, 0] > 0) & (points_bev_coord[:, 0] < width)
+               & (points_bev_coord[:, 1] > 0) & (points_bev_coord[:, 1] < height))
+
+    points_bev_coord = points_bev_coord[mask_in].long()  # (N, 2) - bev_x, bev_y
+    points_merge = points_batch_idx[mask_in] * area + points_bev_coord[:, 1] * width + points_bev_coord[:, 0]
 
     unq, inv = torch.unique(points_merge, return_inverse=True)
     bev_img = points_feat.new_zeros(batch_size * height * width, num_channels)
