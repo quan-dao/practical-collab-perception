@@ -239,24 +239,27 @@ class PointCloudCorrector(nn.Module):
             # mutate xyz-coord of points where mask_dyn_fg == True using predict offset
             points[mask_dyn_fg, 1: 4] = points[mask_dyn_fg, 1: 4] + points_offset[mask_dyn_fg]
 
-            if self.model_cfg.get('INTERPOLATE_CORRECTED_POINTS', False) and torch.any(mask_dyn_fg):
-                correct_bev_coord = (points[:, 1: 3] - self.point_cloud_range[:2]) / (self.voxel_size[:2] * self.bev_image_stride)
-                correct_feat = points.new_zeros(num_points, bev_img.shape[1]).float()
-                for b_idx in range(batch_dict['batch_size']):
-                    _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
-                    batch_mask = points_batch_idx == b_idx
-                    correct_feat[batch_mask] = bilinear_interpolate_torch(_img, correct_bev_coord[batch_mask, 0], correct_bev_coord[batch_mask, 1])
+            if self.model_cfg.get('INTERPOLATE_CORRECTED_POINTS', False):
+                if torch.any(mask_dyn_fg):
+                    correct_bev_coord = (points[:, 1: 3] - self.point_cloud_range[:2]) / (self.voxel_size[:2] * self.bev_image_stride)
+                    correct_feat = points.new_zeros(num_points, bev_img.shape[1]).float()
+                    for b_idx in range(batch_dict['batch_size']):
+                        _img = rearrange(bev_img[b_idx], 'C H W -> H W C')
+                        batch_mask = points_batch_idx == b_idx
+                        correct_feat[batch_mask] = bilinear_interpolate_torch(_img, correct_bev_coord[batch_mask, 0], correct_bev_coord[batch_mask, 1])
 
-                # update feat of dynamic foreground
-                points_feat = points_feat + correct_feat * mask_dyn_fg.float().unsqueeze(1)
+                    # update feat of dynamic foreground
+                    points_feat = points_feat + correct_feat * mask_dyn_fg.float().unsqueeze(1)
 
-                # scatter points_feat back to BEV image
-                corrected_bev_img = bev_scatter(correct_bev_coord, points_batch_idx, points_feat, bev_img.shape[2:])
+                    # scatter points_feat back to BEV image
+                    corrected_bev_img = bev_scatter(correct_bev_coord, points_batch_idx, points_feat, bev_img.shape[2:])
 
-                weights = self.correction_conv(torch.cat([bev_img, corrected_bev_img], dim=1))  # (B, 2, H, W)
-                weights = torch.softmax(weights, dim=1)
-                
-                final_bev_img = bev_img * weights[:, [0]] + corrected_bev_img * weights[:, [1]]
+                    weights = self.correction_conv(torch.cat([bev_img, corrected_bev_img], dim=1))  # (B, 2, H, W)
+                    weights = torch.softmax(weights, dim=1)
+
+                    final_bev_img = bev_img * weights[:, [0]] + corrected_bev_img * weights[:, [1]]
+                else:
+                    final_bev_img = bev_img
                 # overwrite
                 batch_dict.pop('spatial_features_2d')
                 batch_dict['spatial_features_2d'] = final_bev_img.contiguous()
