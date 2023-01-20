@@ -37,15 +37,6 @@ class PointCloudCorrector(nn.Module):
             nn.ReLU(),
         )
 
-        self.correction_conv = nn.Sequential(
-            nn.Conv2d(2 * num_bev_features, num_bev_features, 3, stride=1, padding=1,
-                      bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False)),
-            nn.BatchNorm2d(num_bev_features),
-            nn.ReLU(),
-            nn.Conv2d(num_bev_features, 1, 2, stride=1, padding=1,
-                      bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False))
-        )
-
         # -------
         # Points Head
         # -------
@@ -73,6 +64,15 @@ class PointCloudCorrector(nn.Module):
         self.instance_motion_seg = self._make_mlp(num_points_features + 6, 1,
                                                   model_cfg.get('INSTANCE_HEAD_MID_CHANNELS', None))
         # in := global_feat | init_local_centroid | target_local_centroid
+
+        self.correction_conv = nn.Sequential(
+            nn.Conv2d(2 * num_points_features, num_points_features, 3, stride=1, padding=1,
+                    bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False)),
+            nn.BatchNorm2d(num_points_features),
+            nn.ReLU(),
+            nn.Conv2d(num_points_features, 2, 3, stride=1, padding=1,
+                    bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False))
+        )
 
         # -------
         # Loss
@@ -254,10 +254,12 @@ class PointCloudCorrector(nn.Module):
                 corrected_bev_img = bev_scatter(correct_bev_coord, points_batch_idx, points_feat, bev_img.shape[2:])
 
                 weights = self.correction_conv(torch.cat([bev_img, corrected_bev_img], dim=1))  # (B, 2, H, W)
-                final_bev_img = bev_img * weights[:, 0] + corrected_bev_img * weights[:, 1]
+                weights = torch.softmax(weights, dim=1)
+                
+                final_bev_img = bev_img * weights[:, [0]] + corrected_bev_img * weights[:, [1]]
                 # overwrite
                 batch_dict.pop('spatial_features_2d')
-                batch_dict['spatial_features_2d'] = final_bev_img
+                batch_dict['spatial_features_2d'] = final_bev_img.contiguous()
 
         if 'gt_boxes' in batch_dict:  # => training 1st-stage or 2nd-stage or both (end-to-end)
             # remove gt_boxes that are outside of pc range
