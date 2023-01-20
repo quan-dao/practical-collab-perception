@@ -120,6 +120,7 @@ class Detector3DTemplate(nn.Module):
         )
         model_info_dict['num_point_features'] = corrector.num_points_feat
         model_info_dict['module_list'].append(corrector)
+        model_info_dict['num_bev_features'] = corrector.num_points_feat
         return corrector, model_info_dict
 
     def build_pfe(self, model_info_dict):

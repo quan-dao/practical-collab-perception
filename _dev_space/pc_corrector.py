@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_scatter import scatter_max, scatter_min, scatter_mean
 from einops import rearrange
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, eval_binary_segmentation, quat2mat, voxelize
+from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, eval_binary_segmentation, quat2mat, bev_scatter
 from typing import List
 from torchmetrics import Precision, Recall
 
@@ -35,6 +35,15 @@ class PointCloudCorrector(nn.Module):
             ),
             nn.BatchNorm2d(self.model_cfg.SHARED_CONV_CHANNEL),
             nn.ReLU(),
+        )
+
+        self.correction_conv = nn.Sequential(
+            nn.Conv2d(2 * num_bev_features, num_bev_features, 3, stride=1, padding=1,
+                      bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False)),
+            nn.BatchNorm2d(num_bev_features),
+            nn.ReLU(),
+            nn.Conv2d(num_bev_features, 1, 2, stride=1, padding=1,
+                      bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False))
         )
 
         # -------
@@ -241,6 +250,15 @@ class PointCloudCorrector(nn.Module):
                 # update feat of dynamic foreground
                 points_feat = points_feat + correct_feat * mask_dyn_fg.float().unsqueeze(1)
 
+                # scatter points_feat back to BEV image
+                corrected_bev_img = bev_scatter(correct_bev_coord, points_batch_idx, points_feat, bev_img.shape[2:])
+
+                weights = self.correction_conv(torch.cat([bev_img, corrected_bev_img], dim=1))  # (B, 2, H, W)
+                final_bev_img = bev_img * weights[:, 0] + corrected_bev_img * weights[:, 1]
+                # overwrite
+                batch_dict.pop('spatial_features_2d')
+                batch_dict['spatial_features_2d'] = final_bev_img
+
         if 'gt_boxes' in batch_dict:  # => training 1st-stage or 2nd-stage or both (end-to-end)
             # remove gt_boxes that are outside of pc range
             valid_gt_boxes = list()
@@ -259,23 +277,6 @@ class PointCloudCorrector(nn.Module):
             batch_dict.pop('gt_boxes')
             batch_dict['gt_boxes'] = batch_valid_gt_boxes
 
-        if self.model_cfg.get('HAS_ROI_HEAD', False):
-            point_coords = points[:, :4].contiguous()
-            point_features = points_feat.contiguous()
-            point_scores = (1.0 - points_all_cls_prob[:, 0]).contiguous()
-
-            # voxelize point_coord & point_features
-            voxel_coord, voxel_feat, voxel_score = voxelize(point_coords, point_features, point_scores,
-                                                            self.voxel_size, self.point_cloud_range, return_xyz=True)
-            # convert voxel_coord to voxel_centers
-            voxel_coord = voxel_coord.float()
-            voxel_coord[:, 1:] = (voxel_coord[:, 1:] + 0.5) * self.voxel_size + self.point_cloud_range[:3]
-
-            batch_dict.update({
-                'point_coords': voxel_coord.contiguous().detach(),  # to prevent grad from point_head & roi_head
-                'point_features': voxel_feat.contiguous(),
-                'point_cls_scores': voxel_score.contiguous()
-            })
         return batch_dict
 
     def assign_target(self, batch_dict, meta):

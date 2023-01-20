@@ -333,3 +333,30 @@ def voxelize(points_coord: torch.Tensor, points_feat: torch.Tensor, points_score
         voxels_coord = voxels_coord[:, [0, 3, 2, 1]]
 
     return voxels_coord.contiguous(), mean_feat.contiguous(), max_score.contiguous()
+
+
+def bev_scatter(points_bev_coord: torch.Tensor, points_batch_idx: torch.Tensor, points_feat: torch.Tensor,
+                bev_img_size: tuple):
+    """
+    Args:
+        points_bev_coord: (N, 2) - bev_x, bev_y
+        points_batch_idx: (N,)
+        points_feat: (N, C)
+        bev_img_size: (height, width)
+    """
+    batch_size = torch.max(points_batch_idx).item() + 1
+    num_channels = points_feat.shape[1]
+    height, width = bev_img_size
+    area = height * width
+
+    points_bev_coord = points_bev_coord.long()  # (N, 2) - bev_x, bev_y
+    points_merge = points_batch_idx * area + points_bev_coord[:, 1] * width + points_bev_coord[:, 0]
+
+    unq, inv = torch.unique(points_merge, return_inverse=True)
+    bev_img = points_feat.new_zeros(batch_size * height * width, num_channels)
+    bev_img[unq] = torch_scatter.scatter_mean(points_feat, inv, dim=1)
+
+    bev_img = rearrange(bev_img, '(B H W) C -> B H W C', B=batch_size, H=height, W=width)
+    return bev_img
+
+
