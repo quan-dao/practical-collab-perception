@@ -250,16 +250,17 @@ class PointCloudCorrector(nn.Module):
 
                     # update feat of dynamic foreground
                     points_feat = points_feat + correct_feat * mask_dyn_fg.float().unsqueeze(1)
-
-                    # scatter points_feat back to BEV image
-                    corrected_bev_img = bev_scatter(correct_bev_coord, points_batch_idx, points_feat, bev_img.shape[2:])
-
-                    weights = self.correction_conv(torch.cat([bev_img, corrected_bev_img], dim=1))  # (B, 2, H, W)
-                    weights = torch.softmax(weights, dim=1)
-
-                    final_bev_img = bev_img * weights[:, [0]] + corrected_bev_img * weights[:, [1]]
                 else:
-                    final_bev_img = bev_img
+                    correct_bev_coord = points_bev_coord
+
+                # scatter points_feat back to BEV image
+                corrected_bev_img = bev_scatter(correct_bev_coord, points_batch_idx, points_feat, bev_img.shape[2:])
+
+                weights = self.correction_conv(torch.cat([bev_img, corrected_bev_img], dim=1))  # (B, 2, H, W)
+                weights = torch.softmax(weights, dim=1)
+
+                final_bev_img = bev_img * weights[:, [0]] + corrected_bev_img * weights[:, [1]]
+
                 # overwrite
                 batch_dict.pop('spatial_features_2d')
                 batch_dict['spatial_features_2d'] = final_bev_img.contiguous()
