@@ -185,6 +185,16 @@ class NuScenesDataset(DatasetTemplate):
         return data_dict
 
     def evaluation(self, det_annos, class_names, **kwargs):
+        if kwargs['eval_metric'] == 'kitti':
+            eval_det_annos = copy.deepcopy(det_annos)
+            eval_gt_annos = copy.deepcopy(self.infos)
+            return self.kitti_eval(eval_det_annos, eval_gt_annos, class_names)
+        elif kwargs['eval_metric'] == 'nuscenes':
+            return self.nuscenes_eval(det_annos, class_names, **kwargs)
+        else:
+            raise NotImplementedError
+
+    def nuscenes_eval(self, det_annos, class_names, **kwargs):
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
@@ -239,6 +249,32 @@ class NuScenesDataset(DatasetTemplate):
 
         result_str, result_dict = nuscenes_utils.format_nuscene_results(metrics, self.class_names, version=eval_version)
         return result_str, result_dict
+
+    def kitti_eval(self,  eval_det_annos, eval_gt_annos, class_names):
+        from ..kitti.kitti_object_eval_python import eval as kitti_eval
+        from ..kitti import kitti_utils
+
+        map_name_to_kitti = {
+            'car': 'car',
+            'truck': 'truck',
+            'construction_vehicle': 'construction_vehicle',
+            'bus': 'bus',
+            'trailer': 'trailer',
+            'barrier': 'barrier',
+            'motorcycle': 'motorcycle',
+            'bicycle': 'bicycle',
+            'pedestrian': 'pedestrian',
+            'traffic_cone': 'traffic_cone',
+            'ignore': 'ignore',
+        }
+        kitti_utils.transform_annotations_to_kitti_format(self.nusc, eval_det_annos, map_name_to_kitti=map_name_to_kitti)
+        kitti_utils.transform_annotations_to_kitti_format(self.nusc, eval_gt_annos, map_name_to_kitti=map_name_to_kitti)
+
+        kitti_class_names = [map_name_to_kitti[x] for x in class_names]
+        ap_result_str, ap_dict = kitti_eval.get_official_eval_result(
+            gt_annos=eval_gt_annos, dt_annos=eval_det_annos, current_classes=kitti_class_names, use_nuscenes_cls=True
+        )
+        return ap_result_str, ap_dict
 
     def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
         database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo'

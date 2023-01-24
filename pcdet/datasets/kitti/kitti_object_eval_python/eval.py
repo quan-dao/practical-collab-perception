@@ -636,7 +636,7 @@ def do_coco_style_eval(gt_annos, dt_annos, current_classes, overlap_ranges,
     return mAP_bbox, mAP_bev, mAP_3d, mAP_aos
 
 
-def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict=None):
+def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict=None, use_nuscenes_cls=False):
     overlap_0_7 = np.array([[0.7, 0.5, 0.5, 0.7,
                              0.5, 0.7], [0.7, 0.5, 0.5, 0.7, 0.5, 0.7],
                             [0.7, 0.5, 0.5, 0.7, 0.5, 0.7]])
@@ -644,14 +644,29 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
                              0.5, 0.5], [0.5, 0.25, 0.25, 0.5, 0.25, 0.5],
                             [0.5, 0.25, 0.25, 0.5, 0.25, 0.5]])
     min_overlaps = np.stack([overlap_0_7, overlap_0_5], axis=0)  # [2, 3, 5]
-    class_to_name = {
-        0: 'Car',
-        1: 'Pedestrian',
-        2: 'Cyclist',
-        3: 'Van',
-        4: 'Person_sitting',
-        5: 'Truck'
-    }
+    if not use_nuscenes_cls:
+        class_to_name = {
+            0: 'Car',
+            1: 'Pedestrian',
+            2: 'Cyclist',
+            3: 'Van',
+            4: 'Person_sitting',
+            5: 'Truck'
+        }
+    else:
+        class_to_name = {
+            0: 'car',
+            1: 'truck',
+            2: 'construction_vehicle',
+            3: 'bus',
+            4: 'trailer',
+            5: 'barrier',
+            6: 'motorcycle',
+            7: 'bicycle',
+            8: 'pedestrian',
+            9: 'traffic_cone',
+            10: 'ignore',
+        }
     name_to_class = {v: n for n, v in class_to_name.items()}
     if not isinstance(current_classes, (list, tuple)):
         current_classes = [current_classes]
