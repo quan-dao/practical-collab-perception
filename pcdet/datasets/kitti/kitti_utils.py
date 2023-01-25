@@ -42,7 +42,13 @@ def transform_annotations_to_kitti_format(nusc: NuScenes, annos: List, map_name_
             gt_boxes_lidar = anno['gt_boxes'].copy()  # (N, 7 [+2]) - x, y, z, dx, dy, dz, yaw, [velocity_x, _y]
 
         # map gt_boxes to KITTI
-        sample_tk = anno['token']
+        if 'metadata' in anno:
+            sample_tk = anno['metadata']['token']
+        elif 'token' in anno:
+            sample_tk = anno['token']
+        else:
+            print('anno:\n', anno.keys(), '\n----')
+            raise KeyError
 
         # Get sample data.
         sample = nusc.get('sample', sample_tk)
@@ -87,7 +93,7 @@ def transform_annotations_to_kitti_format(nusc: NuScenes, annos: List, map_name_
 
             anno['rotation_y'] = np.arctan2(-boxes_to_cam_kitti[:, 2, 0], boxes_to_cam_kitti[:, 0, 0])
 
-            anno['alpha'] = -10  # dummy
+            anno['alpha'] = -10 * np.ones(gt_boxes_lidar.shape[0])  # dummy
         else:
             anno['location'] = anno['dimensions'] = np.zeros((0, 3))
             anno['rotation_y'] = anno['alpha'] = np.zeros(0)
