@@ -176,6 +176,10 @@ class DatasetTemplate(torch_data.Dataset):
 
             if data_dict.get('gt_boxes2d', None) is not None:
                 data_dict['gt_boxes2d'] = data_dict['gt_boxes2d'][selected]
+            
+            if data_dict['gt_boxes'].shape[0] == 0:
+                new_index = np.random.randint(self.__len__())
+                return self.__getitem__(new_index)
 
         if data_dict.get('points', None) is not None:
             data_dict = self.point_feature_encoder.forward(data_dict)
