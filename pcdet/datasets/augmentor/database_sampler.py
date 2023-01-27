@@ -378,8 +378,7 @@ class DataBaseSampler(object):
                                    mv_height=None, sampled_gt_boxes2d=None):
         gt_boxes = data_dict['gt_boxes']  # (N_b, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
         gt_names = data_dict['gt_names']  # (N_b,)
-        tree_gt_boxes = KDTree(gt_boxes[:, :2], metric='euclidean')
-
+        
         points = data_dict['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
         num_point_features = points.shape[1]
         num_original_instances = data_dict['instances_tf'].shape[0]
@@ -421,12 +420,6 @@ class DataBaseSampler(object):
 
             # get sampled gt box & update its instance index
             sampled_box = info['box3d_lidar']   # (9,)
-
-            # nearest neighbor to put sampled_box & obj_points on the ground
-            idx_nearest_gt = tree_gt_boxes.query(sampled_box[:2].reshape(1, 2), k=1, return_distance=False)[0]
-            offset_z = gt_boxes[idx_nearest_gt, 2] - sampled_box[2]
-            obj_points[:, 2] += offset_z
-            sampled_box[2] = gt_boxes[idx_nearest_gt, 2]
 
             # store sampling result
             obj_points_list.append(obj_points)
