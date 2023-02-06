@@ -6,6 +6,9 @@ from torch.nn.init import kaiming_normal_
 from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
 from ...utils import loss_utils
+from einops import rearrange
+from pcdet.utils.common_utils import rotate_points_along_z
+from workspace.box_utils import get_axis_aligned_iou
 
 
 class SeparateHead(nn.Module):
@@ -102,18 +105,22 @@ class CenterHead(nn.Module):
 
     def assign_target_of_single_head(
             self, num_classes, gt_boxes, feature_map_size, feature_map_stride, num_max_objs=500,
-            gaussian_overlap=0.1, min_radius=2
+            gaussian_overlap=0.1, min_radius=2, pred_boxes_target_iou=None
     ):
         """
         Args:
             gt_boxes: (N, 8)
             feature_map_size: (2), [x, y]
-
+            pred_boxes_iou: (N,) - axis-aligned iou between pred box @ gt center & gt box
         Returns:
 
         """
         heatmap = gt_boxes.new_zeros(num_classes, feature_map_size[1], feature_map_size[0])
-        ret_boxes = gt_boxes.new_zeros((num_max_objs, gt_boxes.shape[-1] - 1 + 1))
+        if pred_boxes_target_iou is None:
+            ret_boxes = gt_boxes.new_zeros((num_max_objs, gt_boxes.shape[-1] - 1 + 1))
+        else:
+            ret_boxes = gt_boxes.new_zeros((num_max_objs, gt_boxes.shape[-1] - 1 + 1 + 1))
+            # add 1 to include target iou
         inds = gt_boxes.new_zeros(num_max_objs).long()
         mask = gt_boxes.new_zeros(num_max_objs).long()
 
@@ -152,7 +159,10 @@ class CenterHead(nn.Module):
             ret_boxes[k, 6] = torch.cos(gt_boxes[k, 6])
             ret_boxes[k, 7] = torch.sin(gt_boxes[k, 6])
             if gt_boxes.shape[1] > 8:
-                ret_boxes[k, 8:] = gt_boxes[k, 7:-1]
+                ret_boxes[k, 8: 10] = gt_boxes[k, 7:-1]  # to hold velocity
+            
+            if pred_boxes_target_iou is not None:
+                ret_boxes[k, -1] = pred_boxes_target_iou[k]
 
         return heatmap, ret_boxes, inds, mask
 
@@ -198,14 +208,42 @@ class CenterHead(nn.Module):
                 if len(gt_boxes_single_head) == 0:
                     gt_boxes_single_head = cur_gt_boxes[:0, :]
                 else:
-                    gt_boxes_single_head = torch.cat(gt_boxes_single_head, dim=0)
+                    gt_boxes_single_head = torch.cat(gt_boxes_single_head, dim=0)  # (N, 7[+2]+1)
+
+                # TODO: @ gt box's center -> decode prediction to get pred box -> axis-aligned 3d iou
+                if kwargs.get('pred_dicts', None) is not None:
+                    pred_dict = kwargs['pred_dicts'][idx]
+                    center, center_z, dim = pred_dict['center'].detach(), pred_dict['center_z'].detach(), pred_dict['dim'].detach().exp() 
+                    # all tensors above have the shape of (B, C, H ,W)
+                    angle = torch.atan2(pred_dict['rot'][bs_idx, 1].detach(), pred_dict['rot'][bs_idx, 0].detach())  # (H, W)
+                    
+                    # pixel coord (on feature map) - int
+                    pixel_x = (gt_boxes_single_head[:, 0] - self.point_cloud_range[0]) / self.voxel_size[0] / target_assigner_cfg.FEATURE_MAP_STRIDE
+                    pixel_y = (gt_boxes_single_head[:, 1] - self.point_cloud_range[1]) / self.voxel_size[1] / target_assigner_cfg.FEATURE_MAP_STRIDE
+                    pixel_x = torch.floor(pixel_x).long()
+                    pixel_y = torch.floor(pixel_y).long()
+                    # pixel coord (on feature map) - float
+                    pred_x = pixel_x.float() + center[bs_idx, 0, pixel_y, pixel_x]
+                    pred_y = pixel_y.float() + center[bs_idx, 1, pixel_y, pixel_x]
+                    # full 3d coord
+                    pred_x = pred_x * target_assigner_cfg.FEATURE_MAP_STRIDE * self.voxel_size[0] + self.point_cloud_range[0]
+                    pred_y = pred_y * target_assigner_cfg.FEATURE_MAP_STRIDE * self.voxel_size[1] + self.point_cloud_range[1]
+                    
+                    # assemble pred boxes (@ gt centers)
+                    pred_boxes = torch.stack([pred_x, pred_y, center_z, dim, angle], dim=1)  # (N, 7)
+
+                    # axis-aligned iou with gt
+                    pred_boxes_target_iou = 2.0 * get_axis_aligned_iou(pred_boxes, gt_boxes_single_head) - 1 # (N,) in [-1, 1]
+
+                # --------------------------------------------------------------
 
                 heatmap, ret_boxes, inds, mask = self.assign_target_of_single_head(
                     num_classes=len(cur_class_names), gt_boxes=gt_boxes_single_head.cpu(),
                     feature_map_size=feature_map_size, feature_map_stride=target_assigner_cfg.FEATURE_MAP_STRIDE,
                     num_max_objs=target_assigner_cfg.NUM_MAX_OBJS,
                     gaussian_overlap=target_assigner_cfg.GAUSSIAN_OVERLAP,
-                    min_radius=target_assigner_cfg.MIN_RADIUS,
+                    min_radius=target_assigner_cfg.MIN_RADIUS, 
+                    pred_boxes_iou=pred_boxes_target_iou
                 )
                 heatmap_list.append(heatmap.to(gt_boxes_single_head.device))
                 target_boxes_list.append(ret_boxes.to(gt_boxes_single_head.device))

@@ -82,7 +82,8 @@ MODEL:
                 'center': {'out_channels': 2, 'num_conv': 2},
                 'center_z': {'out_channels': 1, 'num_conv': 2},
                 'dim': {'out_channels': 3, 'num_conv': 2},
-                'rot': {'out_channels': 2, 'num_conv': 2}
+                'rot': {'out_channels': 2, 'num_conv': 2},
+                'iou': {'out_channels': 1, 'num_conv': 2}
             }
 
         TARGET_ASSIGNER_CONFIG:
