@@ -124,6 +124,15 @@ class DataAugmentor(object):
         
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
+
+        if 'instances_tf' in data_dict:
+            tf = np.eye(4)
+            tf[:3, -1] = noise_translate
+            inv_tf = np.eye(4)
+            inv_tf[:3, -1] = -noise_translate
+            data_dict['instances_tf'] = np.matmul(tf[np.newaxis, np.newaxis], data_dict['instances_tf'])
+            data_dict['instances_tf'] = np.matmul(data_dict['instances_tf'], inv_tf[np.newaxis, np.newaxis])
+
         return data_dict
 
     def random_local_translation(self, data_dict=None, config=None):
