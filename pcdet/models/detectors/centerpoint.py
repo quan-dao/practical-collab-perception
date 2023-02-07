@@ -30,10 +30,13 @@ class CenterPoint(Detector3DTemplate):
             **tb_dict
         }
 
-        loss_corrector, tb_dict = self.corrector.get_training_loss(tb_dict)
-        tb_dict['loss_corrector'] = loss_corrector.item()
+        if self.corrector is not None:
+            loss_corrector, tb_dict = self.corrector.get_training_loss(tb_dict)
+            tb_dict['loss_corrector'] = loss_corrector.item()
 
-        loss = loss_rpn + loss_corrector
+            loss = loss_rpn + loss_corrector
+        else:
+            loss = loss_rpn
         tb_dict['loss_total'] = loss.item()
 
         return loss, tb_dict, disp_dict

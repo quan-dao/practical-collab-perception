@@ -7,8 +7,11 @@ from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
 from ...utils import loss_utils
 from einops import rearrange
-from pcdet.utils.common_utils import rotate_points_along_z
 from workspace.box_utils import get_axis_aligned_iou
+import lovely_tensors as lt
+
+
+lt.monkey_patch()
 
 
 class SeparateHead(nn.Module):
@@ -198,10 +201,10 @@ class CenterHead(nn.Module):
 
                 gt_boxes_single_head = []
 
-                for idx, name in enumerate(gt_class_names):
+                for _idx, name in enumerate(gt_class_names):
                     if name not in cur_class_names:
                         continue
-                    temp_box = cur_gt_boxes[idx]
+                    temp_box = cur_gt_boxes[_idx]
                     temp_box[-1] = cur_class_names.index(name) + 1
                     gt_boxes_single_head.append(temp_box[None, :])
 
@@ -210,7 +213,7 @@ class CenterHead(nn.Module):
                 else:
                     gt_boxes_single_head = torch.cat(gt_boxes_single_head, dim=0)  # (N, 7[+2]+1)
 
-                # TODO: @ gt box's center -> decode prediction to get pred box -> axis-aligned 3d iou
+                # @ gt box's center -> decode prediction to get pred box -> axis-aligned 3d iou
                 if kwargs.get('pred_dicts', None) is not None:
                     pred_dict = kwargs['pred_dicts'][idx]
                     center, center_z, dim = pred_dict['center'].detach(), pred_dict['center_z'].detach(), pred_dict['dim'].detach().exp() 
@@ -220,8 +223,8 @@ class CenterHead(nn.Module):
                     # pixel coord (on feature map) - int
                     pixel_x = (gt_boxes_single_head[:, 0] - self.point_cloud_range[0]) / self.voxel_size[0] / target_assigner_cfg.FEATURE_MAP_STRIDE
                     pixel_y = (gt_boxes_single_head[:, 1] - self.point_cloud_range[1]) / self.voxel_size[1] / target_assigner_cfg.FEATURE_MAP_STRIDE
-                    pixel_x = torch.floor(pixel_x).long()
-                    pixel_y = torch.floor(pixel_y).long()
+                    pixel_x = torch.clamp(pixel_x, min=0, max=feature_map_size[0] - 0.5).long()
+                    pixel_y = torch.clamp(pixel_y, min=0, max=feature_map_size[1] - 0.5).long()
                     # pixel coord (on feature map) - float
                     pred_x = pixel_x.float() + center[bs_idx, 0, pixel_y, pixel_x]
                     pred_y = pixel_y.float() + center[bs_idx, 1, pixel_y, pixel_x]
@@ -230,10 +233,20 @@ class CenterHead(nn.Module):
                     pred_y = pred_y * target_assigner_cfg.FEATURE_MAP_STRIDE * self.voxel_size[1] + self.point_cloud_range[1]
                     
                     # assemble pred boxes (@ gt centers)
-                    pred_boxes = torch.stack([pred_x, pred_y, center_z, dim, angle], dim=1)  # (N, 7)
+                    pred_boxes = torch.cat([
+                        pred_x.unsqueeze(1), pred_y.unsqueeze(1), center_z[bs_idx, 0, pixel_y, pixel_x].unsqueeze(1), 
+                        rearrange(dim[bs_idx, :, pixel_y, pixel_x], 'C N -> N C'), 
+                        angle[pixel_y, pixel_x].unsqueeze(1)
+                    ], dim=1)  # (N, 7)
+
+                    # for debugging
+                    # pred_boxes = torch.clone(gt_boxes_single_head)
 
                     # axis-aligned iou with gt
                     pred_boxes_target_iou = 2.0 * get_axis_aligned_iou(pred_boxes, gt_boxes_single_head) - 1 # (N,) in [-1, 1]
+
+                    # print(f"idx {idx} | gt_boxes_single_head: {gt_boxes_single_head}")
+                    # print(f"idx {idx} | pred_boxes_target_iou: {pred_boxes_target_iou}")
 
                 # --------------------------------------------------------------
 
@@ -243,7 +256,7 @@ class CenterHead(nn.Module):
                     num_max_objs=target_assigner_cfg.NUM_MAX_OBJS,
                     gaussian_overlap=target_assigner_cfg.GAUSSIAN_OVERLAP,
                     min_radius=target_assigner_cfg.MIN_RADIUS, 
-                    pred_boxes_iou=pred_boxes_target_iou
+                    pred_boxes_target_iou=pred_boxes_target_iou
                 )
                 heatmap_list.append(heatmap.to(gt_boxes_single_head.device))
                 target_boxes_list.append(ret_boxes.to(gt_boxes_single_head.device))
@@ -370,7 +383,8 @@ class CenterHead(nn.Module):
         if self.training:
             target_dict = self.assign_targets(
                 data_dict['gt_boxes'], feature_map_size=spatial_features_2d.size()[2:],
-                feature_map_stride=data_dict.get('spatial_features_2d_strides', None)
+                feature_map_stride=data_dict.get('spatial_features_2d_strides', None),
+                pred_dicts=pred_dicts
             )
             self.forward_ret_dict['target_dicts'] = target_dict
 

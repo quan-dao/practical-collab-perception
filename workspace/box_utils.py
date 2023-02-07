@@ -20,7 +20,7 @@ def get_axis_aligned_boxes(boxes: torch.Tensor) -> torch.Tensor:
     corners = rotate_points_along_z(corners, boxes[:, 6]) + rearrange(boxes[:, :3], 'N C -> N 1 C')  # (N, 4, 3) - in world coord
     # get axis-aligned boxes
     min_xy = torch.min(corners[:, :, :-1], dim=1)[0]  # (N, 2)
-    max_xy = torch.min(corners[:, :, :-1], dim=1)[1]  # (N, 2)
+    max_xy = torch.max(corners[:, :, :-1], dim=1)[0]  # (N, 2)
     aa_boxes = torch.cat([min_xy, max_xy], dim=1)  # (N, 4) - x_min, y_min, x_max, y_max
     return aa_boxes
     

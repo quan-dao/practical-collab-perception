@@ -1,4 +1,10 @@
 import torch
+import numpy as np
+from pcdet.config import cfg, cfg_from_yaml_file
+from pcdet.datasets import build_dataloader
+from pcdet.utils import common_utils
+from pcdet.models.detectors import build_detector
+import kornia
 
 
 class BackwardHook:
@@ -29,3 +35,39 @@ class BackwardHook:
 
     def remove(self):
         self.hook_handle.remove()
+
+
+def build_test_infra(cfg_file: str, **kwargs):
+    np.random.seed(666)
+    cfg_from_yaml_file(cfg_file, cfg)
+    logger = common_utils.create_logger('./artifact/dummy_log.txt')
+    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=kwargs.get('batch_size', 2),
+                                              dist=False, logger=logger, training=kwargs.get('training', False), total_epochs=1, seed=666)
+    model = build_detector(cfg.MODEL, num_class=kwargs.get('num_class', 10), dataset=dataset)
+    if 'ckpt_file' in kwargs:
+        model.load_params_from_file(kwargs['ckpt_file'], logger, to_cpu=True)
+        
+    return model, dataloader
+
+
+def to_gpu(batch_dict):
+    for k, v in batch_dict.items():
+        if isinstance(v, torch.Tensor):
+            batch_dict[k] = v.cuda()
+
+
+def to_tensor(batch_dict, move_to_gpu=False) -> None:
+    for key, val in batch_dict.items():
+        if not isinstance(val, np.ndarray):
+            continue
+        elif key in ['frame_id', 'metadata', 'calib']:
+            continue
+        elif key in ['images']:
+            batch_dict[key] = kornia.image_to_tensor(val).float().contiguous()
+        elif key in ['image_shape']:
+            batch_dict[key] = torch.from_numpy(val).int()
+        else:
+            batch_dict[key] = torch.from_numpy(val).float()
+    
+    if move_to_gpu:
+        to_gpu(batch_dict)
