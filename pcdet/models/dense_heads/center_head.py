@@ -311,13 +311,17 @@ class CenterHead(nn.Module):
             'pred_labels': [],
         } for k in range(batch_size)]
         for idx, pred_dict in enumerate(pred_dicts):
-            batch_hm = pred_dict['hm'].sigmoid()
-            batch_center = pred_dict['center']
-            batch_center_z = pred_dict['center_z']
-            batch_dim = pred_dict['dim'].exp()
-            batch_rot_cos = pred_dict['rot'][:, 0].unsqueeze(dim=1)
-            batch_rot_sin = pred_dict['rot'][:, 1].unsqueeze(dim=1)
+            batch_hm = pred_dict['hm'].sigmoid()  # (B, n_cls, H, W)
+            batch_center = pred_dict['center']  # (B, 2, H, W)
+            batch_center_z = pred_dict['center_z']  # (B, 1, H, W)
+            batch_dim = pred_dict['dim'].exp()  # (B, 3, H, W)
+            batch_rot_cos = pred_dict['rot'][:, 0].unsqueeze(dim=1)  # (B, 1, H, W)
+            batch_rot_sin = pred_dict['rot'][:, 1].unsqueeze(dim=1)  # (B, 1, H, W)
             batch_vel = pred_dict['vel'] if 'vel' in self.separate_head_cfg.HEAD_ORDER else None
+
+            if post_process_cfg.get('CALIB_CLS_SCORE', False):
+                alpha = post_process_cfg.get('CALIB_CLS_SCORE_ALPHA', 0.5)
+                batch_hm = torch.pow(batch_hm, 1.0 - alpha) * torch.pow(pred_dict['iou'], alpha)
 
             final_pred_dicts = centernet_utils.decode_bbox_from_heatmap(
                 heatmap=batch_hm, rot_cos=batch_rot_cos, rot_sin=batch_rot_sin,

@@ -120,6 +120,8 @@ MODEL:
             }
 
         POST_PROCESSING:
+            CALIB_CLS_SCORE: True
+            CALIB_CLS_SCORE_ALPHA: 0.5
             SCORE_THRESH: 0.1
             POST_CENTER_LIMIT_RANGE: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
             MAX_OBJ_PER_SAMPLE: 500
