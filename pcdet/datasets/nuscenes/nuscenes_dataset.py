@@ -5,12 +5,10 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
-from _dev_space.get_sweeps_instance_centric import inst_centric_get_sweeps
-from _dev_space.tools_box import get_nuscenes_sensor_pose_in_global, get_nuscenes_sample_location
+from workspace.rev_get_sweeps_instance_centric import revised_instance_centric_get_sweeps
 from nuscenes import NuScenes
 
 
@@ -139,14 +137,9 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
         info = copy.deepcopy(self.infos[index])
         num_sweeps = self.dataset_cfg.MAX_SWEEPS
-        _out = inst_centric_get_sweeps(self.nusc, info['token'], num_sweeps, return_instances_last_box=True,
-                                       point_cloud_range=self.point_cloud_range,
-                                       detection_classes=self.class_names,
-                                       map_point_feat2idx=self.map_point_feat2idx)
+        _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], num_sweeps, self.class_names)
         points = _out['points']  # (N, C)
 
-        sample_rec = self.nusc.get('sample', info['token'])
-        tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, sample_rec['data']['LIDAR_TOP'])
 
         input_dict = {
             'points': points,
@@ -154,23 +147,17 @@ class NuScenesDataset(DatasetTemplate):
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {
                 'token': info['token'],
-                'tf_glob_from_lidar': tf_glob_from_lidar,  # (4, 4)
                 'num_sweeps': num_sweeps,
-                'num_original_instances': _out['instances_tf'].shape[0]
+                'num_original_instances': _out['instances_tf'].shape[0],
+                'num_original_boxes': _out['gt_boxes'].shape[0]
             }
         }
 
         # overwrite gt_boxes & gt_names
-        # ------
-        # NOTE: instances_last_box DON'T NEED TO BE CONSISTENT WITH instances_tf because aligner doesn't predict boxes
-        # NOTE: instances_last_box & instances_tf are consistent here, but this consistency will be broken when
-        # NOTE: boxes outside of range are removed by self.data_processor
-        # ------
         input_dict.update({
-            'gt_boxes': _out['instances_last_box'],
-            'gt_names': _out['instances_name']
+            'gt_boxes': _out['gt_boxes'],
+            'gt_names': _out['gt_names']
         })
-        input_dict['metadata']['num_original_boxes'] = input_dict['gt_boxes'].shape[0]
 
         # data augmentation & other stuff
         data_dict = self.prepare_data(data_dict=input_dict)

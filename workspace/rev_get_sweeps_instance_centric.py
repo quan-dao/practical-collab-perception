@@ -30,7 +30,7 @@ def remove_ego_vehicle_points(points: np.ndarray, center_radius) -> np.ndarray:
     return points[dist_xy > center_radius]
 
 
-def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int, point_cloud_range: np.ndarray, 
+def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
                                         detection_classes: list = ['car', 'pedestrian', 'bicycle'], 
                                         **kwargs) -> dict:
     """
@@ -129,7 +129,7 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
     # ----------------------------------------------------- #
     inst_inst_idx = [[i] * len(poses) for i, poses in enumerate(inst_poses)]
     # flatten inst_inst_idx & inst_poses
-    inst_poses = np.concatenate(functools.reduce(operator.iconcat, inst_poses, []), axis=0)  # (N_tot_poses, 4, 4)
+    inst_poses = np.stack(functools.reduce(operator.iconcat, inst_poses, []), axis=0)  # (N_tot_poses, 4, 4)
     inst_inst_idx = np.array(functools.reduce(operator.iconcat, inst_inst_idx, [])).astype(int)  # (N_tot_poses,)
     
     # convert inst_poses to yaw

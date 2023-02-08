@@ -42,7 +42,8 @@ def build_test_infra(cfg_file: str, **kwargs):
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger('./artifact/dummy_log.txt')
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=kwargs.get('batch_size', 2),
-                                              dist=False, logger=logger, training=kwargs.get('training', False), total_epochs=1, seed=666)
+                                              dist=False, logger=logger, training=kwargs.get('training', False), total_epochs=1, seed=666,
+                                              workers=0)
     model = build_detector(cfg.MODEL, num_class=kwargs.get('num_class', 10), dataset=dataset)
     if 'ckpt_file' in kwargs:
         model.load_params_from_file(kwargs['ckpt_file'], logger, to_cpu=True)

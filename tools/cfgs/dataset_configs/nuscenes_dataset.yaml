@@ -64,10 +64,8 @@ DATA_AUGMENTOR:
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx',
-                        'class_idx'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx', 'aug_instance_idx',
-                       'class_idx'],
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx'],
 }
 
 
