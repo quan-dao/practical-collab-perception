@@ -114,7 +114,7 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
     instances_tf = np.zeros((num_instances, n_sweeps, 4, 4))
     for i_idx in range(num_instances):
         poses = np.stack(inst_poses[i_idx], axis=0)  # (N_act_sw, 4, 4) 
-        instances_tf[i_idx, :poses.shape[0]] = np.einsum('bij, jk -> bik', poses, LA.inv(poses[-1]))
+        instances_tf[i_idx, :poses.shape[0]] = np.einsum('ij, bjk -> bik', poses[-1], LA.inv(poses))
 
     # get instances' latest box
     inst_last_pose = np.stack([pose[-1] for pose in inst_poses], axis=0)  # (N_inst, 4, 4)
