@@ -2,6 +2,7 @@ import torch
 from tools import build_test_infra, to_tensor
 from workspace.utils import print_dict
 import time
+import argparse
 
 
 def main(target_dataloader_idx=3, training=False, batch_size=2):
@@ -26,4 +27,11 @@ def main(target_dataloader_idx=3, training=False, batch_size=2):
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='arg parser')
+    parser.add_argument('--dataloader_idx', type=int, default=3, required=False)
+    parser.add_argument('--training', action='store_true')
+    parser.add_argument('--no-training', dest='training', action='store_false')
+    parser.set_defaults(training=True)
+    parser.add_argument('--batch_size', type=int, default=2, required=False)
+    args = parser.parse_args()
+    main(args.dataloader_idx, args.training, args.batch_size)

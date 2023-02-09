@@ -69,8 +69,6 @@ class DataBaseSampler(object):
         self.map_point_feat2idx = {
             'sweep_idx': num_pts_raw_feat + idx_offset.SWEEP_INDEX,
             'inst_idx': num_pts_raw_feat + idx_offset.INSTANCE_INDEX,
-            'aug_inst_idx': num_pts_raw_feat + idx_offset.AUGMENTED_INSTANCE_INDEX,
-            'cls_idx': num_pts_raw_feat + idx_offset.CLASS_INDEX,
         }
 
     def __getstate__(self):
@@ -379,7 +377,7 @@ class DataBaseSampler(object):
         gt_boxes = data_dict['gt_boxes']  # (N_b, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
         gt_names = data_dict['gt_names']  # (N_b,)
         
-        points = data_dict['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
+        points = data_dict['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
         num_point_features = points.shape[1]
         num_original_instances = data_dict['instances_tf'].shape[0]
 
@@ -410,10 +408,6 @@ class DataBaseSampler(object):
 
             # update obj_points instance_idx
             obj_points[:, self.map_point_feat2idx['inst_idx']] = num_original_instances + idx
-
-            # update obj_points' aug_inst_idx
-            mask_aug_fg = obj_points[:, self.map_point_feat2idx['aug_inst_idx']].astype(int) > -1
-            obj_points[mask_aug_fg, self.map_point_feat2idx['aug_inst_idx']] = num_original_instances + idx
 
             # keep sampled instance's tf as their original value
             inst_tf = info['instance_tf']  # (max_sweeps, 4, 4)

@@ -31,6 +31,9 @@ DATA_CONFIG:
               DATABASE_WITH_FAKELIDAR: False
               REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
               LIMIT_WHOLE_SCENE: True
+              POINT_FEAT_INDEX_OFFSET_FROM_RAW_FEAT:
+                SWEEP_INDEX: 0
+                INSTANCE_INDEX: 1
 
             - NAME: random_world_flip
               ALONG_AXIS_LIST: ['x', 'y']
@@ -46,7 +49,7 @@ DATA_CONFIG:
 
     DATA_PROCESSOR:
         - NAME: mask_points_and_boxes_outside_range
-          REMOVE_OUTSIDE_BOXES: True
+          REMOVE_OUTSIDE_BOXES: False
 
         - NAME: shuffle_points
           SHUFFLE_ENABLED: {
