@@ -34,8 +34,6 @@ class NuScenesDataset(DatasetTemplate):
         self.map_point_feat2idx = {
             'sweep_idx': num_pts_raw_feat,
             'inst_idx': num_pts_raw_feat + 1,
-            'aug_inst_idx': num_pts_raw_feat + 2,
-            'cls_idx': num_pts_raw_feat + 3,
         }
 
     def include_nuscenes_data(self, mode):
@@ -271,32 +269,23 @@ class NuScenesDataset(DatasetTemplate):
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
 
-        detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
-                             'bicycle', 'pedestrian', 'traffic_cone')
-        movable_classes = ('car', 'truck', 'bus')
-        point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
+        movable_classes = ('car', 'truck', 'bus')        
 
         for idx in tqdm(range(len(self.infos))):
             sample_idx = idx
             info = self.infos[idx]
-            _out = inst_centric_get_sweeps(self.nusc, info['token'], max_sweeps, return_instances_last_box=True,
-                                           point_cloud_range=point_cloud_range,
-                                           detection_classes=detection_classes,
-                                           map_point_feat2idx=self.map_point_feat2idx)
+            detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
+                             'bicycle', 'pedestrian', 'traffic_cone')
+            _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS, detection_classes)
 
-            points = _out['points']  # (N, 9) - x, y, z, intensity, time, sweep_idx, inst_idx, aug_inst_idx, cls_idx
+            points = _out['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
             points_inst_idx = points[:, self.map_point_feat2idx['inst_idx']].astype(int)
 
-            gt_boxes = _out['instances_last_box']  # (N_inst, 10) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, dummy_vx, dummy_vy, inst_index
-            gt_names = _out['instances_name']
+            gt_boxes = _out['gt_boxes']  # (N_inst, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
+            gt_names = _out['gt_names']  # (N_inst,)
             instances_tf = _out['instances_tf']  # (N_inst, max_sweeps, 4, 4)
 
-            # nuscenes stuff
-            sample_rec = self.nusc.get('sample', info['token'])
-            tf_glob_from_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, sample_rec['data']['LIDAR_TOP'])
-
             for i in range(gt_boxes.shape[0]):
-
                 # filter movable class to include only actual moving stuff
                 if gt_names[i] in movable_classes:
                     if np.linalg.norm(instances_tf[0, :2, -1]) < 1.0:
@@ -307,6 +296,8 @@ class NuScenesDataset(DatasetTemplate):
                 filename = '%s_%s_%d.bin' % (sample_idx, gt_names[i], i)
                 filepath = database_save_path / filename
                 gt_points = points[points_inst_idx == i]
+                if gt_points.shape[0] == 0:  # there is no points in this gt_boxes
+                    continue
 
                 # translate gt_points to frame whose origin @ gt_box center
                 gt_points[:, :3] -= gt_boxes[i, :3]
@@ -321,7 +312,6 @@ class NuScenesDataset(DatasetTemplate):
                         'box3d_lidar': gt_boxes[i],
                         'instance_idx': i,
                         'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)
-                        'tf_glob_from_lidar': tf_glob_from_lidar,
                     }
                     if gt_names[i] in all_db_infos:
                         all_db_infos[gt_names[i]].append(db_info)
@@ -375,9 +365,10 @@ def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):
             pickle.dump(train_nusc_infos, f)
     else:
         print('train sample: %d, val sample: %d' % (len(train_nusc_infos), len(val_nusc_infos)))
-        with open(save_path / f'nuscenes_infos_{max_sweeps}sweeps_train.pkl', 'wb') as f:
+        info_prefix = 'mini' if 'mini' in version else 'full'
+        with open(save_path / f'{info_prefix}_nuscenes_infos_{max_sweeps}sweeps_train.pkl', 'wb') as f:
             pickle.dump(train_nusc_infos, f)
-        with open(save_path / f'nuscenes_infos_{max_sweeps}sweeps_val.pkl', 'wb') as f:
+        with open(save_path / f'{info_prefix}_nuscenes_infos_{max_sweeps}sweeps_val.pkl', 'wb') as f:
             pickle.dump(val_nusc_infos, f)
 
 
@@ -409,4 +400,5 @@ if __name__ == '__main__':
             root_path=ROOT_DIR / 'data' / 'nuscenes',
             logger=common_utils.create_logger(), training=True
         )
-        nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
+        if 'trainval' in dataset_cfg.VERSION:
+            nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)

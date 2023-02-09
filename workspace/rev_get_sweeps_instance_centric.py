@@ -111,6 +111,14 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
 
     # compute instances_tf
     num_instances = len(inst_poses)
+
+    if num_instances == 0:
+        points = np.pad(points, pad_width=[(0, 0), (0, 1)], constant_values=-1)  # all background
+        boxes = np.zeros((0, 9))
+        boxes_name = np.array([])
+        instances_tf = np.zeros((num_instances, n_sweeps, 4, 4))
+        return {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name}
+
     instances_tf = np.zeros((num_instances, n_sweeps, 4, 4))
     for i_idx in range(num_instances):
         poses = np.stack(inst_poses[i_idx], axis=0)  # (N_act_sw, 4, 4) 
