@@ -147,7 +147,8 @@ class NuScenesDataset(DatasetTemplate):
                 'token': info['token'],
                 'num_sweeps': num_sweeps,
                 'num_original_instances': _out['instances_tf'].shape[0],
-                'num_original_boxes': _out['gt_boxes'].shape[0]
+                'num_original_boxes': _out['gt_boxes'].shape[0],
+                'tf_target_from_glob': _out['target_from_glob'],
             }
         }
 
@@ -283,6 +284,7 @@ class NuScenesDataset(DatasetTemplate):
 
             gt_boxes = _out['gt_boxes']  # (N_inst, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
             gt_names = _out['gt_names']  # (N_inst,)
+            gt_anno_tk = _out['gt_anno_tk']  # (N_inst,)
             instances_tf = _out['instances_tf']  # (N_inst, max_sweeps, 4, 4)
 
             for i in range(gt_boxes.shape[0]):
@@ -304,6 +306,9 @@ class NuScenesDataset(DatasetTemplate):
                 with open(filepath, 'w') as f:
                     gt_points.tofile(f)
 
+                # get sampled gt_boxes velocity in global frame -> will be transformed to target frame @ database_sampler/add_to_scene
+                gt_velo = self.nusc.box_velocity(gt_anno_tk[i])  # (vx, vy, vz) in global frame
+
                 if (used_classes is None) or gt_names[i] in used_classes:
                     db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
                     db_info = {
@@ -311,6 +316,7 @@ class NuScenesDataset(DatasetTemplate):
                         'num_points_in_gt': gt_points.shape[0],
                         'box3d_lidar': gt_boxes[i],
                         'instance_idx': i,
+                        'velo': gt_velo,
                         'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)
                     }
                     if gt_names[i] in all_db_infos:
@@ -388,12 +394,12 @@ if __name__ == '__main__':
         dataset_cfg = EasyDict(yaml.safe_load(open(args.cfg_file)))
         ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
         dataset_cfg.VERSION = args.version
-        create_nuscenes_info(
-            version=dataset_cfg.VERSION,
-            data_path=ROOT_DIR / 'data' / 'nuscenes',
-            save_path=ROOT_DIR / 'data' / 'nuscenes',
-            max_sweeps=dataset_cfg.MAX_SWEEPS,
-        )
+        # create_nuscenes_info(
+        #     version=dataset_cfg.VERSION,
+        #     data_path=ROOT_DIR / 'data' / 'nuscenes',
+        #     save_path=ROOT_DIR / 'data' / 'nuscenes',
+        #     max_sweeps=dataset_cfg.MAX_SWEEPS,
+        # )
 
         nuscenes_dataset = NuScenesDataset(
             dataset_cfg=dataset_cfg, class_names=None,

@@ -117,7 +117,8 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
         boxes = np.zeros((0, 9))
         boxes_name = np.array([])
         instances_tf = np.zeros((num_instances, n_sweeps, 4, 4))
-        return {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name}
+        return {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name, 'gt_anno_tk': inst_last_anno_tk,
+                'target_from_glob': target_from_glob}
 
     instances_tf = np.zeros((num_instances, n_sweeps, 4, 4))
     for i_idx in range(num_instances):
@@ -159,7 +160,8 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
 
     points = np.concatenate([points, points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
 
-    out = {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name}
+    out = {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name, 'gt_anno_tk': inst_last_anno_tk,
+            'target_from_glob': target_from_glob}
     return out
 
 

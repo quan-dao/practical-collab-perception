@@ -12,7 +12,6 @@ import torch.distributed as dist
 from ...ops.iou3d_nms import iou3d_nms_utils
 from ...utils import box_utils, common_utils, calibration_kitti
 from pcdet.datasets.kitti.kitti_object_eval_python import kitti_common
-from sklearn.neighbors import KDTree
 
 
 class DataBaseSampler(object):
@@ -381,6 +380,8 @@ class DataBaseSampler(object):
         num_point_features = points.shape[1]
         num_original_instances = data_dict['instances_tf'].shape[0]
 
+        tf_target_from_glob = data_dict['metadata']['tf_target_from_glob']  # (4, 4)
+
         obj_points_list = list()
         instances_tf_list = list()
         sampled_boxes_list = list()
@@ -414,6 +415,12 @@ class DataBaseSampler(object):
 
             # get sampled gt box & update its instance index
             sampled_box = info['box3d_lidar']   # (9,)
+
+            # map smapled_box 's velocity in global frame to target frame
+            velo = info['velo']  # (3,)
+            velo = tf_target_from_glob[:3, :3] @ velo.reshape(3, 1)
+            # overwrite sampled_box's (vx, vy)
+            sampled_box[-2:] = velo[:2, 0]
 
             # store sampling result
             obj_points_list.append(obj_points)

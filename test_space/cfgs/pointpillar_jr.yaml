@@ -6,7 +6,7 @@ DATA_CONFIG:
     DATA_PATH: ../data/nuscenes
     VERSION: 'v1.0-mini'
     USE_MINI_TRAINVAL: False
-    PRED_VELOCITY: False
+    PRED_VELOCITY: True
     # POINT_CLOUD_RANGE: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
     
     DATA_AUGMENTOR:
