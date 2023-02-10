@@ -24,6 +24,20 @@ POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 VEHICLE_CLASSES: ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'motorcycle', 'bicycle']
 BALANCED_RESAMPLING: True 
 
+USE_HD_MAP: True
+MAP_LAYERS: ['drivable_area', 'ped_crossing', 'walkway', 'carpark_area']
+USE_LANE_DIRECTION: False
+
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
+                        'drivable_area', 'ped_crossing', 'walkway', 'carpark_area', 
+                        'sweep_idx', 'instance_idx'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
+                        'drivable_area', 'ped_crossing', 'walkway', 'carpark_area',
+                        'sweep_idx', 'instance_idx'],
+}
+
 DATA_AUGMENTOR:
     DISABLE_AUG_LIST: ['placeholder']
     AUG_CONFIG_LIST:
@@ -60,13 +74,6 @@ DATA_AUGMENTOR:
 
         - NAME: random_world_scaling
           WORLD_SCALE_RANGE: [0.95, 1.05]
-
-
-POINT_FEATURE_ENCODING: {
-    encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx'],
-}
 
 
 DATA_PROCESSOR:

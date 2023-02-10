@@ -10,6 +10,8 @@ from ..dataset import DatasetTemplate
 
 from workspace.rev_get_sweeps_instance_centric import revised_instance_centric_get_sweeps
 from nuscenes import NuScenes
+from nuscenes.prediction import PredictHelper
+from nuscenes.prediction.input_representation.static_layers import load_all_maps
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -35,6 +37,10 @@ class NuScenesDataset(DatasetTemplate):
             'sweep_idx': num_pts_raw_feat,
             'inst_idx': num_pts_raw_feat + 1,
         }
+
+        if dataset_cfg.get('USE_HD_MAP', False):
+            self.prediction_helper = PredictHelper(self.nusc)
+            self.map_apis = load_all_maps(self.prediction_helper)
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -135,7 +141,10 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
         info = copy.deepcopy(self.infos[index])
         num_sweeps = self.dataset_cfg.MAX_SWEEPS
-        _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], num_sweeps, self.class_names)
+        _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], num_sweeps, self.class_names,
+                                                   map_apis=self.map_apis if self.dataset_cfg.get('USE_HD_MAP', False) else None,
+                                                   map_binary_layers=self.dataset_cfg.get('MAP_LAYERS', ['drivable_area']),
+                                                   map_get_lane_direction=self.dataset_cfg.get('USE_LANE_DIRECTION', False))
         points = _out['points']  # (N, C)
 
 
@@ -264,8 +273,9 @@ class NuScenesDataset(DatasetTemplate):
         return ap_result_str, ap_dict
 
     def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
-        database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo'
-        db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo.pkl'
+        postfix = '_withmap' if self.dataset_cfg.get('USE_HD_MAP', False) else ''
+        database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo{postfix}'
+        db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
 
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
@@ -277,7 +287,10 @@ class NuScenesDataset(DatasetTemplate):
             info = self.infos[idx]
             detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
                              'bicycle', 'pedestrian', 'traffic_cone')
-            _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS, detection_classes)
+            _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS, detection_classes,
+                                                       map_apis=self.map_apis if self.dataset_cfg.get('USE_HD_MAP', False) else None,
+                                                       map_binary_layers=self.dataset_cfg.get('MAP_LAYERS', ['drivable_area']),
+                                                       map_get_lane_direction=self.dataset_cfg.get('USE_LANE_DIRECTION', False))
 
             points = _out['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
             points_inst_idx = points[:, self.map_point_feat2idx['inst_idx']].astype(int)

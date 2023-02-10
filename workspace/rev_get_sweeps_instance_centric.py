@@ -7,6 +7,9 @@ from pcdet.datasets.nuscenes.nuscenes_utils import map_name_from_general_to_dete
 from pcdet.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 import functools
 import operator
+from typing import Dict
+from nuscenes.map_expansion.map_api import NuScenesMap
+from nuscenes.map_expansion import arcline_path_utils
 
 
 def get_sample_data_point_cloud(nusc: NuScenes, sample_data_token: str, time_lag: float = None, sweep_idx: int = None) \
@@ -30,8 +33,18 @@ def remove_ego_vehicle_points(points: np.ndarray, center_radius) -> np.ndarray:
     return points[dist_xy > center_radius]
 
 
+def get_map_name_from_sample_token(nusc: NuScenes, sample_tk: str) -> str:
+    sample = nusc.get('sample', sample_tk)
+    scene = nusc.get('scene', sample['scene_token'])
+    log = nusc.get('log', scene['log_token'])
+    return log['location']
+
+
 def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
-                                        detection_classes: list = ['car', 'pedestrian', 'bicycle'], 
+                                        detection_classes: list = ['car', 'pedestrian', 'bicycle'],
+                                        map_apis: Dict[str, NuScenesMap] = None,
+                                        bev_image_resolution=0.075,  # independent with the dataset config
+                                        point_cloud_range=[-81, -81, -5.0, 81, 81, 3.0],  # independent with the dataset config
                                         **kwargs) -> dict:
     """
     
@@ -156,9 +169,36 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
 
     # transfer boxes' inst_idx (inst_inst_idx) to points
     points_inst_idx = inst_inst_idx[box_ids_of_points]
-    points_inst_idx[box_ids_of_points == -1] = -1  # background
+    mask_bg = box_ids_of_points == -1
+    points_inst_idx[mask_bg] = -1  # background
 
-    points = np.concatenate([points, points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
+    # ----------------------------------------------------------------------- #
+    # --------- points' map feature by projecting to rasterized map --------- #
+    # ----------------------------------------------------------------------- #
+    glob_from_target = LA.inv(target_from_glob)
+    ego_x, ego_y = glob_from_target[0, -1], glob_from_target[1, -1]
+    ego_yaw = np.arctan2(glob_from_target[1, 0], glob_from_target[0, 0])
+    
+    if not isinstance(point_cloud_range, np.ndarray):
+        point_cloud_range = np.array(point_cloud_range)
+
+    patch_box = (ego_x, ego_y, point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1])
+    map_patch_size = np.floor((point_cloud_range[3: 5] - point_cloud_range[:2]) / bev_image_resolution).astype(int).tolist()  # (W, H)
+
+    map_binary_layers = kwargs.get('map_binary_layers', ('drivable_area', 'ped_crossing', 'walkway', 'carpark_area'))
+    map_name = get_map_name_from_sample_token(nusc, sample_token)
+
+    map_masks = map_apis[map_name].get_map_mask(patch_box, np.rad2deg(ego_yaw), map_binary_layers, 
+                                                canvas_size=tuple(map_patch_size))  # (N_layers, H, W)
+
+    points_bev_coord = np.floor((points[:, :2] - point_cloud_range[:2]) / bev_image_resolution).astype(int)
+
+    points_map_feat = -np.ones((len(map_binary_layers), points.shape[0]))
+    mask_points_inside = np.logical_and(points[:, :2] > point_cloud_range[:2], points[:, :2] < (point_cloud_range[3: 5] - 1e-3)).all(axis=1)
+    points_map_feat[:, mask_points_inside] = map_masks[:, points_bev_coord[mask_points_inside, 1], points_bev_coord[mask_points_inside, 0]]
+
+    # assembly points features
+    points = np.concatenate([points[:, :-1], points_map_feat.T, points[:, [-1]], points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
 
     out = {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name, 'gt_anno_tk': inst_last_anno_tk,
             'target_from_glob': target_from_glob}

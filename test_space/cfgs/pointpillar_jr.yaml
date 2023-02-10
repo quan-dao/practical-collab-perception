@@ -8,13 +8,26 @@ DATA_CONFIG:
     USE_MINI_TRAINVAL: False
     PRED_VELOCITY: True
     # POINT_CLOUD_RANGE: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+    USE_HD_MAP: True
+    MAP_LAYERS: ['drivable_area', 'ped_crossing', 'walkway', 'carpark_area']
+    USE_LANE_DIRECTION: False
     
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
+                            'drivable_area', 'ped_crossing', 'walkway', 'carpark_area',
+                            'sweep_idx', 'instance_idx'],
+        src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
+                           'drivable_area', 'ped_crossing', 'walkway', 'carpark_area',
+                           'sweep_idx', 'instance_idx'],
+    }
+
     DATA_AUGMENTOR:
         DISABLE_AUG_LIST: ['placeholder']
         AUG_CONFIG_LIST:
             - NAME: gt_sampling
               DB_INFO_PATH:
-                - nuscenes_dbinfos_10sweeps_withvelo.pkl
+                - nuscenes_dbinfos_10sweeps_withvelo_withmap.pkl
               PREPARE: {
                 filter_by_min_points: [
                     'car:5','truck:5', 'construction_vehicle:5', 'bus:5', 'trailer:5',
