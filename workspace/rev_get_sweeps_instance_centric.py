@@ -175,30 +175,35 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
     # ----------------------------------------------------------------------- #
     # --------- points' map feature by projecting to rasterized map --------- #
     # ----------------------------------------------------------------------- #
-    glob_from_target = LA.inv(target_from_glob)
-    ego_x, ego_y = glob_from_target[0, -1], glob_from_target[1, -1]
-    ego_yaw = np.arctan2(glob_from_target[1, 0], glob_from_target[0, 0])
+    if map_apis is not None:
+        glob_from_target = LA.inv(target_from_glob)
+        ego_x, ego_y = glob_from_target[0, -1], glob_from_target[1, -1]
+        ego_yaw = np.arctan2(glob_from_target[1, 0], glob_from_target[0, 0])
+        
+        if not isinstance(point_cloud_range, np.ndarray):
+            point_cloud_range = np.array(point_cloud_range)
+
+        patch_box = (ego_x, ego_y, point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1])
+        map_patch_size = np.floor((point_cloud_range[3: 5] - point_cloud_range[:2]) / bev_image_resolution).astype(int).tolist()  # (W, H)
+
+        map_binary_layers = kwargs.get('map_binary_layers', ('drivable_area', 'ped_crossing', 'walkway', 'carpark_area'))
+        map_name = get_map_name_from_sample_token(nusc, sample_token)
+
+        map_masks = map_apis[map_name].get_map_mask(patch_box, np.rad2deg(ego_yaw), map_binary_layers, 
+                                                    canvas_size=tuple(map_patch_size))  # (N_layers, H, W)
+
+        points_bev_coord = np.floor((points[:, :2] - point_cloud_range[:2]) / bev_image_resolution).astype(int)
+
+        points_map_feat = -np.ones((len(map_binary_layers), points.shape[0]))
+        mask_points_inside = np.logical_and(points[:, :2] > point_cloud_range[:2], points[:, :2] < (point_cloud_range[3: 5] - 1e-3)).all(axis=1)
+        points_map_feat[:, mask_points_inside] = map_masks[:, points_bev_coord[mask_points_inside, 1], points_bev_coord[mask_points_inside, 0]]
+
+        # assembly points features
+        points = np.concatenate([points[:, :-1], points_map_feat.T, points[:, [-1]], points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
     
-    if not isinstance(point_cloud_range, np.ndarray):
-        point_cloud_range = np.array(point_cloud_range)
-
-    patch_box = (ego_x, ego_y, point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1])
-    map_patch_size = np.floor((point_cloud_range[3: 5] - point_cloud_range[:2]) / bev_image_resolution).astype(int).tolist()  # (W, H)
-
-    map_binary_layers = kwargs.get('map_binary_layers', ('drivable_area', 'ped_crossing', 'walkway', 'carpark_area'))
-    map_name = get_map_name_from_sample_token(nusc, sample_token)
-
-    map_masks = map_apis[map_name].get_map_mask(patch_box, np.rad2deg(ego_yaw), map_binary_layers, 
-                                                canvas_size=tuple(map_patch_size))  # (N_layers, H, W)
-
-    points_bev_coord = np.floor((points[:, :2] - point_cloud_range[:2]) / bev_image_resolution).astype(int)
-
-    points_map_feat = -np.ones((len(map_binary_layers), points.shape[0]))
-    mask_points_inside = np.logical_and(points[:, :2] > point_cloud_range[:2], points[:, :2] < (point_cloud_range[3: 5] - 1e-3)).all(axis=1)
-    points_map_feat[:, mask_points_inside] = map_masks[:, points_bev_coord[mask_points_inside, 1], points_bev_coord[mask_points_inside, 0]]
-
-    # assembly points features
-    points = np.concatenate([points[:, :-1], points_map_feat.T, points[:, [-1]], points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
+    else:
+        # not using map features
+        points = np.concatenate([points, points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
 
     out = {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name, 'gt_anno_tk': inst_last_anno_tk,
             'target_from_glob': target_from_glob}
