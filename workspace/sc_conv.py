@@ -127,7 +127,7 @@ def conv_bn_relu(in_channels, out_channels, kernel_size=3, stride=1, padding=0, 
     )
 
 
-class SCConvBackbone2d(nn.Module):
+class SCConvBackbone2dStride1(nn.Module):
     def __init__(self, model_cfg, input_channels):
         super().__init__()
         self.cfg = model_cfg
@@ -163,5 +163,46 @@ class SCConvBackbone2d(nn.Module):
         residual = self.conv_skip(out)
         out = self.main_pass(out)
         out = self.conv_out(torch.cat([out, residual], dim=1))
+        data_dict['spatial_features_2d'] = out
+        return data_dict
+
+
+class SCConvBackbone2dStride4(nn.Module):
+    def __init__(self, model_cfg, input_channels=64):
+        super().__init__()
+        self.cfg = model_cfg
+        norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
+        
+        stem_ch = input_channels * 2
+        self.stem = nn.Sequential(
+            conv_bn_relu(input_channels, stem_ch, kernel_size=3, padding=1, stride=2, norm_layer=norm_layer),
+            SCBottleneck(stem_ch, stem_ch, norm_layer=norm_layer),
+            SCBottleneck(stem_ch, stem_ch, norm_layer=norm_layer),
+            SCBottleneck(stem_ch, stem_ch, norm_layer=norm_layer)
+        )  # block's stride = 2
+        
+        main_ch = stem_ch * 2
+        self.main_pass = nn.Sequential(
+            conv_bn_relu(stem_ch, main_ch, kernel_size=3, stride=2, padding=1, norm_layer=norm_layer),
+            SCBottleneck(main_ch, main_ch, norm_layer=norm_layer),
+            SCBottleneck(main_ch, main_ch, norm_layer=norm_layer),
+            SCBottleneck(main_ch, main_ch, norm_layer=norm_layer),
+
+            nn.ConvTranspose2d(main_ch, main_ch, kernel_size=2, stride=2, bias=False),
+            norm_layer(main_ch),
+            nn.ReLU(inplace=True),
+        )  # block's stride = 1
+        
+        self.conv_skip = conv_bn_relu(stem_ch, main_ch, kernel_size=1, norm_layer=norm_layer)  # block's stride = 1
+
+        self.conv_out = conv_bn_relu(2 * main_ch, model_cfg.NUM_BEV_FEATURES, kernel_size=3, padding=1, stride=2)  # block's stride = 2
+        self.num_bev_features = model_cfg.NUM_BEV_FEATURES
+
+    def forward(self, data_dict):
+        spatial_features = data_dict['spatial_features']  # (B, C, H, W) - BEV image
+        out = self.stem(spatial_features)
+        residual = self.conv_skip(out)
+        out = self.main_pass(out)
+        out = self.conv_out(torch.cat([out, residual], dim=1))  # (B, num_bev_feat, H/4, W/4)
         data_dict['spatial_features_2d'] = out
         return data_dict

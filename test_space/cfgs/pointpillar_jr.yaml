@@ -40,7 +40,7 @@ DATA_CONFIG:
                 'barrier:2', 'motorcycle:6', 'bicycle:6', 'pedestrian:2', 'traffic_cone:2'
               ]
 
-              NUM_POINT_FEATURES: 5
+              NUM_POINT_FEATURES: 9
               DATABASE_WITH_FAKELIDAR: False
               REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
               LIMIT_WHOLE_SCENE: True
@@ -78,7 +78,7 @@ MODEL:
 
     VFE:
         NAME: DynPillarVFE
-        NUM_RAW_POINT_FEATURES: 5
+        NUM_RAW_POINT_FEATURES: 9
         WITH_DISTANCE: False
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
@@ -89,12 +89,8 @@ MODEL:
         NUM_BEV_FEATURES: 64
 
     BACKBONE_2D:
-        NAME: BaseBEVBackbone
-        LAYER_NUMS: [3, 5, 5]
-        LAYER_STRIDES: [2, 2, 2]
-        NUM_FILTERS: [64, 128, 256]
-        UPSAMPLE_STRIDES: [0.5, 1, 2]
-        NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+        NAME: SCConvBackbone2dStride4
+        NUM_BEV_FEATURES: 384
 
     DENSE_HEAD:
         NAME: CenterHead
@@ -113,12 +109,13 @@ MODEL:
         USE_BIAS_BEFORE_NORM: True
         NUM_HM_CONV: 2
         SEPARATE_HEAD_CFG:
-            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot', 'iou']
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot', 'vel', 'iou']
             HEAD_DICT: {
                 'center': {'out_channels': 2, 'num_conv': 2},
                 'center_z': {'out_channels': 1, 'num_conv': 2},
                 'dim': {'out_channels': 3, 'num_conv': 2},
                 'rot': {'out_channels': 2, 'num_conv': 2},
+                'vel': {'out_channels': 2, 'num_conv': 2},
                 'iou': {'out_channels': 1, 'num_conv': 2}
             }
 
@@ -132,7 +129,7 @@ MODEL:
             LOSS_WEIGHTS: {
                 'cls_weight': 1.0,
                 'loc_weight': 0.25,
-                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
 
         POST_PROCESSING:
