@@ -27,7 +27,7 @@ class NuScenesDataset(DatasetTemplate):
 
         self.infos.sort(key=lambda e: e['timestamp'])
         if self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) and training:
-            stride = self.self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1)
+            stride = self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1)
             self.infos = self.infos[::stride]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
