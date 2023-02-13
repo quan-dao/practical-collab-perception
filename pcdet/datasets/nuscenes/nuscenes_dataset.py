@@ -41,6 +41,8 @@ class NuScenesDataset(DatasetTemplate):
         if dataset_cfg.get('USE_HD_MAP', False):
             self.prediction_helper = PredictHelper(self.nusc)
             self.map_apis = load_all_maps(self.prediction_helper)
+            self.map_point_cloud_range = np.array([-81.0, -81.0, -5.0, 81.0, 81.0, 3.0])  # independent with the dataset 
+            self.map_bev_image_resolution = 0.075  # independent with the dataset config
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -141,10 +143,12 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
         info = copy.deepcopy(self.infos[index])
         num_sweeps = self.dataset_cfg.MAX_SWEEPS
+        map_database_dir = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
         _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], num_sweeps, self.class_names,
-                                                   map_apis=self.map_apis if self.dataset_cfg.get('USE_HD_MAP', False) else None,
-                                                   map_binary_layers=self.dataset_cfg.get('MAP_LAYERS', ['drivable_area']),
-                                                   map_get_lane_direction=self.dataset_cfg.get('USE_LANE_DIRECTION', False))
+                                                   use_hd_map=self.dataset_cfg.get('USE_HD_MAP', False),
+                                                   map_database_path=map_database_dir,
+                                                   map_point_cloud_range=self.map_point_cloud_range,
+                                                   map_bev_image_resolution=self.map_bev_image_resolution)
         points = _out['points']  # (N, C)
 
 
@@ -274,8 +278,13 @@ class NuScenesDataset(DatasetTemplate):
 
     def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
         postfix = '_withmap' if self.dataset_cfg.get('USE_HD_MAP', False) else ''
-        database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo{postfix}'
-        db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
+        if 'trainval' in self.dataset_cfg.VERSION:
+            database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo{postfix}'
+            db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
+        else:
+            assert 'mini' in self.dataset_cfg.VERSION, f"{self.dataset_cfg.VERSION} is not supported"
+            database_save_path = self.root_path / f'mini_gt_database_{max_sweeps}sweeps_withvelo{postfix}'
+            db_info_save_path = self.root_path / f'mini_nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
 
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
@@ -342,6 +351,48 @@ class NuScenesDataset(DatasetTemplate):
         with open(db_info_save_path, 'wb') as f:
             pickle.dump(all_db_infos, f)
 
+    def create_hd_map_database(self):
+
+        from _dev_space.tools_box import get_nuscenes_sensor_pose_in_global
+
+        def get_map_name_from_sample_token(nusc: NuScenes, sample_tk: str) -> str:
+            sample = nusc.get('sample', sample_tk)
+            scene = nusc.get('scene', sample['scene_token'])
+            log = nusc.get('log', scene['log_token'])
+            return log['location']
+
+        assert len(self.infos) > 0, "remember to call create_nuscenes_infos first"
+        assert self.dataset_cfg.USE_HD_MAP, f"expect self.dataset_cfg.USE_HD_MAP == True, get {self.dataset_cfg.USE_HD_MAP}"
+
+        map_binary_layers = ('drivable_area', 'ped_crossing', 'walkway', 'carpark_area')
+        bev_image_resolution = self.map_bev_image_resolution
+        point_cloud_range = self.map_point_cloud_range
+        map_dx, map_dy = point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1]  # in meters
+        map_size_pixel = (int(map_dx / bev_image_resolution), int(map_dy / bev_image_resolution))  # (W, H)
+        
+        database_save_path = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
+        database_save_path.mkdir(parents=True, exist_ok=True)
+
+        for idx in tqdm(range(len(self.infos))):
+            sample_token = self.infos[idx]['token']
+            sample_rec = self.nusc.get('sample', sample_token)
+            target_sd_token = sample_rec['data']['LIDAR_TOP']
+            
+            glob_from_target = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, target_sd_token))
+            ego_x, ego_y = glob_from_target[0, -1], glob_from_target[1, -1]
+            ego_yaw = np.arctan2(glob_from_target[1, 0], glob_from_target[0, 0])
+
+            map_name = get_map_name_from_sample_token(self.nusc, sample_token)
+
+            # query map_apis for map around ego vehicle
+            patch_box = (ego_x, ego_y, map_dx, map_dy)
+            map_masks = self.map_apis[map_name].get_map_mask(patch_box, np.rad2deg(ego_yaw), map_binary_layers, 
+                                                             canvas_size=map_size_pixel).astype(float)  # (N_layers, H, W)
+
+            # save to hard disk
+            filename = database_save_path / f"bin_map_{sample_token}.npy"
+            np.save(filename, map_masks)
+
 
 def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):
     from nuscenes.nuscenes import NuScenes
@@ -399,25 +450,44 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config of dataset')
-    parser.add_argument('--func', type=str, default='create_nuscenes_infos', help='')
+    
+    parser.add_argument('--create_nuscenes_infos', action='store_true')
+    parser.add_argument('--no-create_nuscenes_infos', dest='create_nuscenes_infos', action='store_false')
+    parser.set_defaults(create_nuscenes_infos=False)
+
+    parser.add_argument('--create_groundtruth_database', action='store_true')
+    parser.add_argument('--no-create_groundtruth_database', dest='create_groundtruth_database', action='store_false')
+    parser.set_defaults(create_groundtruth_database=False)
+
+    parser.add_argument('--create_hd_map_database', action='store_true')
+    parser.add_argument('--no-create_hd_map_database', dest='create_hd_map_database', action='store_false')
+    parser.set_defaults(create_hd_map_database=False)
+
+
     parser.add_argument('--version', type=str, default='v1.0-trainval', help='')
     args = parser.parse_args()
 
-    if args.func == 'create_nuscenes_infos':
-        dataset_cfg = EasyDict(yaml.safe_load(open(args.cfg_file)))
-        ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
-        dataset_cfg.VERSION = args.version
-        # create_nuscenes_info(
-        #     version=dataset_cfg.VERSION,
-        #     data_path=ROOT_DIR / 'data' / 'nuscenes',
-        #     save_path=ROOT_DIR / 'data' / 'nuscenes',
-        #     max_sweeps=dataset_cfg.MAX_SWEEPS,
-        # )
+    dataset_cfg = EasyDict(yaml.safe_load(open(args.cfg_file)))
+    ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
+    dataset_cfg.VERSION = args.version
 
+    if args.create_nuscenes_infos:
+        create_nuscenes_info(
+            version=dataset_cfg.VERSION,
+            data_path=ROOT_DIR / 'data' / 'nuscenes',
+            save_path=ROOT_DIR / 'data' / 'nuscenes',
+            max_sweeps=dataset_cfg.MAX_SWEEPS,
+        )
+
+    if args.create_groundtruth_database or args.create_hd_map_database:
         nuscenes_dataset = NuScenesDataset(
             dataset_cfg=dataset_cfg, class_names=None,
             root_path=ROOT_DIR / 'data' / 'nuscenes',
             logger=common_utils.create_logger(), training=True
         )
-        if 'trainval' in dataset_cfg.VERSION:
+        if args.create_groundtruth_database:
             nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
+    
+        if args.create_hd_map_database:
+            nuscenes_dataset.create_hd_map_database()
+
