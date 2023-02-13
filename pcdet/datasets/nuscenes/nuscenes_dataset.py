@@ -26,8 +26,9 @@ class NuScenesDataset(DatasetTemplate):
             self.infos = self.balanced_infos_resampling(self.infos)
 
         self.infos.sort(key=lambda e: e['timestamp'])
-        if self.dataset_cfg.get('USE_MINI_TRAINVAL', False) and training:
-            self.infos = self.infos[::2]  # use 1/4th of the trainval data
+        if self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) and training:
+            stride = self.self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1)
+            self.infos = self.infos[::stride]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
