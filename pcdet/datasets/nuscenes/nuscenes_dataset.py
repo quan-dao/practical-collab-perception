@@ -44,6 +44,8 @@ class NuScenesDataset(DatasetTemplate):
             self.map_apis = load_all_maps(self.prediction_helper)
             self.map_point_cloud_range = np.array([-81.0, -81.0, -5.0, 81.0, 81.0, 3.0])  # independent with the dataset 
             self.map_bev_image_resolution = 0.075  # independent with the dataset config
+        else:
+            self.map_point_cloud_range, self.map_bev_image_resolution = None, None
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
