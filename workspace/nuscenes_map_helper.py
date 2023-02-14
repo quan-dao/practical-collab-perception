@@ -174,5 +174,8 @@ class MapMaker(object):
         
         return lane_img
 
-
-
+    def get_map_in_lidar_frame(self, sample_tk: str) -> np.ndarray:
+        binary_layers = self.get_binary_layers_in_lidar_frame(sample_tk, return_channel_last=True)  # (H, W, C)
+        lane_img = self.get_rasterized_lanes_in_lidar_frame(sample_tk, normalize_lane_direction=False)  # (H, W)
+        out = np.concatenate((binary_layers, rearrange(lane_img, 'H W -> H W 1')), axis=2)  # (H, W, C + 1)
+        return out

@@ -9,9 +9,11 @@ from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
 from workspace.rev_get_sweeps_instance_centric import revised_instance_centric_get_sweeps
+from workspace.nuscenes_map_helper import MapMaker
 from nuscenes import NuScenes
 from nuscenes.prediction import PredictHelper
 from nuscenes.prediction.input_representation.static_layers import load_all_maps
+import time
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -42,8 +44,9 @@ class NuScenesDataset(DatasetTemplate):
         if dataset_cfg.get('USE_HD_MAP', False):
             self.prediction_helper = PredictHelper(self.nusc)
             self.map_apis = load_all_maps(self.prediction_helper)
-            self.map_point_cloud_range = np.array([-81.0, -81.0, -5.0, 81.0, 81.0, 3.0])  # independent with the dataset 
-            self.map_bev_image_resolution = 0.075  # independent with the dataset config
+            # map range & resoluton are independent with the dataset config
+            self.map_point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
+            self.map_bev_image_resolution = 0.2  
         else:
             self.map_point_cloud_range, self.map_bev_image_resolution = None, None
 
@@ -355,46 +358,27 @@ class NuScenesDataset(DatasetTemplate):
             pickle.dump(all_db_infos, f)
 
     def create_hd_map_database(self):
-
-        from _dev_space.tools_box import get_nuscenes_sensor_pose_in_global
-
-        def get_map_name_from_sample_token(nusc: NuScenes, sample_tk: str) -> str:
-            sample = nusc.get('sample', sample_tk)
-            scene = nusc.get('scene', sample['scene_token'])
-            log = nusc.get('log', scene['log_token'])
-            return log['location']
-
         assert len(self.infos) > 0, "remember to call create_nuscenes_infos first"
         assert self.dataset_cfg.USE_HD_MAP, f"expect self.dataset_cfg.USE_HD_MAP == True, get {self.dataset_cfg.USE_HD_MAP}"
 
-        map_binary_layers = ('drivable_area', 'ped_crossing', 'walkway', 'carpark_area')
-        bev_image_resolution = self.map_bev_image_resolution
-        point_cloud_range = self.map_point_cloud_range
-        map_dx, map_dy = point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1]  # in meters
-        map_size_pixel = (int(map_dx / bev_image_resolution), int(map_dy / bev_image_resolution))  # (W, H)
-        
+        map_maker = MapMaker(self.nusc, self.map_point_cloud_range, self.map_bev_image_resolution, 
+                            map_layers=('drivable_area', 'ped_crossing', 'walkway', 'carpark_area'))
+
         database_save_path = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
         database_save_path.mkdir(parents=True, exist_ok=True)
 
-        for idx in tqdm(range(len(self.infos))):
+        start_time = time.time()
+        for idx in range(len(self.infos)):
             sample_token = self.infos[idx]['token']
-            sample_rec = self.nusc.get('sample', sample_token)
-            target_sd_token = sample_rec['data']['LIDAR_TOP']
-            
-            glob_from_target = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, target_sd_token))
-            ego_x, ego_y = glob_from_target[0, -1], glob_from_target[1, -1]
-            ego_yaw = np.arctan2(glob_from_target[1, 0], glob_from_target[0, 0])
-
-            map_name = get_map_name_from_sample_token(self.nusc, sample_token)
-
-            # query map_apis for map around ego vehicle
-            patch_box = (ego_x, ego_y, map_dx, map_dy)
-            map_masks = self.map_apis[map_name].get_map_mask(patch_box, np.rad2deg(ego_yaw), map_binary_layers, 
-                                                             canvas_size=map_size_pixel).astype(float)  # (N_layers, H, W)
-
+            map_img = map_maker.get_map_in_lidar_frame(sample_token)
             # save to hard disk
             filename = database_save_path / f"bin_map_{sample_token}.npy"
-            np.save(filename, map_masks)
+            np.save(filename, map_img)
+
+            if idx % 100 == 0:
+                avg_exe_time = (time.time() - start_time) / float(idx + 1)
+                print(f"finish {idx + 1} / {len(self.infos)}, avg exe time {avg_exe_time}")
+                start_time = time.time()
 
 
 def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):

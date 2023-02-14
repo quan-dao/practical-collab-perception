@@ -8,7 +8,7 @@ from einops import rearrange
 
 def main():
     nusc = NuScenes(dataroot='../data/nuscenes/v1.0-mini', version='v1.0-mini', verbose=False)
-    map_maker = MapMaker(nusc, np.array([-81.0, -81.0, -5.0, 81.0, 81.0, 3.0]), 0.075)
+    map_maker = MapMaker(nusc, np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]), 0.2)
 
     scene = nusc.scene[0]
     sample_tk = scene['first_sample_token']
@@ -16,10 +16,10 @@ def main():
         map_layers = map_maker.get_binary_layers_in_lidar_frame(sample_tk, return_channel_last=True)
         # print('map_layers: ', map_layers.shape)
 
-        map_layers = cv2.resize(map_layers, (512, 512), interpolation=cv2.INTER_CUBIC)
+        # map_layers = cv2.resize(map_layers, (512, 512), interpolation=cv2.INTER_CUBIC)
         map_layers = np.ones((map_layers.shape[0], map_layers.shape[1], 3)) * 255 * map_layers[..., [0]]
         out = map_layers
-        
+
         lane_img = map_maker.get_rasterized_lanes_in_lidar_frame(sample_tk, normalize_lane_direction=True)
         # print('lane_img: ', lane_img.shape)
         # convert lane_img to RGB
@@ -29,7 +29,7 @@ def main():
         lane_hsv[..., 2] = 255
         
         # resize
-        lane_hsv = cv2.resize(lane_hsv, (512, 512), interpolation=cv2.INTER_CUBIC)
+        # lane_hsv = cv2.resize(lane_hsv, (512, 512), interpolation=cv2.INTER_CUBIC)
         lane_bgr = cv2.cvtColor(lane_hsv, cv2.COLOR_HSV2BGR)
 
         # ----------------
