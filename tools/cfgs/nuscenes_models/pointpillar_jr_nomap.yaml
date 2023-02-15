@@ -7,7 +7,6 @@ DATA_CONFIG:
     VERSION: 'v1.0-trainval'
     MINI_TRAINVAL_STRIDE: 4
     PRED_VELOCITY: True
-    # POINT_CLOUD_RANGE: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
     USE_HD_MAP: False
     
     POINT_FEATURE_ENCODING: {
@@ -127,7 +126,7 @@ MODEL:
             }
 
         POST_PROCESSING:
-            CALIB_CLS_SCORE: True
+            CALIB_CLS_SCORE: False
             CALIB_CLS_SCORE_ALPHA: 0.5
             SCORE_THRESH: 0.1
             POST_CENTER_LIMIT_RANGE: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]

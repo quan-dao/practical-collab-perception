@@ -28,14 +28,14 @@ class NuScenesDataset(DatasetTemplate):
             self.infos = self.balanced_infos_resampling(self.infos)
 
         self.infos.sort(key=lambda e: e['timestamp'])
-        if self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) and training:
+        if training and self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) > 1:
             stride = self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1)
             self.infos = self.infos[::stride]  # use 1/4th of the trainval data
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
 
-        num_pts_raw_feat = 5  # x, y, z, intensity, time
+        num_pts_raw_feat = 5  # x, y, z, intensity, time  TODO: take map feature into account here
         self.map_point_feat2idx = {
             'sweep_idx': num_pts_raw_feat,
             'inst_idx': num_pts_raw_feat + 1,
@@ -102,41 +102,6 @@ class NuScenesDataset(DatasetTemplate):
         cls_dist_new = {k: len(v) / len(sampled_infos) for k, v in cls_infos_new.items()}
 
         return sampled_infos
-
-    def get_sweep(self, sweep_info):
-        def remove_ego_points(points, center_radius=1.0):
-            mask = ~((np.abs(points[:, 0]) < center_radius) & (np.abs(points[:, 1]) < center_radius))
-            return points[mask]
-
-        lidar_path = self.root_path / sweep_info['lidar_path']
-        points_sweep = np.fromfile(str(lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]
-        points_sweep = remove_ego_points(points_sweep).T
-        if sweep_info['transform_matrix'] is not None:
-            num_points = points_sweep.shape[1]
-            points_sweep[:3, :] = sweep_info['transform_matrix'].dot(
-                np.vstack((points_sweep[:3, :], np.ones(num_points))))[:3, :]
-
-        cur_times = sweep_info['time_lag'] * np.ones((1, points_sweep.shape[1]))
-        return points_sweep.T, cur_times.T
-
-    def get_lidar_with_sweeps(self, index, max_sweeps=1):
-        info = self.infos[index]
-        lidar_path = self.root_path / info['lidar_path']
-        points = np.fromfile(str(lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]
-
-        sweep_points_list = [points]
-        sweep_times_list = [np.zeros((points.shape[0], 1))]
-
-        for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
-            points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
-            sweep_points_list.append(points_sweep)
-            sweep_times_list.append(times_sweep)
-
-        points = np.concatenate(sweep_points_list, axis=0)
-        times = np.concatenate(sweep_times_list, axis=0).astype(points.dtype)
-
-        points = np.concatenate((points, times), axis=1)
-        return points
 
     def __len__(self):
         if self._merge_all_iters_to_one_epoch:
