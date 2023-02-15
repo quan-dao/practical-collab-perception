@@ -170,7 +170,22 @@ class NuScenesDataset(DatasetTemplate):
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
         nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
-        nusc_annos = nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc)
+
+        # init nusc_annos to make sure that every sample token of val set is included
+        nusc_annos = {
+            'results': {},
+            'meta': {
+                'use_camera': False,
+                'use_lidar': True,
+                'use_radar': False,
+                'use_map': False,
+                'use_external': False,
+            }
+        }
+        for info in self.infos:
+            nusc_annos['results'].update({info['token']: []})
+
+        nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc, nusc_annos)
         nusc_annos['meta'] = {
             'use_camera': False,
             'use_lidar': True,

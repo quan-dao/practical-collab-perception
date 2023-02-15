@@ -420,13 +420,17 @@ def lidar_nusc_box_to_global(nusc, boxes, sample_token):
     return box_list
 
 
-def transform_det_annos_to_nusc_annos(det_annos, nusc):
-    nusc_annos = {
-        'results': {},
-        'meta': None,
-    }
+def transform_det_annos_to_nusc_annos(det_annos, nusc, nusc_annos: dict):
+    seen_sample_tokens = set()
 
     for det in det_annos:
+        sample_tk = det["metadata"]["token"]
+        if sample_tk not in seen_sample_tokens:
+            seen_sample_tokens.add(sample_tk)
+        else:
+            print(f'WARNING @ nuscenes_utils.py | see {sample_tk} more than once')
+            continue
+
         annos = []
         box_list = boxes_lidar_to_nusenes(det)
         box_list = lidar_nusc_box_to_global(
@@ -462,10 +466,8 @@ def transform_det_annos_to_nusc_annos(det_annos, nusc):
                 'attribute_name': attr
             }
             annos.append(nusc_anno)
-
-        nusc_annos['results'].update({det["metadata"]["token"]: annos})
-
-    return nusc_annos
+        
+        nusc_annos['results'][sample_tk] = annos
 
 
 def format_nuscene_results(metrics, class_names, version='default'):
