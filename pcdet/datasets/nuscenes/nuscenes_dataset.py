@@ -186,13 +186,6 @@ class NuScenesDataset(DatasetTemplate):
             nusc_annos['results'].update({info['token']: []})
 
         nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc, nusc_annos)
-        nusc_annos['meta'] = {
-            'use_camera': False,
-            'use_lidar': True,
-            'use_radar': False,
-            'use_map': False,
-            'use_external': False,
-        }
 
         output_path = Path(kwargs['output_path'])
         output_path.mkdir(exist_ok=True, parents=True)
