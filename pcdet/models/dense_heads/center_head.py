@@ -321,7 +321,7 @@ class CenterHead(nn.Module):
 
             if post_process_cfg.get('CALIB_CLS_SCORE', False):
                 alpha = post_process_cfg.get('CALIB_CLS_SCORE_ALPHA', 0.5)
-                batch_hm = torch.pow(batch_hm, 1.0 - alpha) * torch.pow(pred_dict['iou'], alpha)
+                batch_hm = torch.pow(batch_hm, 1.0 - alpha) * torch.pow(torch.clamp((pred_dict['iou'] + 1) / 2.0, min=0.0, max=1.0), alpha)
 
             final_pred_dicts = centernet_utils.decode_bbox_from_heatmap(
                 heatmap=batch_hm, rot_cos=batch_rot_cos, rot_sin=batch_rot_sin,
