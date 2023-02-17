@@ -37,3 +37,27 @@
     * NDS: 0.6154
     * peak at epoch 25
     * [details](../raw_log/pointpillar_jr_nomap/eval_1268025.err)
+
+* num epochs 25 - alpha = 0.3:
+    * mAP: 0.5465
+    * NDS: 0.6160
+    * peak at epoch 25
+    * [details](../raw_log/pointpillar_jr_nomap/eval_1285782.err)
+
+* num epochs 25 - alpha = 0.4:
+    * mAP: 0.5463
+    * NDS: 0.6164
+    * peak at epoch 25
+    * [details](../raw_log/pointpillar_jr_nomap/eval_1314953.err)
+
+* num epochs 25 - alpha = 0.5:
+    * mAP: 0.5445
+    * NDS: 0.6159
+    * peak at epoch 25
+    * [details](../raw_log/pointpillar_jr_nomap/eval_1315625.err)
+
+* num epochs 25 - alpha = 0.6:
+    * mAP: 0.5396
+    * NDS: 0.6138
+    * peak at epoch 25
+    * [details](../raw_log/pointpillar_jr_nomap/eval_1315840.err)
