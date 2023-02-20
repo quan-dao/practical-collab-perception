@@ -35,7 +35,7 @@ class NuScenesDataset(DatasetTemplate):
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
 
-        num_pts_raw_feat = 5  # x, y, z, intensity, time  TODO: take map feature into account here
+        num_pts_raw_feat = 10 if self.dataset_cfg.get('USE_HD_MAP', False) else 5 # x, y, z, intensity, time, [5 map features]
         self.map_point_feat2idx = {
             'sweep_idx': num_pts_raw_feat,
             'inst_idx': num_pts_raw_feat + 1,
@@ -258,6 +258,9 @@ class NuScenesDataset(DatasetTemplate):
 
     def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
         postfix = '_withmap' if self.dataset_cfg.get('USE_HD_MAP', False) else ''
+        print(f"----\n",
+              f"INFO: generating database with {self.dataset_cfg.get('USE_HD_MAP', False)} HD_MAP\n",
+              "----")
         if 'trainval' in self.dataset_cfg.VERSION:
             database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo{postfix}'
             db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
@@ -285,6 +288,7 @@ class NuScenesDataset(DatasetTemplate):
                                                        map_bev_image_resolution=self.map_bev_image_resolution)
 
             points = _out['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
+            assert points.shape[1] == 12 if self.dataset_cfg.get('USE_HD_MAP', False) else 7, f"points.shape: {points.shape}"
             points_inst_idx = points[:, self.map_point_feat2idx['inst_idx']].astype(int)
 
             gt_boxes = _out['gt_boxes']  # (N_inst, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
