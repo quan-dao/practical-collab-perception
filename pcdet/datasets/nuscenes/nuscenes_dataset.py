@@ -264,6 +264,8 @@ class NuScenesDataset(DatasetTemplate):
             assert 'mini' in self.dataset_cfg.VERSION, f"{self.dataset_cfg.VERSION} is not supported"
             database_save_path = self.root_path / f'mini_gt_database_{max_sweeps}sweeps_withvelo{postfix}'
             db_info_save_path = self.root_path / f'mini_nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
+            
+        map_database_dir = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
 
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
@@ -276,9 +278,10 @@ class NuScenesDataset(DatasetTemplate):
             detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
                              'bicycle', 'pedestrian', 'traffic_cone')
             _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS, detection_classes,
-                                                       map_apis=self.map_apis if self.dataset_cfg.get('USE_HD_MAP', False) else None,
-                                                       map_binary_layers=self.dataset_cfg.get('MAP_LAYERS', ['drivable_area']),
-                                                       map_get_lane_direction=self.dataset_cfg.get('USE_LANE_DIRECTION', False))
+                                                       use_hd_map=self.dataset_cfg.get('USE_HD_MAP', False), 
+                                                       map_database_path=map_database_dir, 
+                                                       map_point_cloud_range=self.map_point_cloud_range, 
+                                                       map_bev_image_resolution=self.map_bev_image_resolution)
 
             points = _out['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
             points_inst_idx = points[:, self.map_point_feat2idx['inst_idx']].astype(int)

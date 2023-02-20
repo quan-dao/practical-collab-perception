@@ -33,10 +33,14 @@ def remove_ego_vehicle_points(points: np.ndarray, center_radius) -> np.ndarray:
     return points[dist_xy > center_radius]
 
 
-def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_sweeps: int,
+def revised_instance_centric_get_sweeps(nusc: NuScenes, 
+                                        sample_token: str, 
+                                        n_sweeps: int,
                                         detection_classes: list = ['car', 'pedestrian', 'bicycle'],
                                         use_hd_map=False,
-                                        map_database_path=None, map_point_cloud_range=None, map_bev_image_resolution=None,
+                                        map_database_path=None, 
+                                        map_point_cloud_range=None, 
+                                        map_bev_image_resolution=None,
                                         **kwargs) -> dict:
     """
     
@@ -70,6 +74,22 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
             points.append(cur_points)
     
     points = np.concatenate(points, axis=0)  # (N_pts, 6) - x, y, z, intensity, time-lag, sweep_idx | in target frame
+
+    # ---
+    # points' map feature by projecting to rasterized map
+    # ---
+    if use_hd_map:
+        filename = map_database_path / f"bin_map_{sample_token}.npy"
+        map_image = np.load(filename)  # (H, W, C) - drivable_area, ped_crossing, walkway, carpark_area, lane_dir
+
+        points_bev_coord = np.floor((points[:, :2] - map_point_cloud_range[:2]) / map_bev_image_resolution).astype(int)
+        mask_points_inside = np.logical_and(points[:, :2] > map_point_cloud_range[:2], 
+                                            points[:, :2] < (map_point_cloud_range[3: 5] - 1e-3)).all(axis=1)
+        
+        points_map_feat = np.zeros((points.shape[0], map_image.shape[2]))
+        points_map_feat[mask_points_inside] = map_image[points_bev_coord[mask_points_inside, 1], points_bev_coord[mask_points_inside, 0]]
+    else:
+        points_map_feat = None
 
     # ----------------------------- #
     # --------- instances --------- #
@@ -118,10 +138,20 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
     num_instances = len(inst_poses)
 
     if num_instances == 0:
-        points = np.pad(points, pad_width=[(0, 0), (0, 1)], constant_values=-1)  # all background
+        points_inst_idx = -np.ones((points.shape[0], 1)).astype(float)  # all are background => := -1
+        # assembly points features
+        if points_map_feat is not None:
+            points = np.concatenate([points[:, :-1],  # x, y, z, intensity, time-lag 
+                                    points_map_feat,  
+                                    points[:, [-1]],  # sweep_idx  
+                                    points_inst_idx], axis=1)
+        else:
+            points = np.concatenate([points, points_inst_idx], axis=1)
+
         boxes = np.zeros((0, 9))
         boxes_name = np.array([])
         instances_tf = np.zeros((num_instances, n_sweeps, 4, 4))
+
         return {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name, 'gt_anno_tk': inst_last_anno_tk,
                 'target_from_glob': target_from_glob}
 
@@ -164,29 +194,22 @@ def revised_instance_centric_get_sweeps(nusc: NuScenes, sample_token: str, n_swe
     mask_bg = box_ids_of_points == -1
     points_inst_idx[mask_bg] = -1  # background
 
-    # ----------------------------------------------------------------------- #
-    # --------- points' map feature by projecting to rasterized map --------- #
-    # ----------------------------------------------------------------------- #
-    if use_hd_map:
-        filename = map_database_path / f"bin_map_{sample_token}.npy"
-        map_masks = np.load(filename)  # (N_layers, H, W)
-
-        points_bev_coord = np.floor((points[:, :2] - map_point_cloud_range[:2]) / map_bev_image_resolution).astype(int)
-
-        points_map_feat = -np.ones((map_masks.shape[0], points.shape[0]))
-        mask_points_inside = np.logical_and(points[:, :2] > map_point_cloud_range[:2], 
-                                            points[:, :2] < (map_point_cloud_range[3: 5] - 1e-3)).all(axis=1)
-        points_map_feat[:, mask_points_inside] = map_masks[:, points_bev_coord[mask_points_inside, 1], points_bev_coord[mask_points_inside, 0]]
-
-        # assembly points features
-        points = np.concatenate([points[:, :-1], points_map_feat.T, points[:, [-1]], points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
+    # assembly points features
+    if points_map_feat is not None:
+        points = np.concatenate([points[:, :-1],  # x, y, z, intensity, time-lag 
+                                 points_map_feat,  
+                                 points[:, [-1]],  # sweep_idx  
+                                 points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
     
     else:
         # not using map features
         points = np.concatenate([points, points_inst_idx.reshape(-1, 1).astype(float)], axis=1)
 
-    out = {'points': points, 'instances_tf': instances_tf, 'gt_boxes': boxes, 'gt_names': boxes_name, 'gt_anno_tk': inst_last_anno_tk,
-            'target_from_glob': target_from_glob}
+    out = {'points': points, 
+           'instances_tf': instances_tf, 
+           'gt_boxes': boxes, 'gt_names': boxes_name, 
+           'gt_anno_tk': inst_last_anno_tk,
+           'target_from_glob': target_from_glob}
     return out
 
 

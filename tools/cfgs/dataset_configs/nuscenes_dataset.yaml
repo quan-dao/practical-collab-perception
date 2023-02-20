@@ -23,7 +23,6 @@ VEHICLE_CLASSES: ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'mot
 BALANCED_RESAMPLING: True 
 
 USE_HD_MAP: True
-MAP_LAYERS: ['drivable_area', 'ped_crossing', 'walkway', 'carpark_area']
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
