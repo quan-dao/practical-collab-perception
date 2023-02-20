@@ -8,17 +8,15 @@ DATA_CONFIG:
     PRED_VELOCITY: True
     # POINT_CLOUD_RANGE: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
     USE_HD_MAP: True
-    MAP_LAYERS: ['drivable_area', 'ped_crossing', 'walkway', 'carpark_area']
-    USE_LANE_DIRECTION: False
     
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
         used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
-                            'drivable_area', 'ped_crossing', 'walkway', 'carpark_area',
+                            'drivable_area', 'ped_crossing', 'walkway', 'carpark_area', 'lane_dir',
                             'sweep_idx', 'instance_idx'],
         src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
-                           'drivable_area', 'ped_crossing', 'walkway', 'carpark_area',
-                           'sweep_idx', 'instance_idx'],
+                            'drivable_area', 'ped_crossing', 'walkway', 'carpark_area', 'lane_dir',
+                            'sweep_idx', 'instance_idx'],
     }
 
     DATA_AUGMENTOR:
@@ -39,7 +37,7 @@ DATA_CONFIG:
                 'barrier:2', 'motorcycle:6', 'bicycle:6', 'pedestrian:2', 'traffic_cone:2'
               ]
 
-              NUM_POINT_FEATURES: 9
+              NUM_POINT_FEATURES: 10
               DATABASE_WITH_FAKELIDAR: False
               REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
               LIMIT_WHOLE_SCENE: True
@@ -77,7 +75,7 @@ MODEL:
 
     VFE:
         NAME: DynPillarVFE
-        NUM_RAW_POINT_FEATURES: 9
+        NUM_RAW_POINT_FEATURES: 10
         WITH_DISTANCE: False
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
