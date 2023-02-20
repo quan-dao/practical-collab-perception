@@ -43,6 +43,11 @@ def random_flip_along_x(data_dict_, enable=None):
             data_dict_['instances_waypoints'][:, 1] *= -1  # flip y
             data_dict_['instances_waypoints'][:, 2] *= -1  # flip yaw
 
+        if 'use_hd_map' in data_dict_['metadata'] and data_dict_['metadata']['use_hd_map']:
+            assert data_dict_['points'].shape[1] == 12,\
+                f"expect points has 12 dim: 5 original raw, 5 map, sweep_idx, inst_idx; get {data_dict_['points'].shape[1]}"
+            data_dict_['points'][:, 9] *= -1  # flipping points' lane direction
+
     return enable
 
 
@@ -80,6 +85,13 @@ def random_flip_along_y(data_dict_, enable=None):
         if 'instances_waypoints' in data_dict_:
             data_dict_['instances_waypoints'][:, 0] *= -1  # flip y
             data_dict_['instances_waypoints'][:, 2] = -(data_dict_['instances_waypoints'][:, 2] + np.pi)  # flip yaw
+
+        if 'use_hd_map' in data_dict_['metadata'] and data_dict_['metadata']['use_hd_map']:
+            assert data_dict_['points'].shape[1] == 12,\
+                f"expect points has 12 dim: 5 original raw, 5 map, sweep_idx, inst_idx; get {data_dict_['points'].shape[1]}"
+            data_dict_['points'][:, 9] = -(data_dict_['points'][:, 9] + np.pi)  # flipping points' lane direction
+            # put lane_dir in range [-pi, pi]
+            data_dict_['points'][:, 9] = np.arctan2(np.sin(data_dict_['points'][:, 9]), np.cos(data_dict_['points'][:, 9]))
 
     return enable
 
@@ -142,6 +154,13 @@ def global_rotation(data_dict_, rot_range, noise_rotation=None):
                                                         np.array([noise_rotation]))[0]
         data_dict_['instances_waypoints'][:, :2] = waypts_xyz[:, :2]
         data_dict_['instances_waypoints'][:, 2] += noise_rotation
+
+    if 'use_hd_map' in data_dict_['metadata'] and data_dict_['metadata']['use_hd_map']:
+            assert data_dict_['points'].shape[1] == 12,\
+                f"expect points has 12 dim: 5 original raw, 5 map, sweep_idx, inst_idx; get {data_dict_['points'].shape[1]}"
+            data_dict_['points'][:, 9] += noise_rotation
+            # put lane_dir in range [-pi, pi]
+            data_dict_['points'][:, 9] = np.arctan2(np.sin(data_dict_['points'][:, 9]), np.cos(data_dict_['points'][:, 9]))
 
     return noise_rotation
 

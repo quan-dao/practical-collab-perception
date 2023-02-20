@@ -133,6 +133,7 @@ class NuScenesDataset(DatasetTemplate):
                 'num_original_instances': _out['instances_tf'].shape[0],
                 'num_original_boxes': _out['gt_boxes'].shape[0],
                 'tf_target_from_glob': _out['target_from_glob'],
+                'use_hd_map': self.dataset_cfg.get('USE_HD_MAP', False)
             }
         }
 
