@@ -55,7 +55,7 @@ class MapMaker(object):
         self.map_apis = load_all_maps(prediction_helper)
         self.map_dx, self.map_dy = point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1]
         self.map_size_pixel = (int(self.map_dx / map_resolution), int(self.map_dy / map_resolution))  # (W, H)
-        self.lane_thickness = int(5.0 / self.map_resolution)
+        self.lane_thickness = int(3.5 / self.map_resolution)
 
     def get_map_name_from_sample_token(self, sample_tk: str) -> str:
         sample = self.nusc.get('sample', sample_tk)

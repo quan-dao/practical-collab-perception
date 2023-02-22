@@ -8,7 +8,7 @@ from einops import rearrange
 
 def main():
     nusc = NuScenes(dataroot='../data/nuscenes/v1.0-mini', version='v1.0-mini', verbose=False)
-    map_maker = MapMaker(nusc, np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]), 0.2)
+    map_maker = MapMaker(nusc, np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]), 0.1)
 
     scene = nusc.scene[0]
     sample_tk = scene['first_sample_token']
@@ -51,7 +51,7 @@ def main():
 
         cv2.imshow('map @ lidar', out[::-1])
         cv2.imshow('lane @ lidar', lane_bgr[::-1])
-        if cv2.waitKey(100) & 0xFF == ord('q'):  # press "q" to end the program
+        if cv2.waitKey(700) & 0xFF == ord('q'):  # press "q" to end the program
             break
         
         # move on
