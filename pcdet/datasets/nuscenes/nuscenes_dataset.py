@@ -346,7 +346,9 @@ class NuScenesDataset(DatasetTemplate):
                             map_layers=('drivable_area', 'ped_crossing', 'walkway', 'carpark_area'))
 
         database_save_path = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
-        database_save_path.mkdir(parents=True, exist_ok=True)
+        
+        if not database_save_path.is_dir():
+            database_save_path.mkdir(parents=True, exist_ok=True)
 
         start_time = time.time()
         for idx in range(len(self.infos)):
@@ -432,6 +434,10 @@ if __name__ == '__main__':
     parser.set_defaults(create_hd_map_database=False)
 
 
+    parser.add_argument('--training', action='store_true')
+    parser.add_argument('--no-training', dest='training', action='store_false')
+    parser.set_defaults(training=True)
+
     parser.add_argument('--version', type=str, default='v1.0-trainval', help='')
     args = parser.parse_args()
 
@@ -451,9 +457,10 @@ if __name__ == '__main__':
         nuscenes_dataset = NuScenesDataset(
             dataset_cfg=dataset_cfg, class_names=None,
             root_path=ROOT_DIR / 'data' / 'nuscenes',
-            logger=common_utils.create_logger(), training=True
+            logger=common_utils.create_logger(), training=args.training
         )
         if args.create_groundtruth_database:
+            assert args.training, "expect args.training == True; get False"
             nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
     
         if args.create_hd_map_database:
