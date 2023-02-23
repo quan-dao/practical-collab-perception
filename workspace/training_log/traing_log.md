@@ -78,7 +78,7 @@
     * mAP: 0.5360
     * NDS: 0.5980
     * peak at epoch 20
-    * [details](../raw_log/pointpillar_jr_nomap/eval_1481004.err)
+    * [details](../raw_log/pointpillar_jr_withmap/eval_1481004.err)
 
 ## commit: eae1cca
 ### Features:
@@ -90,4 +90,10 @@
     * mAP: 0.5369
     * NDS: 0.6013
     * peak at epoch 20
-    * [details](../raw_log/pointpillar_jr_nomap/eval_1581859.err)
+    * [details](../raw_log/pointpillar_jr_withmap/eval_1581859.err)
+
+* num epochs: 20 - calib alpha 0.3
+    * mAP: 0.5436
+    * NDS: 0.6057
+    * peak at epoch 20
+    * [details](../raw_log/pointpillar_jr_withmap/eval_1584877.err)
