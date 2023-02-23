@@ -61,3 +61,33 @@
     * NDS: 0.6138
     * peak at epoch 25
     * [details](../raw_log/pointpillar_jr_nomap/eval_1315840.err)
+
+
+# pointpillar_jr_withmap
+
+## commit: faa49f4
+### Features:
+* base features := commit `3a59638`
+* [new] interpolate points' map features (4 binary, 1 lane direction) for map images cached in hard disk
+* map cfg: 
+    * range: [-51.2, -51.2, -5, 51.2, 51.2, 3.]
+    * resolution: 0.2
+
+### NuScenes mAP (nusc style) & NDS
+* num epochs: 20
+    * mAP: 0.5360
+    * NDS: 0.5980
+    * peak at epoch 20
+    * [details](../raw_log/pointpillar_jr_nomap/eval_1481004.err)
+
+## commit: eae1cca
+### Features:
+* base features := commit `faa49f4`
+* [new] increase map resolution to 0.1
+
+### NuScenes mAP (nusc style) & NDS
+* num epochs: 20
+    * mAP: 0.5369
+    * NDS: 0.6013
+    * peak at epoch 20
+    * [details](../raw_log/pointpillar_jr_nomap/eval_1581859.err)
