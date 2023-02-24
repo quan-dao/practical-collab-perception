@@ -102,9 +102,12 @@ class AV2Parser(object):
         annos_category = annos_df.loc[:, 'category'].to_numpy()
 
         # remove boxes by names to save time establishing points to boxes corr
-        mask_detected_categoy = np.all(annos_category.reshape(-1, 1) == self.detection_cls.reshape(1, -1), axis=1)
+        mask_detected_categoy = np.any(annos_category.reshape(-1, 1) == self.detection_cls.reshape(1, -1), axis=1)
         annos, annos_category = annos[mask_detected_categoy], annos_category[mask_detected_categoy]
 
+        if annos.shape[0] == 0:
+            return np.zeros((0, 4, 4)), np.zeros((0, 3)), np.array([]), np.array([]), np.array([])
+        
         # construct annos' pose in egovehicle frame
         annos_rot_mat = quat_to_mat(annos[:, 6: 10])  # (N, 3, 3)
         ego_SE3_annos = np.pad(annos_rot_mat, pad_width=[(0, 0), (0, 1), (0, 1)], constant_values=0.0)  # (N, 4, 4)
@@ -129,7 +132,9 @@ class AV2Parser(object):
         out = dict()
         out['sweep_files'] = self.get_files_of_lidar_sequence()
         out['ego_SE3_annos'], out['annos_size'], out['annos_id'], out['annos_timestamp_ns'], out['annos_category'] = self.parse_av_annotation()
+        return out
     
+    @staticmethod
     def read_av_lidar_file(lidar_file: str, timestamp_ns: int, use_offset_ns: bool = False) -> np.ndarray:
         """
         Args:
@@ -157,7 +162,7 @@ class AV2Parser(object):
 
 class AV2MapHelper(object):
     def __init__(self, map_dir: Path, city_SE3_src: np.ndarray):
-        self.avm = ArgoverseStaticMap.from_map_dir(map_dir, build_raster=True)
+        self.avm = ArgoverseStaticMap.from_map_dir(map_dir.resolve(), build_raster=True)
         self.city_SE3_src = city_SE3_src
         self.src_SE3_city = LA.inv(self.city_SE3_src)
     

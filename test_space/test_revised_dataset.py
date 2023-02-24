@@ -6,7 +6,7 @@ import argparse
 
 
 def main(target_dataloader_idx=3, training=False, batch_size=2):
-    cfg_file = './cfgs/pointpillar_jr.yaml'
+    cfg_file = './cfgs/pointpillar_jr_av2.yaml'
     _, dataloader = build_test_infra(cfg_file, training=training, batch_size=batch_size)
 
     iter_dataloader = iter(dataloader)
@@ -21,7 +21,7 @@ def main(target_dataloader_idx=3, training=False, batch_size=2):
     print('avg data time: ', data_time / float(counter))
 
     to_tensor(batch_dict, move_to_gpu=False)
-    filename = f'./artifact/dataset_train{training}_bs{batch_size}_dataloaderIdx{target_dataloader_idx}.pth'
+    filename = f'./artifact/av2_train{training}_bs{batch_size}_dataloaderIdx{target_dataloader_idx}.pth'
     torch.save(batch_dict, filename)
     print(filename)
 

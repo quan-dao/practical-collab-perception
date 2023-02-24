@@ -8,12 +8,12 @@ from av2.utils.io import read_city_SE3_ego
 
 from ..dataset import DatasetTemplate
 from pcdet.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
-from av2_utils import AV2Parser, AV2MapHelper, get_log_name_from_sensor_file, get_timestamp_from_feather_file, apply_SE3, yaw_from_rotz
+from .av2_utils import AV2Parser, AV2MapHelper, get_log_name_from_sensor_file, get_timestamp_from_feather_file, apply_SE3, yaw_from_rotz
 
 
 class AV2Dataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
-        root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
+        root_path = root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)
         super().__init__(
             dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
         )
@@ -105,10 +105,12 @@ class AV2Dataset(DatasetTemplate):
             # boxes 
             # -------- #
             mask_at_this_ts = sweep_info['annos_timestamp_ns'] == lidar_timestamp_ns
+            if not np.any(mask_at_this_ts):
+                continue
             this_gt_names = sweep_info['annos_category'][mask_at_this_ts]  # (N,)
 
             # map annos @ this_ts to current egovehicle frame
-            ego_SE3_this_annos = sweep_info['ego_SE3_all_annos'][mask_at_this_ts]  # (N, 4, 4)
+            ego_SE3_this_annos = sweep_info['ego_SE3_annos'][mask_at_this_ts]  # (N, 4, 4)
             current_ego_SE3_this_annos = np.einsum('ij, bjk -> bik', current_ego_SE3_ego, ego_SE3_this_annos)  # (N, 4, 4)
             list_gt_poses.append(current_ego_SE3_this_annos)
 
@@ -141,9 +143,14 @@ class AV2Dataset(DatasetTemplate):
         
         # merge per-sweep points & boxes
         points = np.concatenate(list_points)  # (N_pts, 6) - x, y, z, intensity, time_sec || sweep_idx  (xyz in egovehicle )
-        gt_boxes = np.concatenate(list_gt_boxes)  # (N_boxes, 9) - cx, cy, cz, dx, dy, dz, yaw || instance_idx, sweep_idx  (xyz in egovehicle)
-        gt_names = np.concatenate(list_gt_names)  # (N_boxes,)
-        gt_poses = np.concatenate(list_gt_poses)  # (N_boxes, 4, 4) - to build instance_tf
+
+        if len(list_gt_boxes) > 0:
+            gt_boxes = np.concatenate(list_gt_boxes)\
+                .astype(float)  # (N_boxes, 9) - cx, cy, cz, dx, dy, dz, yaw || instance_idx, sweep_idx  (xyz in egovehicle)
+            gt_names = np.concatenate(list_gt_names)  # (N_boxes,)
+            gt_poses = np.concatenate(list_gt_poses).astype(float)  # (N_boxes, 4, 4) - to build instance_tf
+        else:
+            gt_boxes, gt_names, gt_poses = np.zeros((0, 9)), np.zeros(0), np.zeros((0, 4, 4))
 
         # ---------------------- #
         # extracting map features 
@@ -164,7 +171,12 @@ class AV2Dataset(DatasetTemplate):
             list_pts_map_feat.append(pts_feat)
 
         pts_map_feat = np.stack(list_pts_map_feat, axis=1)  # (N, C_map)
-        points = np.concatenate([points[:, self.dataset_cfg.POINT_NUM_RAW_FEATURES], 
+
+        print(f"points.shape: {points.shape}")
+        print(f"pts_map_feat.shape: {pts_map_feat.shape}")
+        print(f"POINT_NUM_RAW_FEATURES: ", self.dataset_cfg.POINT_NUM_RAW_FEATURES)
+
+        points = np.concatenate([points[:, :self.dataset_cfg.POINT_NUM_RAW_FEATURES], 
                                  pts_map_feat, 
                                  points[:, self.dataset_cfg.POINT_NUM_RAW_FEATURES:]], 
                                  axis=1)  # (N_pts, 8) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx
@@ -173,7 +185,9 @@ class AV2Dataset(DatasetTemplate):
         # pull stuff down the ground
         # ---
         map_helper.compensate_ground_height(points, in_place=True)
-        map_helper.compensate_ground_height(gt_boxes, in_place=True)
+
+        if gt_boxes.shape[0] > 0:
+            map_helper.compensate_ground_height(gt_boxes, in_place=True)
 
         # ----------------------
         # processing instances
@@ -182,30 +196,38 @@ class AV2Dataset(DatasetTemplate):
         # ---
         # points to gt_boxes correspondance 
         # ---
-        box_idx_of_points = points_in_boxes_gpu(
-            torch.from_numpy(points[:, :3]).unsqueeze(0).contiguous().float().cuda(),
-            torch.from_numpy(gt_boxes[:, :7]).unsqueeze(0).contiguous().float().cuda(),
-        ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_boxes,)
-        points_inst_idx = gt_boxes[box_idx_of_points, -2]
-        points = np.concatenate([
-            points, points_inst_idx.reshape(-1, 1)])  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
+        if gt_boxes.shape[0] > 0:
+            box_idx_of_points = points_in_boxes_gpu(
+                torch.from_numpy(points[:, :3]).unsqueeze(0).contiguous().float().cuda(),
+                torch.from_numpy(gt_boxes[:, :7]).unsqueeze(0).contiguous().float().cuda(),
+            ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_boxes,)
+            points_inst_idx = gt_boxes[box_idx_of_points, -2]
+            points = np.concatenate([points, 
+                                     points_inst_idx.reshape(-1, 1)], 
+                                     axis=1)  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
+        else:
+            points = np.pad(points, pad_width=[(0, 0), (0, 1)], constant_values=-1)  # all points are background
 
         # ---
         # build instance_tf
         # ---
-        gt_boxes_inst_idx = gt_boxes[:, -2].astype(int)
-        unq_inst_ids = np.unique(gt_boxes_inst_idx)  # (N_inst,)
+        if gt_boxes.shape[0] > 0:
+            gt_boxes_inst_idx = gt_boxes[:, -2].astype(int)
+            unq_inst_ids = np.unique(gt_boxes_inst_idx)  # (N_inst,)
 
-        instances_tf = np.zeros((unq_inst_ids.shape[0], self.num_sweeps, 4, 4))
-        for ii, inst_idx in enumerate(unq_inst_ids.tolis()):
-            mask_this_instance = gt_boxes_inst_idx == inst_idx
-            this_inst_poses = gt_poses[mask_this_instance]  # (N_box_of_inst, 4, 4)
-            instances_tf[ii, :this_inst_poses.shape[0]] = np.einsum('ij, bjk -> bik', this_inst_poses[-1], LA.inv(this_inst_poses))
+            instances_tf = np.zeros((unq_inst_ids.shape[0], self.num_sweeps, 4, 4))
+            for ii, inst_idx in enumerate(unq_inst_ids.tolist()):
+                mask_this_instance = gt_boxes_inst_idx == inst_idx
+                this_inst_poses = gt_poses[mask_this_instance]  # (N_box_of_inst, 4, 4)
+                instances_tf[ii, :this_inst_poses.shape[0]] = np.einsum('ij, bjk -> bik', this_inst_poses[-1], LA.inv(this_inst_poses))
+        else:
+            instances_tf = np.zeros((0, 4, 4))
 
-        # for each instance keep only box has the highest sweep_idx
-        gt_boxes, gt_names = self._filter_past_gt_boxes(gt_boxes, gt_names)
-        # reorganize gt_boxes by instances_idx
-        gt_boxes, gt_names = self._sort_gt_boxes_by_instance_idx(gt_boxes, gt_names)
+        if gt_boxes.shape[0] > 0:
+            # for each instance keep only box has the highest sweep_idx
+            gt_boxes, gt_names = self._filter_past_gt_boxes(gt_boxes, gt_names)
+            # reorganize gt_boxes by instances_idx
+            gt_boxes, gt_names = self._sort_gt_boxes_by_instance_idx(gt_boxes, gt_names)
 
         # -------------------------------------------
         data_dict = {
@@ -213,10 +235,11 @@ class AV2Dataset(DatasetTemplate):
             'gt_boxes': gt_boxes[:, :7],  # (N_box, 7) - x, y, z, dx, dy, dz, yaw 
             'gt_names': gt_names,  # (N_box,)
             'instances_tf': instances_tf,  # (N_inst, N_sweeps, 4, 4)
-            'frame_id': sweep_info['sweep_files'].stem,  # path to lidar file
+            'frame_id': sweep_info['sweep_files'][-1].stem,  # path to lidar file
             'metadata': {
                 'log_name': log_name,
                 'lidar_timestamp_ns': current_lidar_timestamp_ns,  # int
+                'num_sweeps': self.num_sweeps
             }
         }
         

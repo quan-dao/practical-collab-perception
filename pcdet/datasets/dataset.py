@@ -191,7 +191,11 @@ class DatasetTemplate(torch_data.Dataset):
         # make sure a training sample has at least 1 gt_box of vehicle classes
         if self.training:
             has_gt = False
-            for cls_name in self.dataset_cfg.VEHICLE_CLASSES:
+            if self.dataset_cfg.get('VEHICLE_CLASSES', None) is not None:
+                cls_of_interest = self.dataset_cfg.VEHICLE_CLASSES
+            else:    
+                cls_of_interest = self.dataset_cfg.DETECTION_CLS
+            for cls_name in cls_of_interest:
                 has_gt = has_gt or np.any(data_dict['gt_names'] == cls_name)
                 if has_gt:
                     break
