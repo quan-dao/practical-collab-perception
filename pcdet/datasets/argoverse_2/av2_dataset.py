@@ -74,7 +74,7 @@ class AV2Dataset(DatasetTemplate):
         log_info = self.log_name_to_log_info_dict[log_name]
         timestamp_city_SE3_ego_dict = read_city_SE3_ego(log_dir=log_info['log_dir'])
 
-        parser = AV2Parser(log_info, current_lidar_timestamp_ns, self.num_sweeps, self.sweep_stride)
+        parser = AV2Parser(log_info, current_lidar_timestamp_ns, self.num_sweeps, self.sweep_stride, self.dataset_cfg.DETECTION_CLS)
         sweep_info = parser.get_sweep_info()
 
         list_points, list_gt_boxes, list_gt_names, list_gt_poses = [], [], [], []
