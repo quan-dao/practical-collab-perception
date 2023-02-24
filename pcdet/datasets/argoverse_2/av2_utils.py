@@ -38,7 +38,11 @@ def yaw_from_rotz(rot_mat: np.ndarray) -> np.ndarray:
 
 
 class AV2Parser(object):
-    def __init__(self, log_info: Dict, current_lidar_timestamp_ns: int, num_sweeps: int, sweep_stride: int):
+    av2_cls = ['REGULAR_VEHICLE', 'PEDESTRIAN', 'BOLLARD', 'CONSTRUCTION_CONE', 'CONSTRUCTION_BARREL', 'STOP_SIGN', 'BICYCLE', 'LARGE_VEHICLE',
+               'WHEELED_DEVICE', 'BUS', 'BOX_TRUCK', 'SIGN', 'TRUCK', 'MOTORCYCLE', 'BICYCLIST', 'VEHICULAR_TRAILER', 'TRUCK_CAB', 'MOTORCYCLIST',
+               'DOG', 'SCHOOL_BUS', 'WHEELED_RIDER', 'STROLLER', 'ARTICULATED_BUS', 'MESSAGE_BOARD_TRAILER', 'MOBILE_PEDESTRIAN_SIGN', 'WHEELCHAIR',
+               'RAILED_VEHICLE', 'OFFICIAL_SIGNALER', 'TRAFFIC_LIGHT_TRAILER', 'ANIMAL']
+    def __init__(self, log_info: Dict, current_lidar_timestamp_ns: int, num_sweeps: int, sweep_stride: int, detection_cls: List[str]):
         """
         Args:
             log_info:
@@ -57,6 +61,7 @@ class AV2Parser(object):
         self.current_ts_ns = current_lidar_timestamp_ns
         self.num_sweeps = num_sweeps
         self.sweep_stride = sweep_stride
+        self.detection_cls = np.array(detection_cls)
     
     def get_files_of_lidar_sequence(self) -> List[str]:
         """
@@ -93,7 +98,13 @@ class AV2Parser(object):
         annos = annos_df.loc[:, ['tx_m', 'ty_m', 'tz_m', 'length_m', 'width_m', 'height_m', 'qw', 'qx', 'qy', 'qz', 
                                  'track_uuid', 'timestamp_ns']].to_numpy()  # annotations of the entire log
         
-        
+        # annos' category (to make gt_names)
+        annos_category = annos_df.loc[:, 'category'].to_numpy()
+
+        # remove boxes by names to save time establishing points to boxes corr
+        mask_detected_categoy = np.all(annos_category.reshape(-1, 1) == self.detection_cls.reshape(1, -1), axis=1)
+        annos, annos_category = annos[mask_detected_categoy], annos_category[mask_detected_categoy]
+
         # construct annos' pose in egovehicle frame
         annos_rot_mat = quat_to_mat(annos[:, 6: 10])  # (N, 3, 3)
         ego_SE3_annos = np.pad(annos_rot_mat, pad_width=[(0, 0), (0, 1), (0, 1)], constant_values=0.0)  # (N, 4, 4)
@@ -109,9 +120,6 @@ class AV2Parser(object):
         # annos' timestamp_ns
         annos_timestamp_ns = annos[:, -1].astype(int)
 
-        # annos' category (to make gt_names)
-        annos_category = annos_df.loc[:, 'category'].to_numpy()
-        
         return ego_SE3_annos, annos_size, annos_id, annos_timestamp_ns, annos_category
     
     def get_sweep_info(self) -> Dict:

@@ -1,10 +1,13 @@
+import torch
+from torch_scatter import scatter_max
 import numpy as np
 import numpy.linalg as LA
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 from av2.utils.io import read_city_SE3_ego
 
 from ..dataset import DatasetTemplate
+from pcdet.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 from av2_utils import AV2Parser, AV2MapHelper, get_log_name_from_sensor_file, get_timestamp_from_feather_file, apply_SE3, yaw_from_rotz
 
 
@@ -74,7 +77,7 @@ class AV2Dataset(DatasetTemplate):
         parser = AV2Parser(log_info, current_lidar_timestamp_ns, self.num_sweeps, self.sweep_stride)
         sweep_info = parser.get_sweep_info()
 
-        list_points, list_gt_boxes, list_gt_names = [], [], []
+        list_points, list_gt_boxes, list_gt_names, list_gt_poses = [], [], [], []
         dict_id_to_instance_idx: Dict[str, int] = dict()
         inst_idx = 0
         current_ego_SE3_city = LA.inv(timestamp_city_SE3_ego_dict[current_lidar_timestamp_ns].transform_matrix)
@@ -107,6 +110,7 @@ class AV2Dataset(DatasetTemplate):
             # map annos @ this_ts to current egovehicle frame
             ego_SE3_this_annos = sweep_info['ego_SE3_all_annos'][mask_at_this_ts]  # (N, 4, 4)
             current_ego_SE3_this_annos = np.einsum('ij, bjk -> bik', current_ego_SE3_ego, ego_SE3_this_annos)  # (N, 4, 4)
+            list_gt_poses.append(current_ego_SE3_this_annos)
 
             # get boxes instances index
             this_annos_id = sweep_info['annos_id'][mask_at_this_ts]
@@ -138,7 +142,8 @@ class AV2Dataset(DatasetTemplate):
         # merge per-sweep points & boxes
         points = np.concatenate(list_points)  # (N_pts, 6) - x, y, z, intensity, time_sec || sweep_idx  (xyz in egovehicle )
         gt_boxes = np.concatenate(list_gt_boxes)  # (N_boxes, 9) - cx, cy, cz, dx, dy, dz, yaw || instance_idx, sweep_idx  (xyz in egovehicle)
-        gt_names = np.concatenate(list_gt_names)
+        gt_names = np.concatenate(list_gt_names)  # (N_boxes,)
+        gt_poses = np.concatenate(list_gt_poses)  # (N_boxes, 4, 4) - to build instance_tf
 
         # ---------------------- #
         # extracting map features 
@@ -170,22 +175,83 @@ class AV2Dataset(DatasetTemplate):
         map_helper.compensate_ground_height(points, in_place=True)
         map_helper.compensate_ground_height(gt_boxes, in_place=True)
 
-        # -------------------------------- #
+        # ----------------------
+        # processing instances
+        # ----------------------
+
+        # ---
         # points to gt_boxes correspondance 
-        # -------------------------------- #
-        # TODO: for each instance keep only box has the highest sweep_idx
-        # TODO: reorganize gt_boxes & gt_names according to instance_idx
+        # ---
+        box_idx_of_points = points_in_boxes_gpu(
+            torch.from_numpy(points[:, :3]).unsqueeze(0).contiguous().float().cuda(),
+            torch.from_numpy(gt_boxes[:, :7]).unsqueeze(0).contiguous().float().cuda(),
+        ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_boxes,)
+        points_inst_idx = gt_boxes[box_idx_of_points, -2]
+        points = np.concatenate([
+            points, points_inst_idx.reshape(-1, 1)])  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
+
+        # ---
+        # build instance_tf
+        # ---
+        gt_boxes_inst_idx = gt_boxes[:, -2].astype(int)
+        unq_inst_ids = np.unique(gt_boxes_inst_idx)  # (N_inst,)
+
+        instances_tf = np.zeros((unq_inst_ids.shape[0], self.num_sweeps, 4, 4))
+        for ii, inst_idx in enumerate(unq_inst_ids.tolis()):
+            mask_this_instance = gt_boxes_inst_idx == inst_idx
+            this_inst_poses = gt_poses[mask_this_instance]  # (N_box_of_inst, 4, 4)
+            instances_tf[ii, :this_inst_poses.shape[0]] = np.einsum('ij, bjk -> bik', this_inst_poses[-1], LA.inv(this_inst_poses))
+
+        # for each instance keep only box has the highest sweep_idx
+        gt_boxes, gt_names = self._filter_past_gt_boxes(gt_boxes, gt_names)
+        # reorganize gt_boxes by instances_idx
+        gt_boxes, gt_names = self._sort_gt_boxes_by_instance_idx(gt_boxes, gt_names)
 
         # -------------------------------------------
-        batch_dict = {
+        data_dict = {
             'points': points,  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
             'gt_boxes': gt_boxes[:, :7],  # (N_box, 7) - x, y, z, dx, dy, dz, yaw 
             'gt_names': gt_names,  # (N_box,)
+            'instances_tf': instances_tf,  # (N_inst, N_sweeps, 4, 4)
             'frame_id': sweep_info['sweep_files'].stem,  # path to lidar file
             'metadata': {
                 'log_name': log_name,
                 'lidar_timestamp_ns': current_lidar_timestamp_ns,  # int
             }
         }
+        
+        # data augmentation & other stuff
+        data_dict = self.prepare_data(data_dict=data_dict)
 
+        return data_dict
+
+    @staticmethod
+    def _filter_past_gt_boxes(gt_boxes: np.ndarray, gt_names: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        For each instance, keep its most recent box (i.e. the one has the highest sweep_idx)
+
+        Args:
+            gt_boxes: (N_boxes, 9) - cx, cy, cz, dx, dy, dz, yaw || instance_idx, sweep_idx 
+            gt_names: (N_boxes,)
+        
+        Return:
+            gt_boxes: (N_boxes_, 9) - cx, cy, cz, dx, dy, dz, yaw || instance_idx, sweep_idx 
+            gt_names: (N_boxes_,)
+            NOTE: N_boxes_ << N_boxes
+        """
+        # group boxes according to instance_idx
+        _, inv_indices = torch.unique(torch.from_numpy(gt_boxes[:, -2]).long(), return_inverse=True)
+        # find max sweep_idx of each instance
+        _, boxes_idx = scatter_max(torch.from_numpy(gt_boxes[:, -1]).long(), inv_indices, dim=0)
+        return gt_boxes[boxes_idx], gt_names[boxes_idx]
+    
+    @staticmethod
+    def _sort_gt_boxes_by_instance_idx(gt_boxes: np.ndarray, gt_names: np.ndarray) -> None:
+        """
+        Args:
+            gt_boxes: (N_boxes, 9) - cx, cy, cz, dx, dy, dz, yaw || instance_idx, sweep_idx 
+            gt_names: (N_boxes,)
+        """
+        sorted_idx = np.argsort(gt_boxes[:, -2].astype(int))
+        return gt_boxes[sorted_idx], gt_names[sorted_idx]
 

@@ -6,3 +6,5 @@ SWEEP_STRIDE: 1
 
 POINT_MAP_FEATURES: ['flag_on_ground', 'flag_on_drivable_area']
 POINT_NUM_RAW_FEATURES: 5  # x, y, z, intensity, time_sec
+
+DETECTION_CLS: ['REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLIST']
