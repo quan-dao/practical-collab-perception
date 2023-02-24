@@ -1,0 +1,8 @@
+DATASET: 'AV2Dataset'
+DATA_PATH: '../data/argoverse_2'
+
+NUM_SWEEPS: 4
+SWEEP_STRIDE: 1
+
+POINT_MAP_FEATURES: ['flag_on_ground', 'flag_on_drivable_area']
+POINT_NUM_RAW_FEATURES: 5  # x, y, z, intensity, time_sec
