@@ -184,10 +184,11 @@ class AV2Dataset(DatasetTemplate):
         # ---
         # pull stuff down the ground
         # ---
-        map_helper.compensate_ground_height(points, in_place=True)
+        if self.dataset_cfg.get('MAP_COMPENSATE_GROUND_HEIGHT', False):
+            map_helper.compensate_ground_height(points, in_place=True)
 
-        if gt_boxes.shape[0] > 0:
-            map_helper.compensate_ground_height(gt_boxes, in_place=True)
+            if gt_boxes.shape[0] > 0:
+                map_helper.compensate_ground_height(gt_boxes, in_place=True)
 
         # ----------------------
         # processing instances
@@ -201,7 +202,11 @@ class AV2Dataset(DatasetTemplate):
                 torch.from_numpy(points[:, :3]).unsqueeze(0).contiguous().float().cuda(),
                 torch.from_numpy(gt_boxes[:, :7]).unsqueeze(0).contiguous().float().cuda(),
             ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_boxes,)
-            points_inst_idx = gt_boxes[box_idx_of_points, -2]
+            points_inst_idx = gt_boxes[box_idx_of_points, -2]  # NOTE: bg points has box_idx_of_points == -1, 
+            # but this index will return a non negative value anyway 
+            # => set instance idx of background points to -1
+            mask_background_pts = box_idx_of_points == -1
+            points_inst_idx[mask_background_pts] = -1
             points = np.concatenate([points, 
                                      points_inst_idx.reshape(-1, 1)], 
                                      axis=1)  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
@@ -215,7 +220,7 @@ class AV2Dataset(DatasetTemplate):
             gt_boxes_inst_idx = gt_boxes[:, -2].astype(int)
             unq_inst_ids = np.unique(gt_boxes_inst_idx)  # (N_inst,)
 
-            instances_tf = np.zeros((unq_inst_ids.shape[0], self.num_sweeps, 4, 4))
+            instances_tf = np.tile(np.eye(4)[np.newaxis, np.newaxis, ...], (unq_inst_ids.shape[0], self.num_sweeps, 1, 1))
             for ii, inst_idx in enumerate(unq_inst_ids.tolist()):
                 mask_this_instance = gt_boxes_inst_idx == inst_idx
                 this_inst_poses = gt_poses[mask_this_instance]  # (N_box_of_inst, 4, 4)
@@ -230,6 +235,10 @@ class AV2Dataset(DatasetTemplate):
             gt_boxes, gt_names = self._sort_gt_boxes_by_instance_idx(gt_boxes, gt_names)
 
         # -------------------------------------------
+        # remove points having NaN
+        mask_pts_have_nan = np.isnan(points).any(axis=1)
+        points = points[np.logical_not(mask_pts_have_nan)]
+        
         data_dict = {
             'points': points,  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
             'gt_boxes': gt_boxes[:, :7],  # (N_box, 7) - x, y, z, dx, dy, dz, yaw 

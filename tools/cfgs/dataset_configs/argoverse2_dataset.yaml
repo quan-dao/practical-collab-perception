@@ -5,12 +5,14 @@ DATASET_STRIDE: 1
 NUM_SWEEPS: 4
 SWEEP_STRIDE: 1
 
+MAP_COMPENSATE_GROUND_HEIGHT: False
+
 POINT_MAP_FEATURES: ['flag_on_ground', 'flag_on_drivable_area']
 POINT_NUM_RAW_FEATURES: 5  # x, y, z, intensity, time_sec
 
 DETECTION_CLS: ['REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLIST']
 
-POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+POINT_CLOUD_RANGE: [-75.2, -75.2, -3, 75.2, 75.2, 5]
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
@@ -51,8 +53,8 @@ DATA_AUGMENTOR:
           NOISE_TRANSLATE_STD: [0.5, 0.5, 0.5]
 
 DATA_PROCESSOR:
-    # - NAME: mask_points_and_boxes_outside_range
-    #   REMOVE_OUTSIDE_BOXES: False
+    - NAME: mask_points_and_boxes_outside_range
+      REMOVE_OUTSIDE_BOXES: False
 
     - NAME: shuffle_points
       SHUFFLE_ENABLED: {
