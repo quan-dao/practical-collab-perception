@@ -3,12 +3,13 @@ from torch_scatter import scatter_max
 import numpy as np
 import numpy.linalg as LA
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 from av2.utils.io import read_city_SE3_ego
 
 from ..dataset import DatasetTemplate
 from pcdet.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
-from .av2_utils import AV2Parser, AV2MapHelper, get_log_name_from_sensor_file, get_timestamp_from_feather_file, apply_SE3, yaw_from_rotz
+from .av2_utils import AV2Parser, AV2MapHelper, get_log_name_from_sensor_file, get_timestamp_from_feather_file, apply_SE3, yaw_from_rotz, \
+    transform_det_annos_to_av2_feather
 
 
 class AV2Dataset(DatasetTemplate):
@@ -172,10 +173,6 @@ class AV2Dataset(DatasetTemplate):
 
         pts_map_feat = np.stack(list_pts_map_feat, axis=1)  # (N, C_map)
 
-        print(f"points.shape: {points.shape}")
-        print(f"pts_map_feat.shape: {pts_map_feat.shape}")
-        print(f"POINT_NUM_RAW_FEATURES: ", self.dataset_cfg.POINT_NUM_RAW_FEATURES)
-
         points = np.concatenate([points[:, :self.dataset_cfg.POINT_NUM_RAW_FEATURES], 
                                  pts_map_feat, 
                                  points[:, self.dataset_cfg.POINT_NUM_RAW_FEATURES:]], 
@@ -238,7 +235,7 @@ class AV2Dataset(DatasetTemplate):
         # remove points having NaN
         mask_pts_have_nan = np.isnan(points).any(axis=1)
         points = points[np.logical_not(mask_pts_have_nan)]
-        
+
         data_dict = {
             'points': points,  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
             'gt_boxes': gt_boxes[:, :7],  # (N_box, 7) - x, y, z, dx, dy, dz, yaw 
@@ -286,4 +283,26 @@ class AV2Dataset(DatasetTemplate):
         """
         sorted_idx = np.argsort(gt_boxes[:, -2].astype(int))
         return gt_boxes[sorted_idx], gt_names[sorted_idx]
+
+    def evaluation(self, det_annos: List[Dict], class_names: List[str], **kwargs):
+        from av2.evaluation.detection.eval import evaluate
+        from av2.evaluation.detection.utils import DetectionCfg
+        from av2.utils.io import read_all_annotations
+        import pandas as pd
+
+        assert kwargs['eval_metric'] == 'argoverse_2', f"eval_metric {kwargs['eval_metric']} is not supported"
+
+        dataset_dir = Path(self.dataset_cfg.DATA_PATH)
+        competition_cfg = DetectionCfg(dataset_dir=dataset_dir)  # Defaults to competition parameters.
+
+        split = "val"
+        gts = read_all_annotations(dataset_dir=dataset_dir, split=split)  # Contains all annotations in a particular split.
+
+        detection_df = transform_det_annos_to_av2_feather(det_annos, class_names)
+
+        dts, gts, metrics = evaluate(dts, gts, cfg=competition_cfg)  # Evaluate instances.
+        with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
+            print(metrics)
+
+        return '', {'mAP': metrics.loc['AVERAGE_METRICS'].to_numpy().mean().item()}  # TODO
 

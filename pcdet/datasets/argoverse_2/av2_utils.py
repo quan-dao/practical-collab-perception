@@ -3,8 +3,9 @@ import numpy.linalg as LA
 from pathlib import Path
 from typing import List, Dict, Tuple, Union
 from av2.utils.io import read_feather
-from av2.geometry.geometry import quat_to_mat
+from av2.geometry.geometry import quat_to_mat, mat_to_quat
 from av2.map.map_api import ArgoverseStaticMap
+import pandas as pd
 
 
 def get_timestamp_from_feather_file(filename: Path, return_int: bool = False) -> int:
@@ -256,3 +257,64 @@ class AV2MapHelper(object):
 
         return mask_on_drivable_area.astype(float)
     
+
+def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.ndarray) -> pd.DataFrame: 
+    """
+    Args:
+        det_annos: {
+            frame_id: LiDAR file
+            metadata: {
+                log_name (str):
+                lidar_timestam_ns (int): to be used as the timestamp of a detection
+                num_sweeps (int):
+            }
+            boxes_lidar (np.ndarray): (N, 7) - x, y, z, dx, dy, dz, yaw
+            score (np.ndarray): (N,)
+            pred_labels (np.ndarray): (N,) - int in [1, N_cls]
+        }
+        detection_cls: (str) to be used for converting pred_labels to category
+    
+    Returns:
+        detection_df: pandas dataframe according to AV2 format
+    """
+    # init output
+    out = dict()
+    fields = ('tx_m', 'ty_m', 'tz_m', 'length_m', 'width_m', 'height_m', 'qw', 'qx', 'qy', 'qz', 'score', 'log_id', 'timestamp_ns', 'category')
+    for f in fields:
+        out[f] = list()
+
+    # populate output with info from det_annos
+    for anno in det_annos:
+        # boxes' translation
+        for coord_idx, coord in enumerate(fields[:3]):
+            out[coord].append(anno['boxes_lidar'][:, coord_idx])
+        
+        # boxes' size
+        for dim_idx, dim in enumerate(fields[3: 6]):
+            out[dim].append(anno['boxes_lidar'][:, 3 + dim_idx])
+
+        # orientation: convert yaw to quaternion
+        num_boxes = anno['boxes_lidar'].shape[0]
+        cos, sin = np.cos(anno['boxes_lidar'][:, 6]), np.sin(anno['boxes_lidar'][:, 6])
+        zeros, ones = np.zeros(num_boxes), np.ones(num_boxes)
+        mat = np.stack([cos,    -sin,   zeros,
+                        sin,    cos,    zeros,
+                        zeros,  zeros,  ones], dim=1).reshape(num_boxes, 3, 3)
+        quat = mat_to_quat(mat)  # (N, 4)
+        for q_idx, q in enumerate(('qw', 'qx', 'qy', 'qz')):
+            out[q].append(quat[:, q_idx])
+
+        # score
+        out['score'].append(anno['score'])
+
+        # log_id
+        out['log_id'].append(np.tile(np.array([anno['metadata']['log_name']]), num_boxes))
+
+        # timestamp_ns
+        out['timestamp_ns'].append(np.tile(np.array([str(anno['metadata']['lidar_timestam_ns'])]), num_boxes))
+
+        # category
+        out['category'].append(detection_cls[anno['pred_labels'].astype(int) - 1])
+
+    return pd.DataFrame(data=out)
+
