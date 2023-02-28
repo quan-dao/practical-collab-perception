@@ -299,7 +299,7 @@ def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.
         zeros, ones = np.zeros(num_boxes), np.ones(num_boxes)
         mat = np.stack([cos,    -sin,   zeros,
                         sin,    cos,    zeros,
-                        zeros,  zeros,  ones], dim=1).reshape(num_boxes, 3, 3)
+                        zeros,  zeros,  ones], axis=1).reshape(num_boxes, 3, 3)
         quat = mat_to_quat(mat)  # (N, 4)
         for q_idx, q in enumerate(('qw', 'qx', 'qy', 'qz')):
             out[q].append(quat[:, q_idx])

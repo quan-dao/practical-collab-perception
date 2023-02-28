@@ -305,7 +305,7 @@ class AV2Dataset(DatasetTemplate):
 
         detection_df = transform_det_annos_to_av2_feather(det_annos, class_names)
 
-        dts, gts, metrics = evaluate(dts, gts, cfg=competition_cfg)  # Evaluate instances.
+        detection_df, gts, metrics = evaluate(detection_df, gts, cfg=competition_cfg)  # Evaluate instances.
         with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
             print(metrics)
 
@@ -313,7 +313,7 @@ class AV2Dataset(DatasetTemplate):
 
     def create_groundtruth_database(self, use_classes: Tuple = None) -> None:
         database_save_path = self.root_path / f'gt_database_{self.num_sweeps}sweeps'
-        database_save_path.mkdir(parents=True, exist_ok=True)
+        # database_save_path.mkdir(parents=True, exist_ok=True)
 
         if use_classes is None:
             use_classes = ('REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLE', 'LARGE_VEHICLE', 'WHEELED_DEVICE', 'BUS', 
