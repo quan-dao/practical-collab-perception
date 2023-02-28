@@ -1,4 +1,4 @@
-CLASS_NAMES: ['REGULAR_VEHICLE', 'PEDESTRIAN']
+CLASS_NAMES: ['REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLIST']
 
 
 DATA_CONFIG:
@@ -6,7 +6,7 @@ DATA_CONFIG:
     DATA_PATH: ../data/argoverse_2
     
     DATA_AUGMENTOR:
-        DISABLE_AUG_LIST: ['placeholder']
+        DISABLE_AUG_LIST: ['placeholder', gt_sampling]
         AUG_CONFIG_LIST:
             - NAME: gt_sampling
               DB_INFO_PATH:
@@ -64,6 +64,7 @@ MODEL:
         CLASS_NAMES_EACH_HEAD: [
             ['REGULAR_VEHICLE'],
             ['PEDESTRIAN'],
+            ['BICYCLIST']
         ]
 
         SHARED_CONV_CHANNEL: 64
