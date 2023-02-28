@@ -26,11 +26,11 @@ POINT_FEATURE_ENCODING: {
 }
 
 DATA_AUGMENTOR:
-    DISABLE_AUG_LIST: ['placeholder', 'gt_sampling']
+    DISABLE_AUG_LIST: ['placeholder']
     AUG_CONFIG_LIST:
         - NAME: gt_sampling
           DB_INFO_PATH:
-            - av2_dbinfos_4sweeps_withmap.pkl
+            - av2_dbinfos_4sweeps.pkl
           PREPARE: {
             filter_by_min_points: ['REGULAR_VEHICLE:5','PEDESTRIAN:5', 'BICYCLIST:5'],
           }

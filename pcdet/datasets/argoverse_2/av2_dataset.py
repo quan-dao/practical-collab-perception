@@ -4,6 +4,8 @@ import numpy as np
 import numpy.linalg as LA
 from pathlib import Path
 from typing import Dict, Tuple, List
+from tqdm import tqdm
+import pickle
 from av2.utils.io import read_city_SE3_ego
 
 from ..dataset import DatasetTemplate
@@ -22,7 +24,7 @@ class AV2Dataset(DatasetTemplate):
         split = 'train' if training else 'val'
         self.num_sweeps = self.dataset_cfg.NUM_SWEEPS
         self.sweep_stride = self.dataset_cfg.SWEEP_STRIDE        
-        self.datadir = Path(self.dataset_cfg.DATA_PATH) / split
+        self.datadir = root_path / split
         
         all_logs_dir = [x for x in self.datadir.iterdir() if x.is_dir()]
         self.log_name_to_log_info_dict = dict()
@@ -67,7 +69,7 @@ class AV2Dataset(DatasetTemplate):
     def __len__(self):
         return len(self.all_lidar_files)
     
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int, **kwargs):
         # extract meta data
         current_lidar_file = self.all_lidar_files[idx]
         current_lidar_timestamp_ns = get_timestamp_from_feather_file(current_lidar_file, return_int=True)
@@ -75,7 +77,8 @@ class AV2Dataset(DatasetTemplate):
         log_info = self.log_name_to_log_info_dict[log_name]
         timestamp_city_SE3_ego_dict = read_city_SE3_ego(log_dir=log_info['log_dir'])
 
-        parser = AV2Parser(log_info, current_lidar_timestamp_ns, self.num_sweeps, self.sweep_stride, self.dataset_cfg.DETECTION_CLS)
+        parser = AV2Parser(log_info, current_lidar_timestamp_ns, self.num_sweeps, self.sweep_stride, 
+                           self.dataset_cfg.DETECTION_CLS if kwargs.get('use_classes', None) is None else kwargs['use_classes'])
         sweep_info = parser.get_sweep_info()
 
         list_points, list_gt_boxes, list_gt_names, list_gt_poses = [], [], [], []
@@ -249,8 +252,9 @@ class AV2Dataset(DatasetTemplate):
             }
         }
         
-        # data augmentation & other stuff
-        data_dict = self.prepare_data(data_dict=data_dict)
+        if not kwargs.get('making_gt_database', False):
+            # data augmentation & other stuff
+            data_dict = self.prepare_data(data_dict=data_dict)
 
         return data_dict
 
@@ -306,3 +310,97 @@ class AV2Dataset(DatasetTemplate):
 
         return '', {'mAP': metrics.loc['AVERAGE_METRICS'].to_numpy().mean().item()}  # TODO
 
+    def create_groundtruth_database(self, use_classes: Tuple = None) -> None:
+        database_save_path = self.root_path / f'gt_database_{self.num_sweeps}sweeps'
+        database_save_path.mkdir(parents=True, exist_ok=True)
+
+        if use_classes is None:
+            use_classes = ('REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLE', 'LARGE_VEHICLE', 'WHEELED_DEVICE', 'BUS', 
+                           'BOX_TRUCK', 'TRUCK', 'MOTORCYCLE', 'BICYCLIST', 'VEHICULAR_TRAILER', 'TRUCK_CAB', 
+                           'MOTORCYCLIST','SCHOOL_BUS', 'WHEELED_RIDER', 'ARTICULATED_BUS', 'RAILED_VEHICLE')
+        
+        all_db_infos = dict()
+
+        for sample_idx in tqdm(range(len(self.all_lidar_files))):
+            data_dict = self.__getitem__(sample_idx, use_classes=use_classes, making_gt_database=True)
+            points = data_dict['points']  # (N_pts, 9) - x, y, z, intensity, time_sec, on_ground, on_drivable || sweep_idx, inst_idx
+            gt_boxes = data_dict['gt_boxes']  # (N_box, 7) - x, y, z, dx, dy, dz, yaw 
+            gt_names = data_dict['gt_names']  # (N_box,)
+            instances_tf = data_dict['instances_tf']  # (N_inst, N_sweeps, 4, 4)
+            # NOTE: N_box == N_inst
+            
+            if gt_boxes.shape[0] == 0:
+                # this sample doesn't have any gt
+                continue
+
+            assert points.shape[1] == 9, f"expect points.shape[1] == 9, get {points.shape[1]}"
+            assert gt_boxes.shape[1] == 7, f"expect gt_boxes.shape[1] == 7, get {gt_boxes.shape[1]}"
+            assert gt_boxes.shape[0] == instances_tf.shape[0],\
+                f"expect gt_boxes.shape[0] == instances_tf.shape[0], get {gt_boxes.shape[0]} != {instances_tf.shape[0]}" 
+            
+            points_inst_idx = points[:, -1].astype(int)
+
+            for cur_inst_idx in range(gt_boxes.shape[0]):
+                filename = f"{sample_idx}_{gt_names[cur_inst_idx]}_{cur_inst_idx}.bin"
+                filepath = database_save_path / filename
+                
+                gt_points = points[points_inst_idx == cur_inst_idx]
+                if gt_points.shape[0] == 0:  # there is no points in this gt_boxes
+                    continue
+                
+                # translate gt_points to frame whose origin @ gt_box center
+                gt_points[:, :3] -= gt_boxes[cur_inst_idx, :3]
+                with open(filepath, 'w') as f:
+                    gt_points.tofile(f)
+
+                db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
+                db_info = {
+                    'name': gt_names[cur_inst_idx], 
+                    'path': db_path, 
+                    'image_idx': sample_idx, 
+                    'gt_idx': cur_inst_idx,
+                    'num_points_in_gt': gt_points.shape[0],
+                    'box3d_lidar': gt_boxes[cur_inst_idx],
+                    'instance_idx': cur_inst_idx,
+                    'instance_tf': instances_tf[cur_inst_idx],  # (max_sweeps, 4, 4)
+                }
+
+                if gt_names[cur_inst_idx] in all_db_infos:
+                    all_db_infos[gt_names[cur_inst_idx]].append(db_info)
+                else:
+                    all_db_infos[gt_names[cur_inst_idx]] = [db_info]
+        
+        for k, v in all_db_infos.items():
+            print('Database %s: %d' % (k, len(v)))
+
+        db_info_save_path = self.root_path / f'av2_dbinfos_{self.num_sweeps}sweeps.pkl'
+        with open(db_info_save_path, 'wb') as f:
+            pickle.dump(all_db_infos, f)
+
+
+if __name__ == '__main__':
+    import yaml
+    import argparse
+    from pathlib import Path
+    from easydict import EasyDict
+
+    from ...utils import common_utils
+
+
+    parser = argparse.ArgumentParser(description='arg parser')
+    parser.add_argument('--cfg_file', type=str, default=None, help='specify the config of dataset')
+
+    parser.add_argument('--create_groundtruth_database', action='store_true')
+    parser.add_argument('--no-create_groundtruth_database', dest='create_groundtruth_database', action='store_false')
+    parser.set_defaults(create_groundtruth_database=False)
+    args = parser.parse_args()
+
+    dataset_cfg = EasyDict(yaml.safe_load(open(args.cfg_file)))
+    ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
+
+    if args.create_groundtruth_database:
+        av2_dataset = AV2Dataset(dataset_cfg, class_names=None, training=True, 
+                                 root_path=ROOT_DIR / 'data' / 'argoverse_2',
+                                 logger=common_utils.create_logger())
+        av2_dataset.create_groundtruth_database()
+        # $ python -m pcdet.datasets.argoverse_2.av2_dataset --cfg_file tools/cfgs/dataset_configs/argoverse2_dataset.yaml --create_groundtruth_database
