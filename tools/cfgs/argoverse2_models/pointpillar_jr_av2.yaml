@@ -10,7 +10,7 @@ MODEL:
 
     VFE:
         NAME: DynPillarVFE
-        NUM_RAW_POINT_FEATURES: 9
+        NUM_RAW_POINT_FEATURES: 7
         WITH_DISTANCE: False
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
