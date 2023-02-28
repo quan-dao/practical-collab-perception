@@ -265,7 +265,7 @@ def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.
             frame_id: LiDAR file
             metadata: {
                 log_name (str):
-                lidar_timestam_ns (int): to be used as the timestamp of a detection
+                lidar_timestamp_ns (int): to be used as the timestamp of a detection
                 num_sweeps (int):
             }
             boxes_lidar (np.ndarray): (N, 7) - x, y, z, dx, dy, dz, yaw
@@ -311,7 +311,7 @@ def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.
         out['log_id'].append(np.tile(np.array([anno['metadata']['log_name']]), num_boxes))
 
         # timestamp_ns
-        out['timestamp_ns'].append(np.tile(np.array([str(anno['metadata']['lidar_timestam_ns'])]), num_boxes))
+        out['timestamp_ns'].append(np.tile(np.array([str(anno['metadata']['lidar_timestamp_ns'])]), num_boxes))
 
         # category
         out['category'].append(detection_cls[anno['pred_labels'].astype(int) - 1])
