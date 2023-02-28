@@ -373,14 +373,17 @@ class DataBaseSampler(object):
 
     def add_sampled_boxes_to_scene(self, data_dict, sampled_gt_boxes, total_valid_sampled_dict,
                                    mv_height=None, sampled_gt_boxes2d=None):
-        gt_boxes = data_dict['gt_boxes']  # (N_b, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
+        gt_boxes = data_dict['gt_boxes']  # (N_b, 7 [+2]) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, [vx, vy]
         gt_names = data_dict['gt_names']  # (N_b,)
+
+        has_velo = gt_boxes.shape[1] == 9
         
         points = data_dict['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
         num_point_features = points.shape[1]
         num_original_instances = data_dict['instances_tf'].shape[0]
 
-        tf_target_from_glob = data_dict['metadata']['tf_target_from_glob']  # (4, 4)
+        if has_velo:
+            tf_target_from_glob = data_dict['metadata']['tf_target_from_glob']  # (4, 4)
 
         obj_points_list = list()
         instances_tf_list = list()
@@ -416,11 +419,12 @@ class DataBaseSampler(object):
             # get sampled gt box & update its instance index
             sampled_box = info['box3d_lidar']   # (9,)
 
-            # map smapled_box 's velocity in global frame to target frame
-            velo = info['velo']  # (3,)
-            velo = tf_target_from_glob[:3, :3] @ velo.reshape(3, 1)
-            # overwrite sampled_box's (vx, vy)
-            sampled_box[-2:] = velo[:2, 0]
+            if has_velo:
+                # map smapled_box 's velocity in global frame to target frame
+                velo = info['velo']  # (3,)
+                velo = tf_target_from_glob[:3, :3] @ velo.reshape(3, 1)
+                # overwrite sampled_box's (vx, vy)
+                sampled_box[-2:] = velo[:2, 0]
 
             # store sampling result
             obj_points_list.append(obj_points)
@@ -442,6 +446,7 @@ class DataBaseSampler(object):
         data_dict['gt_names'] = gt_names
         data_dict['points'] = points
         data_dict['instances_tf'] = instances_tf  # (N_total_inst, max_sweeps, 4, 4)
+        data_dict['metadata']['num_added_instances'] = len(total_valid_sampled_dict)
 
         return data_dict
 
