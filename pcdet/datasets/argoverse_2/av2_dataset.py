@@ -248,7 +248,8 @@ class AV2Dataset(DatasetTemplate):
             'metadata': {
                 'log_name': log_name,
                 'lidar_timestamp_ns': current_lidar_timestamp_ns,  # int
-                'num_sweeps': self.num_sweeps
+                'num_sweeps': self.num_sweeps,
+                'num_original_instances': gt_boxes.shape[0],
             }
         }
         
@@ -345,7 +346,7 @@ class AV2Dataset(DatasetTemplate):
                 filepath = database_save_path / filename
                 
                 gt_points = points[points_inst_idx == cur_inst_idx]
-                if gt_points.shape[0] == 0:  # there is no points in this gt_boxes
+                if gt_points.shape[0] < 5:  # there are not enough points in this gt_boxes
                     continue
                 
                 # translate gt_points to frame whose origin @ gt_box center

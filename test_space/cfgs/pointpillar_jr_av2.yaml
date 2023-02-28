@@ -1,9 +1,42 @@
-CLASS_NAMES: ['REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLIST']
+CLASS_NAMES: ['REGULAR_VEHICLE', 'PEDESTRIAN']
 
 
 DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/argoverse2_dataset.yaml
     DATA_PATH: ../data/argoverse_2
+    
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: gt_sampling
+              DB_INFO_PATH:
+                - av2_dbinfos_4sweeps.pkl
+              PREPARE: {
+                filter_by_min_points: ['REGULAR_VEHICLE:5','PEDESTRIAN:5'],
+              }
+
+              SAMPLE_GROUPS: ['REGULAR_VEHICLE:30','PEDESTRIAN:10']
+
+              NUM_POINT_FEATURES: 7
+              DATABASE_WITH_FAKELIDAR: False
+              REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+              LIMIT_WHOLE_SCENE: True
+              POINT_FEAT_INDEX_OFFSET_FROM_RAW_FEAT:
+                SWEEP_INDEX: 0
+                INSTANCE_INDEX: 1
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.9, 1.1]
+            
+            - NAME: random_world_translation
+              NOISE_TRANSLATE_STD: [0.5, 0.5, 0.5]
+
 
 MODEL:
     NAME: CenterPoint
@@ -31,7 +64,6 @@ MODEL:
         CLASS_NAMES_EACH_HEAD: [
             ['REGULAR_VEHICLE'],
             ['PEDESTRIAN'],
-            ['BICYCLIST'],
         ]
 
         SHARED_CONV_CHANNEL: 64
