@@ -303,7 +303,7 @@ class AV2Dataset(DatasetTemplate):
         split = "val"
         gts = read_all_annotations(dataset_dir=dataset_dir, split=split)  # Contains all annotations in a particular split.
 
-        detection_df = transform_det_annos_to_av2_feather(det_annos, class_names)
+        detection_df = transform_det_annos_to_av2_feather(det_annos, np.array(class_names))
 
         detection_df, gts, metrics = evaluate(detection_df, gts, cfg=competition_cfg)  # Evaluate instances.
         with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
