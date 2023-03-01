@@ -9,8 +9,8 @@ from .. import backbones_2d, backbones_3d, dense_heads, roi_heads
 from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
 from ..model_utils import model_nms_utils
-from _dev_space.tail_cutter import PointAligner
 from _dev_space.pc_corrector import PointCloudCorrector
+from workspace.orcale_corrector import OracleCorrector
 
 
 class Detector3DTemplate(nn.Module):
@@ -23,7 +23,7 @@ class Detector3DTemplate(nn.Module):
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
 
         self.module_topology = [
-            'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
+            'oracle_corrector', 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
             'backbone_2d', 'corrector', 'dense_head', 'point_head', 'roi_head'
         ]
 
@@ -50,6 +50,15 @@ class Detector3DTemplate(nn.Module):
             )
             self.add_module(module_name, module)
         return model_info_dict['module_list']
+    
+    def build_oracle_corrector(self, model_info_dict):
+        if self.model_cfg.get('OracleCorrector', None) is None:
+            return None, model_info_dict
+        
+        oracle_corrector = OracleCorrector()
+
+        model_info_dict['module_list'].append(oracle_corrector)
+        return oracle_corrector, model_info_dict
 
     def build_vfe(self, model_info_dict):
         if self.model_cfg.get('VFE', None) is None:
