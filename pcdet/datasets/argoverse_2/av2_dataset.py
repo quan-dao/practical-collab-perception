@@ -292,24 +292,23 @@ class AV2Dataset(DatasetTemplate):
     def evaluation(self, det_annos: List[Dict], class_names: List[str], **kwargs):
         from av2.evaluation.detection.eval import evaluate
         from av2.evaluation.detection.utils import DetectionCfg
-        from av2.utils.io import read_all_annotations
+        from .av2_utils import read_all_annotations
         import pandas as pd
 
         assert kwargs['eval_metric'] == 'argoverse_2', f"eval_metric {kwargs['eval_metric']} is not supported"
 
         dataset_dir = Path(self.dataset_cfg.DATA_PATH)
-        competition_cfg = DetectionCfg(dataset_dir=dataset_dir)  # Defaults to competition parameters.
+        competition_cfg = DetectionCfg(dataset_dir=(dataset_dir / 'val').resolve())  # Defaults to competition parameters.
 
         split = "val"
         gts = read_all_annotations(dataset_dir=dataset_dir, split=split)  # Contains all annotations in a particular split.
-
         detection_df = transform_det_annos_to_av2_feather(det_annos, np.array(class_names))
-
+        
         detection_df, gts, metrics = evaluate(detection_df, gts, cfg=competition_cfg)  # Evaluate instances.
         with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
             print(metrics)
 
-        return '', {'mAP': metrics.loc['AVERAGE_METRICS'].to_numpy().mean().item()}  # TODO
+        return '', {'mAP': metrics.loc['AVERAGE_METRICS'].to_numpy().mean().item()}
 
     def create_groundtruth_database(self, use_classes: Tuple = None) -> None:
         database_save_path = self.root_path / f'gt_database_{self.num_sweeps}sweeps'

@@ -285,6 +285,10 @@ def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.
 
     # populate output with info from det_annos
     for anno in det_annos:
+        num_boxes = anno['boxes_lidar'].shape[0]
+        if num_boxes == 0:
+            continue
+
         # boxes' translation
         for coord_idx, coord in enumerate(fields[:3]):
             out[coord].append(anno['boxes_lidar'][:, coord_idx])
@@ -294,7 +298,6 @@ def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.
             out[dim].append(anno['boxes_lidar'][:, 3 + dim_idx])
 
         # orientation: convert yaw to quaternion
-        num_boxes = anno['boxes_lidar'].shape[0]
         cos, sin = np.cos(anno['boxes_lidar'][:, 6]), np.sin(anno['boxes_lidar'][:, 6])
         zeros, ones = np.zeros(num_boxes), np.ones(num_boxes)
         mat = np.stack([cos,    -sin,   zeros,
@@ -311,10 +314,35 @@ def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.
         out['log_id'].append(np.tile(np.array([anno['metadata']['log_name']]), num_boxes))
 
         # timestamp_ns
-        out['timestamp_ns'].append(np.tile(np.array([str(anno['metadata']['lidar_timestamp_ns'])]), num_boxes))
+        out['timestamp_ns'].append(np.tile(np.array([anno['metadata']['lidar_timestamp_ns']]), num_boxes))
 
         # category
         out['category'].append(detection_cls[anno['pred_labels'].astype(int) - 1])
 
-    return pd.DataFrame(data=out)
+    for f in fields:
+        out[f] = np.concatenate(out[f], axis=0).tolist()
 
+    df = pd.DataFrame(data=out)
+
+    return df
+
+
+def read_all_annotations(dataset_dir: Path, split: str) -> pd.DataFrame:
+    """Read all annotations for a particular split.
+
+    Args:
+        dataset_dir: Root directory to the dataset.
+        split: Name of the dataset split.
+
+    Returns:
+        Dataframe which contains all of the ground truth annotations from the split.
+    """
+    split_dir = dataset_dir / split
+    annotations_path_list = split_dir.glob("*/annotations.feather")
+
+    annotations_list: List[pd.DataFrame] = []
+    for annotations_path in annotations_path_list:
+        annotations = read_feather(annotations_path)
+        annotations['log_id'] = annotations_path.parts[-2]
+        annotations_list.append(annotations)
+    return pd.concat(annotations_list).reset_index(drop=True)
