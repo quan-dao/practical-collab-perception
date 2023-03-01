@@ -60,7 +60,7 @@ MODEL:
             }
 
         POST_PROCESSING:
-            CALIB_CLS_SCORE: True
+            CALIB_CLS_SCORE: False
             CALIB_CLS_SCORE_ALPHA: 0.5
             SCORE_THRESH: 0.1
             POST_CENTER_LIMIT_RANGE: [-80, -80, -10.0, 80, 80, 10.0]
