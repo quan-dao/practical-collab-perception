@@ -8,7 +8,9 @@ from ..model_utils import centernet_utils
 from ...utils import loss_utils
 from einops import rearrange
 from workspace.box_utils import get_axis_aligned_iou
+from ...datasets.argoverse_2.av2_utils import AV2MapHelper
 import lovely_tensors as lt
+from typing import List, Dict
 
 
 lt.monkey_patch()
@@ -301,7 +303,7 @@ class CenterHead(nn.Module):
         tb_dict['rpn_loss'] = loss.item()
         return loss, tb_dict
 
-    def generate_predicted_boxes(self, batch_size, pred_dicts):
+    def generate_predicted_boxes(self, batch_size, pred_dicts, metadata: List[Dict] = None):
         post_process_cfg = self.model_cfg.POST_PROCESSING
         post_center_limit_range = torch.tensor(post_process_cfg.POST_CENTER_LIMIT_RANGE).cuda().float()
 
@@ -333,6 +335,18 @@ class CenterHead(nn.Module):
                 score_thresh=post_process_cfg.SCORE_THRESH,
                 post_center_limit_range=post_center_limit_range
             )
+
+            # TODO: remove prediction that are not in ROI
+            if metadata is not None:
+                for ii, (final_dict, meta_dict) in enumerate(zip(final_pred_dicts, metadata)):
+                    # get map
+                    map_helper = AV2MapHelper(meta_dict['log_map_dir'], meta_dict['city_SE3_ego'])
+                    # find pred in ROI
+                    mask_pred_in_roi = map_helper.find_points_in_roi(final_dict['pred_boxes'].detach().cpu().numpy())
+                    mask_pred_in_roi = torch.from_numpy(mask_pred_in_roi).float().to(batch_hm.device) == 1
+                    print(f'DEBUG | center_head.py | num in roi: {mask_pred_in_roi.float().sum()} | num total: {mask_pred_in_roi.shape[0]}')
+                    for k in final_dict.keys():
+                        final_pred_dicts[ii][k] = final_dict[k][mask_pred_in_roi]
 
             for k, final_dict in enumerate(final_pred_dicts):
                 final_dict['pred_labels'] = self.class_id_mapping_each_head[idx][final_dict['pred_labels'].long()]
@@ -396,7 +410,8 @@ class CenterHead(nn.Module):
 
         if not self.training or self.predict_boxes_when_training:
             pred_dicts = self.generate_predicted_boxes(
-                data_dict['batch_size'], pred_dicts
+                data_dict['batch_size'], pred_dicts, 
+                data_dict['metadata'] if self.model_cfg.POST_PROCESSING.get('REMOVE_PRED_OUTSIDE_ROI', False) else None
             )
 
             if self.predict_boxes_when_training:

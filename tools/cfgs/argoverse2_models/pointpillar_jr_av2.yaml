@@ -9,7 +9,7 @@ MODEL:
 
     VFE:
         NAME: DynPillarVFE
-        NUM_RAW_POINT_FEATURES: 7
+        NUM_RAW_POINT_FEATURES: 9
         WITH_DISTANCE: False
         USE_ABSLOTE_XYZ: True
         USE_NORM: True
@@ -60,8 +60,9 @@ MODEL:
             }
 
         POST_PROCESSING:
+            REMOVE_PRED_OUTSIDE_ROI: False
             CALIB_CLS_SCORE: False
-            CALIB_CLS_SCORE_ALPHA: 0.5
+            CALIB_CLS_SCORE_ALPHA: 0.3
             SCORE_THRESH: 0.1
             POST_CENTER_LIMIT_RANGE: [-80, -80, -10.0, 80, 80, 10.0]
             MAX_OBJ_PER_SAMPLE: 500

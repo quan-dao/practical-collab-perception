@@ -256,6 +256,24 @@ class AV2MapHelper(object):
         mask_on_drivable_area = self.avm.raster_drivable_area_layer.get_raster_values_at_coords(points_city, fill_value=0.0)
 
         return mask_on_drivable_area.astype(float)
+
+    def find_points_in_roi(self, points: np.ndarray) -> np.ndarray:
+        """
+        Given a set of points, find which poins are in ROI (where annotation are provided)
+
+        Args:
+            points: (N, 3 + C) - x, y, z, C features (xyz in "src" frame)
+
+        Returns:
+            mask_on_roi: (N,) - 1 if a point in ROI, 0 otherwise
+        """
+        # map points from src to city frame
+        points_city = apply_SE3(self.city_SE3_src, points, inplace=False)  # (N, 3) - x, y, z in city frame
+        
+        # query map for points' drivable are status
+        mask_in_roi = self.avm.raster_roi_layer.get_raster_values_at_coords(points_city, fill_value=0.0)
+
+        return mask_in_roi.astype(float)
     
 
 def transform_det_annos_to_av2_feather(det_annos: List[Dict], detection_cls: np.ndarray) -> pd.DataFrame: 

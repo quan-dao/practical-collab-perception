@@ -247,6 +247,8 @@ class AV2Dataset(DatasetTemplate):
             'frame_id': sweep_info['sweep_files'][-1].stem,  # path to lidar file
             'metadata': {
                 'log_name': log_name,
+                'log_map_dir': log_info['map_dir'],  # to make AV2MapHelper
+                'city_SE3_ego': timestamp_city_SE3_ego_dict[current_lidar_timestamp_ns].transform_matrix,  # to make AV2MapHelper
                 'lidar_timestamp_ns': current_lidar_timestamp_ns,  # int
                 'num_sweeps': self.num_sweeps,
                 'num_original_instances': gt_boxes.shape[0],
