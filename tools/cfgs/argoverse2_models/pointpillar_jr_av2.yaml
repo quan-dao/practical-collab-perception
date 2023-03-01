@@ -1,6 +1,5 @@
 CLASS_NAMES: ['REGULAR_VEHICLE', 'PEDESTRIAN', 'BICYCLIST']
 
-
 DATA_CONFIG:
     _BASE_CONFIG_: ./cfgs/dataset_configs/argoverse2_dataset.yaml
     DATASET_STRIDE: 5

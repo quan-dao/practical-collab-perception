@@ -1,6 +1,6 @@
 DATASET: 'AV2Dataset'
 DATA_PATH: '../data/argoverse_2'
-DATASET_STRIDE: 5
+DATASET_STRIDE: 1
 
 DATA_SPLIT: {
     'train': train,
