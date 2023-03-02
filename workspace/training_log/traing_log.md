@@ -103,3 +103,22 @@
     * NDS: 0.6148
     * peak at epoch 24
     * [details](../raw_log/pointpillar_jr_withmap/train_1634100.err)
+
+
+## commit: 9ba653b
+### Features
+* base features := commit `eae1cca`
+* [new] add `OracleCorrector` module
+
+### NuScenes mAP (nusc style) & NDS
+* num epochs: 20 - no calib
+    * mAP: 0.5422
+    * NDS: 0.5273 (no shadow -> bad velo estim)
+    * peak at epoch 20
+    * [details](../raw_log/pointpillar_jr_withmap/eval_1830535.err)
+
+* num epochs: 20 - calib alpha 0.3
+    * mAP: 0.5482
+    * NDS: 0.5314 (no shadow -> bad velo estim)
+    * peak at epoch 20
+    * [details](../raw_log/pointpillar_jr_withmap/eval_1832359.err)
