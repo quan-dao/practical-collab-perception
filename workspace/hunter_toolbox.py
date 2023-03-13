@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange
 from typing import List, Dict
 
-from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, bev_scatter
+from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, bev_scatter, quat2mat
 
 
 def interpolate_points_feat_from_bev_img(bev_img: torch.Tensor, 
