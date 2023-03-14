@@ -17,7 +17,7 @@ class HunterObjectHead(nn.Module):
     def __init__(self, num_point_features: int, mlp_hidden_channels: List[int] = None, use_drop_out: bool = False):
         super().__init__()
         _make_mlp = partial(nn_make_mlp, hidden_channels=mlp_hidden_channels, use_drop_out=use_drop_out)
-        self.num_local_feat = 2 * num_point_features  # hard coded because locals_feat = torch.cat([locals_feat, locals_shape_encoding], dim=1)
+        self.num_local_feat = num_point_features  # hard coded because locals_feat = locals_feat + locals_shape_encoding
 
         self.points_shape_encoder = _make_mlp(3, num_point_features, is_head=False)
         
@@ -46,7 +46,7 @@ class HunterObjectHead(nn.Module):
         
         # compute raw locals feat
         locals_feat = torch_scatter.scatter_max(fg_feat, meta['locals2fg'], dim=0)[0]  # (N_local, C_pts)
-        locals_feat = torch.cat([locals_feat, locals_shape_encoding], dim=1)  # (N_local, C_local)
+        locals_feat = locals_feat + locals_shape_encoding  # (N_local, C_local)
 
         # compute globals stuff
         globals_feat = torch_scatter.scatter_max(locals_feat, meta['inst2locals'], dim=0)[0]  # (N_global, C_local)
@@ -117,6 +117,7 @@ class HunterJr(nn.Module):
 
         num_bev_features_ = model_cfg.CONV_INPUT_CHANNELS
         self.num_points_feat = model_cfg.CONV_INPUT_CHANNELS
+        num_locals_feat = self.num_points_feat
 
         # Stem input
         # -------------
@@ -125,7 +126,7 @@ class HunterJr(nn.Module):
         
         # Point Head to predict point-wise cls, embed, flow3d
         # -----------------------------------------------------
-        self.point_head = HunterPointHead(num_bev_features_, 2 * num_bev_features_, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
+        self.point_head = HunterPointHead(num_bev_features_, num_locals_feat, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
 
         # Object Head to predict locals_feat, locals_tf
         # -----------------------------------------------------
