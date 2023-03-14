@@ -324,6 +324,12 @@ class HunterJr(nn.Module):
 
             target_dict = self.assign_target(batch_dict, meta)
 
+            # save target_dict & points (before being corrected) for debugging
+            if self.model_cfg.get('DEBUG', False):
+                batch_dict['target_dict'] = target_dict
+                batch_dict['points_original'] = torch.clone(points)
+                batch_dict['hunter_meta'] = meta
+                
             # save prediction & target for computing loss
             meta['fg'] = fg
             self.forward_return_dict.update({

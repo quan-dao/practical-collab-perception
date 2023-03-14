@@ -16,6 +16,14 @@ class CenterPoint(Detector3DTemplate):
             ret_dict = {
                 'loss': loss
             }
+
+            # save target_dict & points (before being corrected) for debugging
+            if self.model_cfg.get('CORRECTOR', None) is not None and self.model_cfg.CORRECTOR.get('DEBUG', False):
+                ret_dict['target_dict'] = batch_dict['target_dict']
+                ret_dict['points_original'] = batch_dict['points_original']
+                ret_dict['gt_boxes'] = batch_dict['gt_boxes']
+                ret_dict['hunter_meta'] = batch_dict['hunter_meta']
+
             return ret_dict, tb_dict, disp_dict
         else:
             pred_dicts, recall_dicts = self.post_processing(batch_dict)
