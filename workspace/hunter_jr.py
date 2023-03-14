@@ -138,7 +138,7 @@ class HunterJr(nn.Module):
         # -----------------------------------------------------
         self.thresh_point_cls_prob = model_cfg.get('THRESHOLD_POINT_CLS_PROB', 0.3)
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
-        self.conv_weightor = conv_bn_relu(2 * num_bev_features_, 2, padding=1, norm_layer=norm_layer),  # 2 set of weights, 1 for each BEV image
+        self.conv_weightor = conv_bn_relu(2 * num_bev_features_, 2, padding=1, norm_layer=norm_layer)  # 2 set of weights, 1 for each BEV image
 
         self.forward_return_dict = dict()
 
