@@ -11,6 +11,7 @@ from ..backbones_3d import pfe, vfe
 from ..model_utils import model_nms_utils
 from _dev_space.pc_corrector import PointCloudCorrector
 from workspace.orcale_corrector import OracleCorrector
+from workspace.hunter_jr import HunterJr
 
 
 class Detector3DTemplate(nn.Module):
@@ -120,8 +121,10 @@ class Detector3DTemplate(nn.Module):
     def build_corrector(self, model_info_dict):
         if self.model_cfg.get('CORRECTOR', None) is None:
             return None, model_info_dict
+        
+        corrector_module = HunterJr if self.model_cfg.CORRECTOR.get('NAME', 'HunterJr') == 'HunterJr' else PointCloudCorrector
 
-        corrector = PointCloudCorrector(
+        corrector = corrector_module(
             model_cfg=self.model_cfg.CORRECTOR,
             num_bev_features=model_info_dict['num_bev_features'],
             voxel_size=model_info_dict['voxel_size'],

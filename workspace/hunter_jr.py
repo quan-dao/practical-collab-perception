@@ -8,8 +8,8 @@ from functools import partial
 from einops import rearrange
 
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from sc_conv import SCBottleneck
-from hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat
+from workspace.sc_conv import SCBottleneck, conv_bn_relu
+from workspace.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat
 
 
 class HunterObjectHead(nn.Module):
@@ -27,9 +27,6 @@ class HunterObjectHead(nn.Module):
         self.local_tf_decoder = _make_mlp(self.num_local_feat, 7)
         # in := local_feat | global_feat | local_centroid | target_local_centroid
         # out == 7 := 3 (translation vector)  + 4 (quaternion)
-
-        self.instance_motion_seg = _make_mlp(self.num_local_feat + 6, 1)
-        # in := global_feat | init_local_centroid | target_local_centroid
     
     def forward(self, fg_xyz: torch.Tensor, fg_feat: torch.Tensor, meta: Dict[str, torch.Tensor]):
         """
@@ -43,7 +40,7 @@ class HunterObjectHead(nn.Module):
         # compute locals' shape encoding
         locals_centroid = torch_scatter.scatter_mean(fg_xyz, meta['locals2fg'], dim=0)  # (N_local, 3)
         centered_fg = fg_xyz - locals_centroid[meta['locals2fg']]  # (N_fg, 3)
-        locals_shape_encoding = torch_scatter.scatter_max(self.local_shape_encoder(centered_fg), 
+        locals_shape_encoding = torch_scatter.scatter_max(self.points_shape_encoder(centered_fg), 
                                                           meta['locals2fg'], dim=0)[0]  # (N_local, C_pts)
         
         # compute raw locals feat
@@ -103,37 +100,53 @@ class HunterPointHead(nn.Module):
         
 
 class HunterJr(nn.Module):
-    def __init__(self, cfg: edict, num_bev_features_in: int, voxel_size: List, point_cloud_range: List):
+    def __init__(self, model_cfg: edict, num_bev_features: int, voxel_size: List, point_cloud_range: List):
         super().__init__()
-        self.model_cfg = cfg
-        self.num_sweeps = cfg.get('NUM_SWEEPS')
-        self.bev_image_stride = cfg.get('BEV_IMAGE_STRIDE')
+        self.model_cfg = model_cfg
+        self.num_sweeps = model_cfg.get('NUM_SWEEPS')
+        self.bev_image_stride = model_cfg.get('BEV_IMAGE_STRIDE')
         self.voxel_size = torch.tensor(voxel_size).float().cuda()  # [vox_x, vox_y, vox_z]
         self.point_cloud_range = torch.tensor(point_cloud_range).float().cuda()
 
-        self._meta_pts_feat_loc_sweep_idx = cfg.get('META_POINTS_FEAT_LOCATION_SWEEP_IDX', -2)
-        self._meta_pts_feat_loc_inst_idx = cfg.get('META_POINTS_FEAT_LOCATION_INSTANCE_IDX', -1)
+        self._meta_pts_feat_loc_sweep_idx = model_cfg.get('META_POINTS_FEAT_LOCATION_SWEEP_IDX', -2)
+        self._meta_pts_feat_loc_inst_idx = model_cfg.get('META_POINTS_FEAT_LOCATION_INSTANCE_IDX', -1)
 
-        self.conv_input = SCBottleneck(num_bev_features_in, cfg.CONV_INPUT_CHANNELS, norm_layer=partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01))
+        num_bev_features_ = model_cfg.CONV_INPUT_CHANNELS
+        self.num_points_feat = model_cfg.CONV_INPUT_CHANNELS
+
+        # Stem input
+        # -------------
+        norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
+        self.conv_input = nn.Sequential(
+            conv_bn_relu(num_bev_features, num_bev_features_, padding=1, norm_layer=norm_layer),
+            SCBottleneck(num_bev_features_, num_bev_features_, norm_layer=norm_layer)
+        )
         
-        num_bev_features = cfg.CONV_INPUT_CHANNELS
+        # Point Head to predict point-wise cls, embed, flow3d
+        # -----------------------------------------------------
+        self.point_head = HunterPointHead(num_bev_features_, 2 * num_bev_features_, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
 
-        self.point_head = HunterPointHead(num_bev_features, 2 * num_bev_features, cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
-
+        # Object Head to predict locals_feat, locals_tf
+        # -----------------------------------------------------
         if self.training:
-            self.object_head = HunterObjectHead(num_bev_features, cfg.get('OBJ_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
+            self.object_head = HunterObjectHead(num_bev_features_, model_cfg.get('OBJ_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
         else:
             self.object_head = None
 
-        self.thresh_point_cls_prob = cfg.get('THRESHOLD_POINT_CLS_PROB', 0.3)
+        # Weightor to compute weight for fusing corrected bev img & original bev img
+        # -----------------------------------------------------
+        self.thresh_point_cls_prob = model_cfg.get('THRESHOLD_POINT_CLS_PROB', 0.3)
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
         self.conv_weightor = nn.Sequential(
-            SCBottleneck(2 * num_bev_features, num_bev_features, norm_layer=norm_layer),
-            SCBottleneck(num_bev_features, 2, norm_layer=norm_layer)  # 2 set of weights, 1 for each BEV image
+            SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
+            SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
+            conv_bn_relu(2 * num_bev_features_, 2, padding=1, norm_layer=norm_layer),  # 2 set of weights, 1 for each BEV image
         )
 
         self.forward_return_dict = dict()
 
+        # Loss fnc
+        # ---------
         self.loss_points_seg = CELovaszLoss(num_classes=3)
 
     def _build_meta(self, foreground: torch.Tensor, max_num_instances_in_this_batch: int) -> Dict[str, torch.Tensor]:
@@ -191,8 +204,9 @@ class HunterJr(nn.Module):
         mask_locals_mos = mask_inst_mos[meta['inst2locals']]
         mask_fg_mos = mask_locals_mos[meta['locals2fg']]
         if torch.any(mask_fg):
-            fg_cls = mask_fg.new_zeros(meta['num_fg'], 2).float()  # static fg | dynamic fg
-            fg_cls.scatter_(dim=1, index=mask_fg_mos.view(meta['num_fg'], 1).long(), value=1.0)
+            num_fg = int(mask_fg.sum().item())
+            fg_cls = mask_fg.new_zeros(num_fg, 2).float()  # static fg | dynamic fg
+            fg_cls.scatter_(dim=1, index=mask_fg_mos.view(num_fg, 1).long(), value=1.0)
             points_cls[mask_fg, 1:] = fg_cls
         
         # fg 's instance embedding
@@ -228,6 +242,7 @@ class HunterJr(nn.Module):
     
     def correct_bev_image(self, 
                           points: torch.Tensor, 
+                          points_feat: torch.Tensor,
                           points_bev_coord: torch.Tensor, 
                           points_cls_logit: torch.Tensor, 
                           points_flow3d: torch.Tensor, 
@@ -235,7 +250,7 @@ class HunterJr(nn.Module):
         
         points_all_cls_prob = nn.functional.sigmoid(points_cls_logit)  # (N, 3)
         points_cls_prob, points_cls_indices = torch.max(points_all_cls_prob, dim=1)  # (N,), (N,)
-        mask_dyn_fg = torch.logical_and(points_cls_prob > self.thresh_cls_prob, 
+        mask_dyn_fg = torch.logical_and(points_cls_prob > self.thresh_point_cls_prob, 
                                         points_cls_indices == 2)  # (N,)
         
         # mutate xyz-coord of points where mask_dyn_fg == True using predict offset
@@ -318,7 +333,7 @@ class HunterJr(nn.Module):
             })
         
         # correct BEV image
-        fused_bev_img = self.correct_bev_image(points, points_bev_coord, points_cls_logit, points_flow3d, bev_img)
+        fused_bev_img = self.correct_bev_image(points, points_feat, points_bev_coord, points_cls_logit, points_flow3d, bev_img)
 
         # TODO: distill BEV image here
 
@@ -328,7 +343,9 @@ class HunterJr(nn.Module):
 
         # remove gt_boxes outside range
         if self.training:
-            batch_dict = remove_gt_boxes_outside_range(batch_dict)
+            batch_dict = remove_gt_boxes_outside_range(batch_dict, self.point_cloud_range)
+
+        return batch_dict
 
     def get_training_loss(self, tb_dict=None):
         pred = self.forward_return_dict['prediction']
