@@ -9,7 +9,8 @@ from einops import rearrange
 
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
 from workspace.sc_conv import SCBottleneck, conv_bn_relu
-from workspace.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat
+from workspace.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat, \
+    hard_mining_regression_loss
 
 
 class HunterObjectHead(nn.Module):
@@ -95,7 +96,7 @@ class HunterPointHead(nn.Module):
         
         fg_local_feat = pts_local_feat[meta['mask_fg']]  # (N_fg, C_locals)
         label_fg_local_feat = locals_feat[meta['locals2fg']]  # (N_fg, C_locals)
-        loss = F.mse_loss(fg_local_feat, label_fg_local_feat, reduction='mean')
+        loss = F.smooth_l1_loss(fg_local_feat, label_fg_local_feat, reduction='none').sum(dim=1).mean() * 0.1
         return loss
         
 
@@ -219,7 +220,7 @@ class HunterJr(nn.Module):
         # fg 's flow3d
         # ---
         fg = points[mask_fg]  # (N_fg, C)
-        if fg.shape[0] > 0 and torch.any(points_cls[:, 2] > 0):  # if there are any dynamic fg
+        if fg.shape[0] > 0:  # if there are any dynamic fg
             # broadcast locals_tf -> fg
             fg_tf = locals_tf[meta['locals2fg']]  # (N_fg, 3, 4)
             # correct fg
@@ -329,7 +330,7 @@ class HunterJr(nn.Module):
                 batch_dict['target_dict'] = target_dict
                 batch_dict['points_original'] = torch.clone(points)
                 batch_dict['hunter_meta'] = meta
-                
+
             # save prediction & target for computing loss
             meta['fg'] = fg
             self.forward_return_dict.update({
@@ -376,18 +377,19 @@ class HunterJr(nn.Module):
                                                       reduction='none').sum(dim=1).mean()
         tb_dict['l_points_embed'] = l_points_embed.item()
 
-        # [dynamic foreground] points offset
+        # [foreground] points offset
         # ---
         if target['fg_offset'] is not None:
             pred_fg_offset = pred['points_flow3d'][mask_fg]  # (N_fg, 3)
-            l_dyn_fg_offset = nn.functional.smooth_l1_loss(pred_fg_offset, target['fg_offset'], reduction='none')  # (N_fg, 3)
-            
+            loss_fg_offset = nn.functional.smooth_l1_loss(pred_fg_offset, target['fg_offset'], reduction='none').sum(dim=1)  # (N_fg,)
             mask_dyn_fg = target['points_cls'][mask_fg, 2] > 0  # (N_fg,)
-            l_dyn_fg_offset = torch.sum(l_dyn_fg_offset * mask_dyn_fg.float().unsqueeze(1), dim=1).mean()
-
+            l_fg_offset = hard_mining_regression_loss(loss_fg_offset, 
+                                                      mask_dyn_fg, 
+                                                      device, 
+                                                      self.model_cfg.get('LOSS_HARD_MINING_STATIC_FG_COEF', 1))
         else:
-            l_dyn_fg_offset = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
-        tb_dict['l_dyn_fg_offset'] = l_dyn_fg_offset.item()
+            l_fg_offset = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+        tb_dict['l_fg_offset'] = l_fg_offset.item()
 
         # [dynamic locals] locals_tf
         # ---
@@ -396,17 +398,25 @@ class HunterJr(nn.Module):
             target_dyn_locals_tf = target['locals_tf'][mask_locals_mos]  # (N_dyn_locals, 3, 4)
 
             # translation
-            pred_dyn_locals_trans = pred['locals_tf'][mask_locals_mos, :3]  # (N_dyn_locals, 3)
-            l_locals_transl = nn.functional.smooth_l1_loss(pred_dyn_locals_trans, target_dyn_locals_tf[:, :, -1],
-                                                           reduction='none').sum(dim=1).mean()
+            # ---
+            loss_locals_transl = F.smooth_l1_loss(pred['locals_tf'][:, :3], 
+                                                  target['locals_tf'][:, :, -1], reduction='none').sum(dim=1)  # (N_locals)
+            l_locals_transl = hard_mining_regression_loss(loss_locals_transl, 
+                                                          mask_locals_mos, 
+                                                          device, 
+                                                          self.model_cfg.get('LOSS_HARD_MINING_STATIC_LOCALS_COEF', 1))
 
             # rotation
-            pred_locals_rot = quat2mat(pred['locals_tf'][:, 3:])  # (N_local, 3, 3)
-            pred_dyn_locals_rot = pred_locals_rot[mask_locals_mos]  # (N_dyn_locals, 3, 3)
-            l_locals_rot = torch.linalg.norm(pred_dyn_locals_rot - target_dyn_locals_tf[:, :, :3],
-                                             dim=(1, 2), ord='fro').mean()
+            # ---
+            pred_locals_rot = quat2mat(pred['locals_tf'][:, 3:])  # (N_locals, 3, 3)
+            loss_locals_rot = torch.linalg.norm(pred_locals_rot - target['locals_tf'][:, :, :3], dim=(1, 2), ord='fro')  # (N_locals)
+            l_locals_rot = hard_mining_regression_loss(loss_locals_rot,
+                                                       mask_locals_mos,
+                                                       device, 
+                                                       self.model_cfg.get('LOSS_HARD_MINING_STATIC_LOCALS_COEF', 1))
 
             # reconstruction
+            # ---
             mask_fg_mos = mask_locals_mos[meta['locals2fg']]  # (N_fg,)
             dyn_fg_xyz = meta['fg'][mask_fg_mos, 1: 4]  # (N_dyn_fg, 3)
 
@@ -423,7 +433,7 @@ class HunterJr(nn.Module):
             corrected_dyn_fg = torch.matmul(pred_dyn_fg_tf[:, :3, :3], dyn_fg_xyz.unsqueeze(-1)).squeeze(-1) + \
                 pred_dyn_fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
 
-            l_recon = nn.functional.smooth_l1_loss(corrected_dyn_fg, gt_corrected_dyn_fg, reduction='none').sum(dim=1).mean()
+            l_recon = nn.functional.smooth_l1_loss(corrected_dyn_fg, gt_corrected_dyn_fg, reduction='none').sum(dim=1).mean() * 0.1
         else:
             l_recon = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
 
@@ -435,7 +445,7 @@ class HunterJr(nn.Module):
 
         tb_dict['l_dtl_locals_feat'] = self.forward_return_dict['loss_dtl_locals_feat'].item()
 
-        loss = l_points_cls + l_points_embed + l_dyn_fg_offset + \
+        loss = l_points_cls + l_points_embed + l_fg_offset + \
                 l_locals_transl + l_locals_rot + l_recon + \
                 self.forward_return_dict['loss_dtl_locals_feat']
         

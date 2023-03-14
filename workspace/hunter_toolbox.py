@@ -90,3 +90,45 @@ def remove_gt_boxes_outside_range(batch_dict: Dict[str, torch.Tensor], point_clo
     batch_dict.pop('gt_boxes')
     batch_dict['gt_boxes'] = batch_valid_gt_boxes
     return batch_dict
+
+
+def hard_mining_regression_loss(loss_all: torch.Tensor, 
+                              mask_positive: torch.Tensor, 
+                              device: torch.device, 
+                              negative_to_positve_ratio: int = 1,
+                              num_negtiave_when_no_positive: int = 100):
+    """
+    Args:
+        loss_all: (N,)
+        mask_postive: (N,)
+        device:
+        negative_to_positve_ratio:
+        num_negtiave_when_no_positive:
+    """
+    num_positive = int(mask_positive.sum().item())
+    if num_positive == 0:
+        # all negative
+        if num_negtiave_when_no_positive < loss_all.shape[0]:
+            top_loss, _ = torch.topk(loss_all, k=num_negtiave_when_no_positive)
+            return top_loss.mean()
+        else:
+            return loss_all.mean()
+
+    loss_positive = loss_all[mask_positive].mean()
+
+    num_negative = loss_all.shape[0] - num_positive
+    if num_negative > 0:
+        num_chosen_negative = min(num_positive * negative_to_positve_ratio, num_negative)
+        # extract top "num_chosen_negative" loss
+        if num_chosen_negative < num_negative:
+            top_loss_negative, _ = torch.topk(loss_all[torch.logical_not(mask_positive)], k=num_chosen_negative)
+        else:
+            top_loss_negative = loss_all[torch.logical_not]
+        
+        loss_negative = top_loss_negative.mean()
+    else:
+        # no negative
+        loss_negative = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+
+    loss = loss_positive + loss_negative
+    return loss
