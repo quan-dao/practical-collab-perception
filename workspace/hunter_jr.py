@@ -76,16 +76,19 @@ class HunterPointHead(nn.Module):
 
         self.local_feat_predictor = _make_mlp(num_point_features, num_local_features, is_head=False)
 
-        self.seg = _make_mlp(num_local_features, 3)
-        self.reg_flow3d = _make_mlp(num_local_features, 3)
-        self.instance_embedding = _make_mlp(num_local_features, 2)
+        num_point_final_feat = num_point_features + num_local_features
+        self.seg = _make_mlp(num_point_final_feat, 3)
+        self.reg_flow3d = _make_mlp(num_point_final_feat, 3)
+        self.instance_embedding = _make_mlp(num_point_final_feat, 2)
     
     def forward(self, points_feat: torch.Tensor) -> Tuple[torch.Tensor]:
         pts_local_feat = self.local_feat_predictor(points_feat)  # (N, C_local)
+        
+        pts_final_feat = torch.cat([points_feat, pts_local_feat], dim=1)
 
-        points_cls_logit = self.seg(pts_local_feat)  # (N, 3)
-        points_flow3d = self.reg_flow3d(pts_local_feat)  # (N, 3)
-        points_inst_embed = self.instance_embedding(pts_local_feat)  # (N, 2)
+        points_cls_logit = self.seg(pts_final_feat)  # (N, 3)
+        points_flow3d = self.reg_flow3d(pts_final_feat)  # (N, 3)
+        points_inst_embed = self.instance_embedding(pts_final_feat)  # (N, 2)
 
         return pts_local_feat, points_cls_logit, points_flow3d, points_inst_embed
     
@@ -139,7 +142,6 @@ class HunterJr(nn.Module):
         self.thresh_point_cls_prob = model_cfg.get('THRESHOLD_POINT_CLS_PROB', 0.3)
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
         self.conv_weightor = nn.Sequential(
-            SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
             SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
             conv_bn_relu(2 * num_bev_features_, 2, padding=1, norm_layer=norm_layer),  # 2 set of weights, 1 for each BEV image
         )
