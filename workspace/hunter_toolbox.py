@@ -123,7 +123,7 @@ def hard_mining_regression_loss(loss_all: torch.Tensor,
         if num_chosen_negative < num_negative:
             top_loss_negative, _ = torch.topk(loss_all[torch.logical_not(mask_positive)], k=num_chosen_negative)
         else:
-            top_loss_negative = loss_all[torch.logical_not]
+            top_loss_negative = loss_all[torch.logical_not(mask_positive)]
         
         loss_negative = top_loss_negative.mean()
     else:
