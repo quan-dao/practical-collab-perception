@@ -3,7 +3,6 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-import numba
 
 
 def gaussian_radius(height, width, min_overlap=0.5):
@@ -77,7 +76,6 @@ def _nms(heat, kernel=3):
     return heat * keep
 
 
-@numba.jit(nopython=True)
 def circle_nms(dets, thresh):
     x1 = dets[:, 0]
     y1 = dets[:, 1]
