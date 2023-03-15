@@ -55,7 +55,7 @@ def nn_make_mlp(c_in: int, c_out: int, hidden_channels: List[int] = None, is_hea
         if use_drop_out:
             layers.append(nn.Dropout(p=0.5))
         
-        is_last = c_idx == len(channels) - 2
+        is_last = c_idx == len(channels) - 1
         
         if is_last:
             if is_head:
