@@ -419,9 +419,7 @@ class HunterJr(nn.Module):
 
             # reconstruction
             # ---
-            mask_fg_mos = mask_locals_mos[meta['locals2fg']]  # (N_fg,)
-            
-            fg_xyz = meta['fg'][mask_fg_mos, 1: 4]  # (N_dyn_fg, 3)
+            fg_xyz = meta['fg'][:, 1: 4]  # (N_dyn_fg, 3)
 
             fg_tf = target['locals_tf'][meta['locals2fg']]  # (N_fg, 3, 4)
             gt_corrected_fg = torch.matmul(fg_tf[:, :3, :3], fg_xyz.unsqueeze(-1)).squeeze(-1) + fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
@@ -430,11 +428,12 @@ class HunterJr(nn.Module):
             pred_fg_tf = pred_local_tf[meta['locals2fg']]
             corrected_fg = torch.matmul(pred_fg_tf[:, :3, :3], fg_xyz.unsqueeze(-1)).squeeze(-1) + pred_fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
 
-            loss_recon = nn.functional.smooth_l1_loss(corrected_fg, gt_corrected_fg, reduction='none').sum(dim=1).mean() * 0.1
+            loss_recon = nn.functional.smooth_l1_loss(corrected_fg, gt_corrected_fg, reduction='none').sum(dim=1) 
+            mask_fg_mos = mask_locals_mos[meta['locals2fg']]  # (N_fg,)
             l_recon = hard_mining_regression_loss(loss_recon, 
-                                                  mask_dyn_fg, 
+                                                  mask_fg_mos, 
                                                   device, 
-                                                  self.model_cfg.get('LOSS_HARD_MINING_STATIC_FG_COEF', 1))
+                                                  self.model_cfg.get('LOSS_HARD_MINING_STATIC_FG_COEF', 1)) * 0.1
         else:
             l_locals_transl = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
             l_locals_rot = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
