@@ -398,9 +398,7 @@ class HunterJr(nn.Module):
         # [dynamic locals] locals_tf
         # ---
         mask_locals_mos = target['meta']['mask_locals_mos']
-        if torch.any(mask_locals_mos):
-            target_dyn_locals_tf = target['locals_tf'][mask_locals_mos]  # (N_dyn_locals, 3, 4)
-
+        if torch.any(mask_fg):
             # translation
             # ---
             loss_locals_transl = F.smooth_l1_loss(pred['locals_tf'][:, :3], 
@@ -422,23 +420,24 @@ class HunterJr(nn.Module):
             # reconstruction
             # ---
             mask_fg_mos = mask_locals_mos[meta['locals2fg']]  # (N_fg,)
-            dyn_fg_xyz = meta['fg'][mask_fg_mos, 1: 4]  # (N_dyn_fg, 3)
+            
+            fg_xyz = meta['fg'][mask_fg_mos, 1: 4]  # (N_dyn_fg, 3)
 
             fg_tf = target['locals_tf'][meta['locals2fg']]  # (N_fg, 3, 4)
-            dyn_fg_tf = fg_tf[mask_fg_mos]  # (N_dyn_fg, 3, 4)
-
-            gt_corrected_dyn_fg = torch.matmul(dyn_fg_tf[:, :3, :3], dyn_fg_xyz.unsqueeze(-1)).squeeze(-1) + \
-                  dyn_fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
+            gt_corrected_fg = torch.matmul(fg_tf[:, :3, :3], fg_xyz.unsqueeze(-1)).squeeze(-1) + fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
 
             pred_local_tf = torch.cat((pred_locals_rot, pred['locals_tf'][:, :3].unsqueeze(-1)), dim=-1)  # (N_local, 3, 4)
             pred_fg_tf = pred_local_tf[meta['locals2fg']]
-            pred_dyn_fg_tf = pred_fg_tf[mask_fg_mos]
+            corrected_fg = torch.matmul(pred_fg_tf[:, :3, :3], fg_xyz.unsqueeze(-1)).squeeze(-1) + pred_fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
 
-            corrected_dyn_fg = torch.matmul(pred_dyn_fg_tf[:, :3, :3], dyn_fg_xyz.unsqueeze(-1)).squeeze(-1) + \
-                pred_dyn_fg_tf[:, :3, -1]  # (N_dyn_fg, 3)
-
-            l_recon = nn.functional.smooth_l1_loss(corrected_dyn_fg, gt_corrected_dyn_fg, reduction='none').sum(dim=1).mean() * 0.1
+            loss_recon = nn.functional.smooth_l1_loss(corrected_fg, gt_corrected_fg, reduction='none').sum(dim=1).mean() * 0.1
+            l_recon = hard_mining_regression_loss(loss_recon, 
+                                                  mask_dyn_fg, 
+                                                  device, 
+                                                  self.model_cfg.get('LOSS_HARD_MINING_STATIC_FG_COEF', 1))
         else:
+            l_locals_transl = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
+            l_locals_rot = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
             l_recon = torch.tensor(0.0, dtype=torch.float, requires_grad=True, device=device)
 
         tb_dict.update({
