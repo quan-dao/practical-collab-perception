@@ -8,7 +8,7 @@ from functools import partial
 from einops import rearrange
 
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from workspace.sc_conv import conv_bn_relu
+from workspace.sc_conv import conv_bn_relu, SCBottleneck
 from workspace.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat, \
     hard_mining_regression_loss
 
@@ -123,7 +123,10 @@ class HunterJr(nn.Module):
         # Stem input
         # -------------
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
-        self.conv_input = conv_bn_relu(num_bev_features, num_bev_features_, padding=1, norm_layer=norm_layer)
+        self.conv_input = nn.Sequential(
+            conv_bn_relu(num_bev_features, num_bev_features_, padding=1, norm_layer=norm_layer),
+            SCBottleneck(num_bev_features_, num_bev_features_, norm_layer=norm_layer)
+        )
         
         # Point Head to predict point-wise cls, embed, flow3d
         # -----------------------------------------------------
@@ -140,7 +143,10 @@ class HunterJr(nn.Module):
         # -----------------------------------------------------
         self.thresh_point_cls_prob = model_cfg.get('THRESHOLD_POINT_CLS_PROB', 0.3)
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
-        self.conv_weightor = conv_bn_relu(2 * num_bev_features_, 2, padding=1, norm_layer=norm_layer)  # 2 set of weights, 1 for each BEV image
+        self.conv_weightor = nn.Sequential(
+            SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
+            nn.Conv2d(2 * num_bev_features_, 2, kernel_size=3, padding=1)  # 2 set of weights, 1 for each BEV image
+        )
 
         self.forward_return_dict = dict()
 
