@@ -19,7 +19,9 @@ class HunterObjectHead(nn.Module):
         _make_mlp = partial(nn_make_mlp, hidden_channels=mlp_hidden_channels, use_drop_out=use_drop_out)
         self.num_local_feat = num_point_features  # hard coded because locals_feat = locals_feat + locals_shape_encoding
 
-        self.points_shape_encoder = _make_mlp(3, num_point_features, is_head=False)
+        self.points_shape_encoder = _make_mlp(3, 
+                                              num_point_features, 
+                                              hidden_channels=[], is_head=False)
         
         self.local_feat_encoder = _make_mlp(2 * self.num_local_feat + 3 + 3, 
                                             self.num_local_feat, 
@@ -67,24 +69,23 @@ class HunterObjectHead(nn.Module):
 
 
 class HunterPointHead(nn.Module):
-    def __init__(self, num_point_features: int, num_local_features: int, mlp_hidden_channels: List[int] = None, use_drop_out: bool = False):
+    def __init__(self, num_point_features: int, mlp_hidden_channels: List[int] = None, use_drop_out: bool = False):
         """
         points_feat -> `local_feat_predictor` -> pts_local_feat -> predict point task & distill
         """
         super().__init__()
         _make_mlp = partial(nn_make_mlp, hidden_channels=mlp_hidden_channels, use_drop_out=use_drop_out)
 
-        self.local_feat_predictor = _make_mlp(num_point_features, num_local_features, is_head=False)
+        self.local_feat_predictor = _make_mlp(num_point_features, num_point_features, is_head=False)
 
-        num_point_final_feat = num_point_features + num_local_features
-        self.seg = _make_mlp(num_point_final_feat, 3)
-        self.reg_flow3d = _make_mlp(num_point_final_feat, 3)
-        self.instance_embedding = _make_mlp(num_point_final_feat, 2)
+        self.seg = _make_mlp(num_point_features, 3)
+        self.reg_flow3d = _make_mlp(num_point_features, 3)
+        self.instance_embedding = _make_mlp(num_point_features, 2)
     
     def forward(self, points_feat: torch.Tensor) -> Tuple[torch.Tensor]:
         pts_local_feat = self.local_feat_predictor(points_feat)  # (N, C_local)
         
-        pts_final_feat = torch.cat([points_feat, pts_local_feat], dim=1)
+        pts_final_feat = points_feat + pts_local_feat
 
         points_cls_logit = self.seg(pts_final_feat)  # (N, 3)
         points_flow3d = self.reg_flow3d(pts_final_feat)  # (N, 3)
@@ -126,7 +127,7 @@ class HunterJr(nn.Module):
         
         # Point Head to predict point-wise cls, embed, flow3d
         # -----------------------------------------------------
-        self.point_head = HunterPointHead(num_bev_features_, num_locals_feat, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
+        self.point_head = HunterPointHead(num_bev_features_, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
 
         # Object Head to predict locals_feat, locals_tf
         # -----------------------------------------------------
