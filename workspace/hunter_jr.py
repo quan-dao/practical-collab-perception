@@ -117,8 +117,7 @@ class HunterJr(nn.Module):
         self._meta_pts_feat_loc_inst_idx = model_cfg.get('META_POINTS_FEAT_LOCATION_INSTANCE_IDX', -1)
 
         num_bev_features_ = model_cfg.CONV_INPUT_CHANNELS
-        self.num_points_feat = model_cfg.CONV_INPUT_CHANNELS
-        num_locals_feat = self.num_points_feat
+        self.num_points_feat = num_bev_features
 
         # Stem input
         # -------------
@@ -146,6 +145,10 @@ class HunterJr(nn.Module):
         self.conv_weightor = nn.Sequential(
             SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
             nn.Conv2d(2 * num_bev_features_, 2, kernel_size=3, padding=1)  # 2 set of weights, 1 for each BEV image
+        )
+        self.conv_fuse_bev = nn.Sequential(
+            conv_bn_relu(num_bev_features_, num_bev_features, padding=1, norm_layer=norm_layer),
+            nn.Conv2d(num_bev_features, num_bev_features, kernel_size=3, padding=1)
         )
 
         self.forward_return_dict = dict()
@@ -345,8 +348,24 @@ class HunterJr(nn.Module):
         
         # correct BEV image
         fused_bev_img = self.correct_bev_image(points, points_feat, points_bev_coord, points_cls_logit, points_flow3d, bev_img)
+        fused_bev_img = self.conv_fuse_bev(fused_bev_img)
 
-        # TODO: distill BEV image here
+        # distill BEV image here
+        if self.training:
+            _B, _C, _H, _W = fused_bev_img.shape
+
+            teacher_bev_img = batch_dict['teacher_spatial_features_2d']  # (B, C, H, W)
+            # only distill where teacher_bev_img's magnitude > 1e-3
+            teacher_bev_img = rearrange(teacher_bev_img, 'B C H W -> (B H W) C')
+            fused_bev_img = rearrange(fused_bev_img, 'B C H W -> (B H W) C')
+            mask_valid_teacher_loc = torch.linalg.norm(teacher_bev_img, dim=1) > 1e-3
+
+            loss_dtl_bev_img = F.smooth_l1_loss(fused_bev_img[mask_valid_teacher_loc], 
+                                                teacher_bev_img[mask_valid_teacher_loc], 
+                                                reduction='none').sum(dim=1).mean()
+            self.forward_return_dict['loss_dtl_bev_img'] = loss_dtl_bev_img
+
+            fused_bev_img = rearrange(fused_bev_img, '(B H W) C -> B C H W', B=_B, H=_H, W=_W, C=_C)
 
         # overwrite
         batch_dict.pop('spatial_features_2d')
@@ -446,10 +465,11 @@ class HunterJr(nn.Module):
         })
 
         tb_dict['l_dtl_locals_feat'] = self.forward_return_dict['loss_dtl_locals_feat'].item()
+        tb_dict['l_dtl_bev_img'] = self.forward_return_dict['loss_dtl_bev_img'].item()
 
         loss = l_points_cls + l_points_embed + l_fg_offset + \
                 l_locals_transl + l_locals_rot + l_recon + \
-                self.forward_return_dict['loss_dtl_locals_feat']
+                self.forward_return_dict['loss_dtl_locals_feat'] + self.forward_return_dict['loss_dtl_bev_img']
         
         return loss, tb_dict
 

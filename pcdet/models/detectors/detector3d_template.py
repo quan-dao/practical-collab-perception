@@ -12,6 +12,7 @@ from ..model_utils import model_nms_utils
 from _dev_space.pc_corrector import PointCloudCorrector
 from workspace.orcale_corrector import OracleCorrector
 from workspace.hunter_jr import HunterJr
+from workspace.teacher import Teacher
 
 
 class Detector3DTemplate(nn.Module):
@@ -24,7 +25,7 @@ class Detector3DTemplate(nn.Module):
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
 
         self.module_topology = [
-            'oracle_corrector', 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
+            'teacher', 'oracle_corrector', 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
             'backbone_2d', 'corrector', 'dense_head', 'point_head', 'roi_head'
         ]
 
@@ -52,6 +53,15 @@ class Detector3DTemplate(nn.Module):
             self.add_module(module_name, module)
         return model_info_dict['module_list']
     
+    def build_teacher(self, model_info_dict):
+        if self.model_cfg.get('TEACHER', None) is None:
+            return None, model_info_dict
+        
+        teacher = Teacher(self.model_cfg.TEACHER, self.num_class, self.dataset)
+
+        model_info_dict['module_list'].append(teacher)
+        return teacher, model_info_dict
+
     def build_oracle_corrector(self, model_info_dict):
         if self.model_cfg.get('OracleCorrector', None) is None:
             return None, model_info_dict

@@ -136,7 +136,7 @@ class Teacher(nn.Module):
         if not os.path.isfile(filename):
             raise FileNotFoundError
 
-        logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
+        print('[TEACHER] ==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
         loc_type = torch.device('cpu') if to_cpu else None
         checkpoint = torch.load(filename, map_location=loc_type)
         model_state_disk = checkpoint['model_state']
@@ -147,15 +147,15 @@ class Teacher(nn.Module):
             
         version = checkpoint.get("version", None)
         if version is not None:
-            logger.info('==> Checkpoint trained from version: %s' % version)
+            print('[TEACHER] ==> Checkpoint trained from version: %s' % version)
 
         state_dict, update_model_state = self._load_state_dict(model_state_disk, strict=False)
 
         for key in state_dict:
             if key not in update_model_state:
-                logger.info('Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
+                print('[TEACHER] Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
 
-        logger.info('==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
+        print('[TEACHER] ==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
 
     def forward(self, batch_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         self.eval()
