@@ -8,7 +8,7 @@ from functools import partial
 from einops import rearrange
 
 from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from workspace.sc_conv import conv_bn_relu, SCBottleneck
+from workspace.sc_conv import conv_bn_relu
 from workspace.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat, \
     hard_mining_regression_loss
 
@@ -21,13 +21,13 @@ class HunterObjectHead(nn.Module):
 
         self.points_shape_encoder = _make_mlp(3, 
                                               num_point_features, 
-                                              hidden_channels=[], is_head=False)
+                                              is_head=False)
         
         self.local_feat_encoder = _make_mlp(2 * self.num_local_feat + 3 + 3, 
                                             self.num_local_feat, 
-                                            hidden_channels=[], is_head=False)
+                                            is_head=False)
         
-        self.local_tf_decoder = _make_mlp(self.num_local_feat, 7)
+        self.local_tf_decoder = _make_mlp(self.num_local_feat, 7, hidden_channels=[])
         # in := local_feat | global_feat | local_centroid | target_local_centroid
         # out == 7 := 3 (translation vector)  + 4 (quaternion)
     
@@ -74,9 +74,11 @@ class HunterPointHead(nn.Module):
         points_feat -> `local_feat_predictor` -> pts_local_feat -> predict point task & distill
         """
         super().__init__()
-        _make_mlp = partial(nn_make_mlp, hidden_channels=mlp_hidden_channels, use_drop_out=use_drop_out)
+        _make_mlp = partial(nn_make_mlp, use_drop_out=use_drop_out)
 
-        self.local_feat_predictor = _make_mlp(num_point_features, num_point_features, is_head=False)
+        self.local_feat_predictor = _make_mlp(num_point_features, num_point_features, 
+                                              hidden_channels=mlp_hidden_channels, 
+                                              is_head=False)
 
         self.seg = _make_mlp(num_point_features, 3)
         self.reg_flow3d = _make_mlp(num_point_features, 3)
@@ -116,25 +118,21 @@ class HunterJr(nn.Module):
         self._meta_pts_feat_loc_sweep_idx = model_cfg.get('META_POINTS_FEAT_LOCATION_SWEEP_IDX', -2)
         self._meta_pts_feat_loc_inst_idx = model_cfg.get('META_POINTS_FEAT_LOCATION_INSTANCE_IDX', -1)
 
-        num_bev_features_ = model_cfg.CONV_INPUT_CHANNELS
         self.num_points_feat = num_bev_features
 
         # Stem input
         # -------------
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
-        self.conv_input = nn.Sequential(
-            conv_bn_relu(num_bev_features, num_bev_features_, padding=1, norm_layer=norm_layer),
-            SCBottleneck(num_bev_features_, num_bev_features_, norm_layer=norm_layer)
-        )
+        self.conv_input = conv_bn_relu(num_bev_features, num_bev_features, padding=1, norm_layer=norm_layer)
         
         # Point Head to predict point-wise cls, embed, flow3d
         # -----------------------------------------------------
-        self.point_head = HunterPointHead(num_bev_features_, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
+        self.point_head = HunterPointHead(num_bev_features, model_cfg.get('POINT_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
 
         # Object Head to predict locals_feat, locals_tf
         # -----------------------------------------------------
         if self.training:
-            self.object_head = HunterObjectHead(num_bev_features_, model_cfg.get('OBJ_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
+            self.object_head = HunterObjectHead(num_bev_features, model_cfg.get('OBJ_HEAD_HIDDEN_CHANNELS'), use_drop_out=False)
         else:
             self.object_head = None
 
@@ -143,12 +141,8 @@ class HunterJr(nn.Module):
         self.thresh_point_cls_prob = model_cfg.get('THRESHOLD_POINT_CLS_PROB', 0.3)
         norm_layer = partial(nn.BatchNorm2d, eps=1e-3, momentum=0.01)
         self.conv_weightor = nn.Sequential(
-            SCBottleneck(2 * num_bev_features_, 2 * num_bev_features_, norm_layer=norm_layer),
-            nn.Conv2d(2 * num_bev_features_, 2, kernel_size=3, padding=1)  # 2 set of weights, 1 for each BEV image
-        )
-        self.conv_fuse_bev = nn.Sequential(
-            conv_bn_relu(num_bev_features_, num_bev_features, padding=1, norm_layer=norm_layer),
-            nn.Conv2d(num_bev_features, num_bev_features, kernel_size=3, padding=1)
+            conv_bn_relu(2 * num_bev_features, 2 * num_bev_features, padding=1, norm_layer=norm_layer),
+            nn.Conv2d(2 * num_bev_features, 2, kernel_size=3, padding=1)  # 2 set of weights, 1 for each BEV image
         )
 
         self.forward_return_dict = dict()
@@ -271,7 +265,7 @@ class HunterJr(nn.Module):
                                                                                    self.voxel_size[:2] * self.bev_image_stride,
                                                                                    return_bev_coord=True)
             # update feat of dynamic foreground
-            points_feat = points_feat + correct_feat * mask_dyn_fg.float().unsqueeze(1)
+            points_feat = points_feat * (1.0 - mask_dyn_fg.float().unsqueeze(1)) + correct_feat * mask_dyn_fg.float().unsqueeze(1)
         else:
             correct_bev_coord = points_bev_coord
 
@@ -348,7 +342,6 @@ class HunterJr(nn.Module):
         
         # correct BEV image
         fused_bev_img = self.correct_bev_image(points, points_feat, points_bev_coord, points_cls_logit, points_flow3d, bev_img)
-        fused_bev_img = self.conv_fuse_bev(fused_bev_img)
 
         # distill BEV image here
         if self.training:
