@@ -122,3 +122,21 @@
     * NDS: 0.5314 (no shadow -> bad velo estim)
     * peak at epoch 20
     * [details](../raw_log/pointpillar_jr_withmap/eval_1832359.err)
+
+
+# pointpillar_jr_corr_withmap_teacher
+
+## commit: 5c71d00
+### Features:
+* base features := commit `4c542f46`
+* [new] add `HunterJr` (resemble pc_corrector) for correcting BEV image
+    * in `PointHead` of `HunterJr` add distillation of local_feat
+    * minor modification to correction scheme
+* [new] add Oracle as teacher
+
+### NuScenes mAP (nusc style) & NDS
+* num epochs: 20 - no calib
+    * mAP: 0.5310
+    * NDS: 0.5957
+    * peak at epoch 20
+    * [details](../raw_log/pointpillar_jr_corr_withmap_teacher/train_322434.err)
