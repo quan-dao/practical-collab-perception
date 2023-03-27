@@ -147,7 +147,16 @@
     * peak at epoch 20
     * [details](../raw_log/pointpillar_jr_corr_withmap_teacher/eval_330313.err)
 
-* num epochs: 30 - ? calib
+* num epochs: 30 - calib alpha 0.3
     * mAP: 0.5552  (peak at ep 28)
     * NDS: 0.6174
     * [details](../raw_log/pointpillar_jr_corr_withmap_teacher/train_330197.err)
+
+* num epochs: 20 - no calib - rollback to BaseBEVBackbone (to compared against result submitted to IV'23)
+    * mAP: 0.4842 (peak at ep 20)
+    * NDS: 0.5582
+    * [details](../raw_log/pointpillar_jr_corr_withmap_teacher/train_329994.err)
+    * Comments:
+        * improvement compared to PointPillar (original, trained on 1/4): 9.4 mAP (= 48.4 - 39.0)
+        * improvement compared to PointPillar + pc_corrector (submitted to IV'23): 6 mAP (= 48.4 - 42.4)
+
