@@ -146,3 +146,8 @@
     * NDS: 0.5997
     * peak at epoch 20
     * [details](../raw_log/pointpillar_jr_corr_withmap_teacher/eval_330313.err)
+
+* num epochs: 30 - ? calib
+    * mAP: 0.5552  (peak at ep 28)
+    * NDS: 0.6174
+    * [details](../raw_log/pointpillar_jr_corr_withmap_teacher/train_330197.err)
