@@ -42,3 +42,16 @@ Comparison between two correctors on PointPillar with the same backbone2D (BaseB
 | PointPillar | 39.0 |
 | + corrector | +3.4 |
 | + **new** corrector (with HDMap, no cls calib) | +6.0 |
+
+# 3D Flow evaluation
+Our models are trained on 1/4th of training set while baselines are trained on full. The evaluation is carried on the entire validation set.
+
+| Module | EPE ⬇ | ACC_S ⬆ | ACC_R ⬆ | R_Outliers ⬇ |
+| --- | --- | --- | --- | --- |
+| FLOT | 1.216 | 3.0 | 10.3 | 63.9 |
+| NSFPrior | 0.707 | 19.3 | 37.8 | 32.0 |
+| PPWC | 0.661 | 7.6 | 24.2 | 31.9 |
+| WsRSF | 0.539 | 17.9 | 37.4 | 22.9 |
+| PCAcc | **0.301** | 26.6 | 53.4 | 12.1 |
+| *corrector* | 0.547 | 14.5 | 26.2 | 36.9 |
+| *new corrector* | 0.616 | **46.4** | **66.6** | **6.8** |
