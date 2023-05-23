@@ -1,8 +1,8 @@
+import numpy as np
 import copy
 import pickle
 from pathlib import Path
-
-import numpy as np
+from typing import List
 from tqdm import tqdm
 
 from ...utils import common_utils
@@ -10,6 +10,8 @@ from ..dataset import DatasetTemplate
 
 from workspace.rev_get_sweeps_instance_centric import revised_instance_centric_get_sweeps
 from workspace.nuscenes_map_helper import MapMaker
+from workspace.uda_database_utils import create_database, load_1traj
+from workspace.nuscenes_temporal_utils import get_one_pointcloud, apply_se3_, get_sweeps_token, get_nuscenes_sensor_pose_in_global
 from nuscenes import NuScenes
 from nuscenes.prediction import PredictHelper
 from nuscenes.prediction.input_representation.static_layers import load_all_maps
@@ -49,6 +51,55 @@ class NuScenesDataset(DatasetTemplate):
             self.map_bev_image_resolution = 0.1  
         else:
             self.map_point_cloud_range, self.map_bev_image_resolution = None, None
+
+        # -----------------------------------
+        # prepare database sampling
+        database_root = self.data_root / 'gt_boxes_database_lyft'
+        if database_root.exists():
+            database_classes = [database_root / cls_name for cls_name in class_names]
+            self.gt_database = dict()
+            for cls_name, database_cls in zip(class_names, database_classes):
+                cls_trajs_path = list(database_cls.glob('*.pkl'))
+                cls_trajs_path.sort()
+            
+                # filter traj by length
+                invalid_traj_ids = list()
+                for traj_idx, traj_path in enumerate(cls_trajs_path):
+                    with open(traj_path, 'rb') as f:
+                        traj_info = pickle.load(f)
+                    if len(traj_info) < self.dataset_cfg.MAX_SWEEPS:
+                        invalid_traj_ids.append(traj_idx)
+
+                invalid_traj_ids.reverse()
+                for _i in invalid_traj_ids:
+                    del cls_trajs_path[_i]
+                
+                self.gt_database[cls_name] = cls_trajs_path
+
+            self.sample_group = dict()
+            for group in self.dataset_cfg.SAMPLE_GROUP:  # ['car: 5', 'pedestrian: 5']
+                cls_name, num_to_sample = group.strip().split(':')
+                self.sample_group[cls_name] = {
+                    'num_to_sample': num_to_sample,
+                    'pointer': 0,
+                    'indices': np.random.permutation(len(self.gt_database[cls_name])),
+                    'num_trajectories': len(self.gt_database[cls_name])
+                }
+
+        else:
+            print('WARNING | database is not created yet')
+
+    def sample_with_fixed_number(self, class_name: str) -> List[Path]:
+        sample_group = self.sample_group[class_name]
+        if sample_group['pointer'] + sample_group['num_to_sample'] >= sample_group['num_trajectories']:
+            sample_group['indices'] = np.random.permutation(sample_group['num_trajectories'])
+            sample_group['pointer'] = 0
+        
+        pointer, num_to_sample = sample_group['pointer'], sample_group['num_to_sample']
+        out = [self.gt_database[class_name][idx] for idx in sample_group['indices'][pointer: pointer + num_to_sample]]
+        
+        sample_group['pointer'] += num_to_sample
+        return out
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -114,6 +165,56 @@ class NuScenesDataset(DatasetTemplate):
             index = index % len(self.infos)
         info = copy.deepcopy(self.infos[index])
         num_sweeps = self.dataset_cfg.MAX_SWEEPS
+
+        # -----------------------------
+        # get original points
+        sample = self.nusc.get('sample', info['token'])
+        current_lidar_tk = sample['data']['LIDAR_TOP']
+        current_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, current_lidar_tk))
+
+        sweeps_info = get_sweeps_token(self.nusc, current_lidar_tk, n_sweeps=num_sweeps, return_time_lag=True, return_sweep_idx=True)
+        points = list()
+        for (lidar_tk, timelag, sweep_idx) in sweeps_info:
+            pcd = get_one_pointcloud(self.nusc, lidar_tk)
+            pcd = np.pad(pcd, pad_width=[(0, 0), (0, 3)], constant_values=-1)
+            pcd[:, -3] = timelag
+            pcd[:, -2] = sweep_idx
+            # pcd[:, -1] is instance index which is -1 in the context of UDA
+
+            # map pcd to current frame (EMC)
+            glob_se3_past =  get_nuscenes_sensor_pose_in_global(self.nusc, lidar_tk)
+            current_se3_past = current_se3_glob @ glob_se3_past
+            apply_se3_(current_se3_past, points_=pcd)
+            points.append(pcd)
+            
+        points_original = np.concatenate(points, axis=0)
+
+        if self.training:
+            # TODO: [on going] copy-paste from gt_database
+            points, boxes = list(), list()
+            # ['car: 5', 'pedestrian: 5']
+            instance_index = 0  # running variable
+            for cls_name in self.sample_group.keys():
+                sampled_trajectories_path = self.sample_with_fixed_number(cls_name)
+                for traj_path in sampled_trajectories_path:
+                    traj_points, traj_boxes, _ = load_1traj(traj_path, 
+                                                            num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
+                                                            src_frequency=5,  # TODO: check
+                                                            target_frequency=20  # frequency of NuScenes
+                                                            )
+                    # compute points' instance index
+                    traj_points[:, -1] = instance_index
+                    
+                    # TODO: compute instance_tf with gt_boxes == info's
+
+                    # move on to the next traj
+                    instance_index += 1
+
+            # TODO: check last_box of each traj, see if they overlap with anyone, if yes, remove points
+
+        # TODO: get gt_boxes from info but put them in a different name 
+        # TODO: shutdown OpenPCDet's native database sampling
+
         map_database_dir = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
         _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], num_sweeps, self.class_names,
                                                    use_hd_map=self.dataset_cfg.get('USE_HD_MAP', False),
@@ -256,87 +357,8 @@ class NuScenesDataset(DatasetTemplate):
         )
         return ap_result_str, ap_dict
 
-    def create_groundtruth_database(self, used_classes=None, max_sweeps=10):
-        postfix = '_withmap' if self.dataset_cfg.get('USE_HD_MAP', False) else ''
-        print(f"----\n",
-              f"INFO: generating database with {self.dataset_cfg.get('USE_HD_MAP', False)} HD_MAP\n",
-              "----")
-        if 'trainval' in self.dataset_cfg.VERSION:
-            database_save_path = self.root_path / f'gt_database_{max_sweeps}sweeps_withvelo{postfix}'
-            db_info_save_path = self.root_path / f'nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
-        else:
-            assert 'mini' in self.dataset_cfg.VERSION, f"{self.dataset_cfg.VERSION} is not supported"
-            database_save_path = self.root_path / f'mini_gt_database_{max_sweeps}sweeps_withvelo{postfix}'
-            db_info_save_path = self.root_path / f'mini_nuscenes_dbinfos_{max_sweeps}sweeps_withvelo{postfix}.pkl'
-            
-        map_database_dir = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
-
-        database_save_path.mkdir(parents=True, exist_ok=True)
-        all_db_infos = {}
-
-        movable_classes = ('car', 'truck', 'bus')        
-
-        for idx in tqdm(range(len(self.infos))):
-            sample_idx = idx
-            info = self.infos[idx]
-            detection_classes = ('car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier', 'motorcycle',
-                             'bicycle', 'pedestrian', 'traffic_cone')
-            _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS, detection_classes,
-                                                       use_hd_map=self.dataset_cfg.get('USE_HD_MAP', False), 
-                                                       map_database_path=map_database_dir, 
-                                                       map_point_cloud_range=self.map_point_cloud_range, 
-                                                       map_bev_image_resolution=self.map_bev_image_resolution)
-
-            points = _out['points']  # (N, 7) - x, y, z, intensity, time, sweep_idx, inst_idx
-            assert points.shape[1] == 12 if self.dataset_cfg.get('USE_HD_MAP', False) else 7, f"points.shape: {points.shape}"
-            points_inst_idx = points[:, self.map_point_feat2idx['inst_idx']].astype(int)
-
-            gt_boxes = _out['gt_boxes']  # (N_inst, 9) - c_x, c_y, c_z, d_x, d_y, d_z, yaw, vx, vy
-            gt_names = _out['gt_names']  # (N_inst,)
-            gt_anno_tk = _out['gt_anno_tk']  # (N_inst,)
-            instances_tf = _out['instances_tf']  # (N_inst, max_sweeps, 4, 4)
-
-            for i in range(gt_boxes.shape[0]):
-                # filter movable class to include only actual moving stuff
-                if gt_names[i] in movable_classes:
-                    if np.linalg.norm(instances_tf[0, :2, -1]) < 1.0:
-                        # translation from the oldest to the presence < 1.0
-                        # skip this instance
-                        continue
-
-                filename = '%s_%s_%d.bin' % (sample_idx, gt_names[i], i)
-                filepath = database_save_path / filename
-                gt_points = points[points_inst_idx == i]
-                if gt_points.shape[0] == 0:  # there is no points in this gt_boxes
-                    continue
-
-                # translate gt_points to frame whose origin @ gt_box center
-                gt_points[:, :3] -= gt_boxes[i, :3]
-                with open(filepath, 'w') as f:
-                    gt_points.tofile(f)
-
-                # get sampled gt_boxes velocity in global frame -> will be transformed to target frame @ database_sampler/add_to_scene
-                gt_velo = self.nusc.box_velocity(gt_anno_tk[i])  # (vx, vy, vz) in global frame
-
-                if (used_classes is None) or gt_names[i] in used_classes:
-                    db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
-                    db_info = {
-                        'name': gt_names[i], 'path': db_path, 'image_idx': sample_idx, 'gt_idx': i,
-                        'num_points_in_gt': gt_points.shape[0],
-                        'box3d_lidar': gt_boxes[i],
-                        'instance_idx': i,
-                        'velo': gt_velo,
-                        'instance_tf': instances_tf[i],  # (max_sweeps, 4, 4)
-                    }
-                    if gt_names[i] in all_db_infos:
-                        all_db_infos[gt_names[i]].append(db_info)
-                    else:
-                        all_db_infos[gt_names[i]] = [db_info]
-        for k, v in all_db_infos.items():
-            print('Database %s: %d' % (k, len(v)))
-
-        with open(db_info_save_path, 'wb') as f:
-            pickle.dump(all_db_infos, f)
+    def create_groundtruth_database(self):
+        create_database(self.root_path, classes_of_interest=set(self.class_names))
 
     def create_hd_map_database(self):
         assert len(self.infos) > 0, "remember to call create_nuscenes_infos first"
@@ -461,7 +483,7 @@ if __name__ == '__main__':
         )
         if args.create_groundtruth_database:
             assert args.training, "expect args.training == True; get False"
-            nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)
+            nuscenes_dataset.create_groundtruth_database()
     
         if args.create_hd_map_database:
             nuscenes_dataset.create_hd_map_database()
