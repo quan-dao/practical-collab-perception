@@ -22,9 +22,9 @@ def main():
     print('showing original')
     painter = PointsPainter(xyz=points[:, :3], boxes=gt_boxes[:, :7])
     points_color = color_points_binary(points[:, -1] > -1)
-    painter.show(xyz_color=points_color, boxes_velo=gt_boxes[:, -2:])
+    painter.show(xyz_color=points_color, boxes_velo=gt_boxes[:, -3: -1])
 
-    # TODO: test correction
+    # test correction
     print('showing corrected')
     points = np.pad(points, pad_width=[(0, 0), (1, 0)], constant_values=0.)  # pad points with bath_idx
     instances_tf = batch_dict['instances_tf'][np.newaxis, :, :, :3]
@@ -33,7 +33,6 @@ def main():
     points_color = color_points_binary(points_corrected[:, -1] > -1)
     painter.show(xyz_color=points_color)
 
-    # TODO: bug in velo
 
 if __name__ == '__main__':
     main()
