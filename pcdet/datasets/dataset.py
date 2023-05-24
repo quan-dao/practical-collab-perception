@@ -302,9 +302,8 @@ class DatasetTemplate(torch_data.Dataset):
                     # 1 instances_tf - (N_instances, N_sweeps, 4, 4)
                     max_n_inst = max([inst_tf.shape[0] for inst_tf in val])
                     max_num_sweeps = data_dict['metadata'][0]['num_sweeps_target']
-                    batch_instances_tf = np.zeros(
-                        (batch_size, max_n_inst, max_num_sweeps, 3, 4)
-                    )  # remove last row-> save memory
+                    _temp = np.concatenate([np.eye(3), np.zeros((3, 1))], axis=1)
+                    batch_instances_tf = np.tile(_temp[np.newaxis, np.newaxis, np.newaxis], [batch_size, max_n_inst, max_num_sweeps, 1, 1])
 
                     for b_idx, inst_tf in enumerate(val):
                         # inst_tf - (N_instances, N_sweeps, 4, 4)
