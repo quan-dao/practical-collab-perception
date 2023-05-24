@@ -202,8 +202,8 @@ def load_1traj(path_traj: Path,
 
         # add time-idx, instance_idx to box
         box_in_glob = np.pad(box_in_glob, pad_width=[(0, 2)], constant_values=0)
-        box_in_glob[:, -2] = pts[-1, -2]  # take sweep_idx of the last point
-        box_in_glob[:, -1] = traj_index
+        box_in_glob[-2] = pts[-1, -2]  # take sweep_idx of the last point
+        box_in_glob[-1] = traj_index
 
         points.append(pts)
         boxes.append(box_in_glob.reshape(1, -1))

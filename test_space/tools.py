@@ -51,6 +51,19 @@ def build_test_infra(cfg_file: str, **kwargs):
     return model, dataloader
 
 
+def build_dataset_for_testing(dataset_cfg_file: str, class_names: list, **kwargs):
+    np.random.seed(666)
+    cfg_from_yaml_file(dataset_cfg_file, cfg)
+    cfg.CLASS_NAMES = class_names
+    if kwargs.get('version', None) is not None:
+        cfg.VERSION = kwargs['version']
+    logger = common_utils.create_logger('./artifact/dummy_log.txt')
+    dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg, class_names=cfg.CLASS_NAMES, batch_size=kwargs.get('batch_size', 2),
+                                              dist=False, logger=logger, training=kwargs.get('training', False), total_epochs=1, seed=666,
+                                              workers=0)
+    return dataset, dataloader
+
+
 def to_gpu(batch_dict):
     for k, v in batch_dict.items():
         if isinstance(v, torch.Tensor):

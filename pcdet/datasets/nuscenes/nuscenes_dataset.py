@@ -71,7 +71,7 @@ class NuScenesDataset(DatasetTemplate):
             for group in self.dataset_cfg.SAMPLE_GROUP:  # ['car: 5', 'pedestrian: 5']
                 cls_name, num_to_sample = group.strip().split(':')
                 self.sample_group[cls_name] = {
-                    'num_to_sample': num_to_sample,
+                    'num_to_sample': int(num_to_sample),
                     'pointer': 0,
                     'indices': np.random.permutation(len(self.gt_database[cls_name])),
                     'num_trajectories': len(self.gt_database[cls_name])
@@ -199,7 +199,7 @@ class NuScenesDataset(DatasetTemplate):
 
                     # compute instance_tf with gt_boxes == info's
                     traj_correction_tf = compute_correction_tf(traj_boxes)  # (N_boxes, 4, 4)
-                    padded_traj_correction_tf = np.zeros(self.dataset_cfg.MAX_SWEEPS, 4, 4)  # NOTE: hard-code freq of src < freq of target
+                    padded_traj_correction_tf = np.zeros((self.dataset_cfg.MAX_SWEEPS, 4, 4))  # NOTE: hard-code freq of src < freq of target
                     padded_traj_correction_tf[traj_boxes[:, -2].astype(int)] = traj_correction_tf
 
                     # compute velo
@@ -216,7 +216,7 @@ class NuScenesDataset(DatasetTemplate):
                     instance_index += 1
 
             sampled_points = np.concatenate(sampled_points)  # (N_sampled_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
-            sampled_boxes = np.concatenate(sampled_boxes)  # (N_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
+            sampled_boxes = np.stack(sampled_boxes, axis=0)  # (N_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
             sampled_boxes_name = np.array(sampled_boxes_name)  # (N_inst,)
             sampled_boxes_velo = np.stack(sampled_boxes_velo, axis=0)  # (N_inst, 2)
             instances_tf = np.stack(instances_tf, axis=0)  # (N_inst, N_sweep in src, 4, 4)
