@@ -6,7 +6,7 @@ import numpy as np
 import numpy.linalg as LA
 from skimage import io
 import torch
-import SharedArray
+# import SharedArray
 import torch.distributed as dist
 
 from ...ops.iou3d_nms import iou3d_nms_utils
