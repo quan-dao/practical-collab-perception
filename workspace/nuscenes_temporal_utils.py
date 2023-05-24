@@ -147,8 +147,14 @@ def get_one_pointcloud(nusc: NuScenes, sweep_token: str) -> np.ndarray:
         pointcloud: (N, 4) - x, y, z, reflectant
     """
     pcfile = nusc.get_sample_data_path(sweep_token)
-    pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
-    return pc
+    # pc = np.fromfile(pcfile, dtype=np.float32, count=-1).reshape([-1, 5])[:, :4]  # (x, y, z, intensity)
+
+    points = np.fromfile(str(pcfile), dtype=np.float32, count=-1)
+    if points.shape[0] % 5 != 0:
+        points = points[: points.shape[0] - (points.shape[0] % 5)]
+    points = points.reshape([-1, 5])[:, :4]
+
+    return points
 
 
 def get_available_scenes(nusc: NuScenes) -> List[Dict]:

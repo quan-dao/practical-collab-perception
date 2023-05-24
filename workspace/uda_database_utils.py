@@ -8,8 +8,8 @@ from lyft_dataset_sdk.lyftdataset import LyftDataset
 from tqdm import tqdm
 from pprint import pprint
 
-from nuscenes_temporal_utils import *
-from downsample_utils import compute_angles, beam_label_gpu
+from workspace.nuscenes_temporal_utils import *
+from workspace.downsample_utils import compute_angles, beam_label_gpu
 
 
 def get_points_on_trajectory(nusc: NuScenes, instance_token: str, compute_points_beam_idx: bool = False) -> List[Dict]:

@@ -45,7 +45,7 @@ class NuScenesDataset(DatasetTemplate):
 
         # -----------------------------------
         # prepare database sampling
-        database_root = self.dataset_cfg.DATABASE_ROOT
+        database_root = Path(self.dataset_cfg.DATABASE_ROOT)
         if database_root.exists():
             database_classes = [database_root / cls_name for cls_name in class_names]
             self.gt_database = dict()
