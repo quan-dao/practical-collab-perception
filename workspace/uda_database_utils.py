@@ -183,6 +183,8 @@ def load_1traj(path_traj: Path,
         # ----
         # points | in box -> in glob
         pts = info['points']  # in box
+        if pts.shape[0] == 0:
+            continue
         glob_se3_box = make_se3(box_in_glob[:3], yaw=box_in_glob[6])
         apply_se3_(glob_se3_box, points_=pts)
 
@@ -208,6 +210,9 @@ def load_1traj(path_traj: Path,
         points.append(pts)
         boxes.append(box_in_glob.reshape(1, -1))
         mask_keep_points.append(mask_keep)
+
+    if len(points) == 0:
+        return np.zeros((0, 7)), np.zeros((0, 9)), np.zeros(0)
 
     points = np.concatenate(points, axis=0)  # (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] | in glob
     boxes = np.concatenate(boxes, axis=0)  # (N_box, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx] | in glob 
