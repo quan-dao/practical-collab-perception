@@ -23,3 +23,6 @@ data/nuscenes
 build
 idr_log
 artifact
+.vscode
+*.png
+*.json
