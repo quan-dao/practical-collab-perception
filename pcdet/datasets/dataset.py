@@ -301,7 +301,7 @@ class DatasetTemplate(torch_data.Dataset):
                 elif key in ['instances_tf']:
                     # 1 instances_tf - (N_instances, N_sweeps, 4, 4)
                     max_n_inst = max([inst_tf.shape[0] for inst_tf in val])
-                    max_num_sweeps = data_dict['metadata'][0]['num_sweeps']
+                    max_num_sweeps = data_dict['metadata'][0]['num_sweeps_target']
                     batch_instances_tf = np.zeros(
                         (batch_size, max_n_inst, max_num_sweeps, 3, 4)
                     )  # remove last row-> save memory
