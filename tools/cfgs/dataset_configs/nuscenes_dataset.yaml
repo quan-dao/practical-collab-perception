@@ -22,20 +22,20 @@ POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 VEHICLE_CLASSES: ['car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'motorcycle', 'bicycle']
 BALANCED_RESAMPLING: True 
 
-USE_HD_MAP: True
-
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
-                        'drivable_area', 'ped_crossing', 'walkway', 'carpark_area', 'lane_dir',
-                        'sweep_idx', 'instance_idx'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 
-                        'drivable_area', 'ped_crossing', 'walkway', 'carpark_area', 'lane_dir',
-                        'sweep_idx', 'instance_idx'],
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'sweep_idx', 'instance_idx'],
 }
 
+# -----------------------
+# UDA STUFF
+DATABASE_ROOT: ../data/lyft/gt_boxes_database_lyft
+SAMPLE_GROUP: ['car:10']
+# -----------------------
+
 DATA_AUGMENTOR:
-    DISABLE_AUG_LIST: ['placeholder']
+    DISABLE_AUG_LIST: ['gt_sampling']
     AUG_CONFIG_LIST:
         - NAME: gt_sampling
           DB_INFO_PATH:

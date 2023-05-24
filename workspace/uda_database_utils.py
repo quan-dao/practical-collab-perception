@@ -158,7 +158,13 @@ def create_database(data_root: Path, classes_of_interest: FrozenSet, src_domain_
     return
 
 
-def load_1traj(path_traj: Path, num_sweeps_in_target: int, src_frequency: float, target_frequency: float = 20., beam_ratio: int = None):
+def load_1traj(path_traj: Path, 
+               traj_index: int,
+               num_sweeps_in_target: int, 
+               src_frequency: float, 
+               target_frequency: float = 20., 
+               beam_ratio: int = None):
+    
     with open(path_traj, 'rb') as f:
         traj_info = pickle.load(f)
     traj_len = len(traj_info)
@@ -188,17 +194,23 @@ def load_1traj(path_traj: Path, num_sweeps_in_target: int, src_frequency: float,
         else:
             mask_keep = np.ones(pts.shape[0], dtype=bool)
 
-        # TODO: add timelag & time-idx to
+        # add timelag, time-idx, instance_idx to pts
         pts = np.pad(pts, pad_width=[(0, 0), (0, 3)], constant_values=-1)
         pts[:, -3] = float(idx - start_idx) / src_frequency   # time-lag
         pts[:, -2] = np.floor(pts[:, -3] * target_frequency)  # sweep idx
+        pts[:, -1] = traj_index
+
+        # add time-idx, instance_idx to box
+        box_in_glob = np.pad(box_in_glob, pad_width=[(0, 2)], constant_values=0)
+        box_in_glob[:, -2] = pts[-1, -2]  # take sweep_idx of the last point
+        box_in_glob[:, -1] = traj_index
 
         points.append(pts)
         boxes.append(box_in_glob.reshape(1, -1))
         mask_keep_points.append(mask_keep)
 
-    points = np.concatenate(points, axis=0)  # in glob
-    boxes = np.concatenate(boxes, axis=0)  # in glob
+    points = np.concatenate(points, axis=0)  # (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] | in glob
+    boxes = np.concatenate(boxes, axis=0)  # (N_box, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx] | in glob 
     mask_keep_points = np.concatenate(mask_keep_points)
 
     glob_se3_last_box = make_se3(boxes[-1, :3], yaw=boxes[-1, 6])

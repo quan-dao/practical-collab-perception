@@ -1,21 +1,27 @@
 import numpy as np
+import torch
 import copy
 import pickle
 from pathlib import Path
 from typing import List
 from tqdm import tqdm
+import time
 
+from nuscenes import NuScenes
+from nuscenes.prediction import PredictHelper
+from nuscenes.prediction.input_representation.static_layers import load_all_maps
+
+from pcdet.ops.iou3d_nms import iou3d_nms_utils
+from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import common_utils
 from ..dataset import DatasetTemplate
+
 
 from workspace.rev_get_sweeps_instance_centric import revised_instance_centric_get_sweeps
 from workspace.nuscenes_map_helper import MapMaker
 from workspace.uda_database_utils import create_database, load_1traj
-from workspace.nuscenes_temporal_utils import get_one_pointcloud, apply_se3_, get_sweeps_token, get_nuscenes_sensor_pose_in_global
-from nuscenes import NuScenes
-from nuscenes.prediction import PredictHelper
-from nuscenes.prediction.input_representation.static_layers import load_all_maps
-import time
+from workspace.nuscenes_temporal_utils import get_one_pointcloud, apply_se3_, get_sweeps_token, \
+    get_nuscenes_sensor_pose_in_global, compute_correction_tf
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -37,24 +43,9 @@ class NuScenesDataset(DatasetTemplate):
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
 
-        num_pts_raw_feat = 10 if self.dataset_cfg.get('USE_HD_MAP', False) else 5 # x, y, z, intensity, time, [5 map features]
-        self.map_point_feat2idx = {
-            'sweep_idx': num_pts_raw_feat,
-            'inst_idx': num_pts_raw_feat + 1,
-        }
-
-        if dataset_cfg.get('USE_HD_MAP', False):
-            self.prediction_helper = PredictHelper(self.nusc)
-            self.map_apis = load_all_maps(self.prediction_helper)
-            # map range & resoluton are independent with the dataset config
-            self.map_point_cloud_range = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])
-            self.map_bev_image_resolution = 0.1  
-        else:
-            self.map_point_cloud_range, self.map_bev_image_resolution = None, None
-
         # -----------------------------------
         # prepare database sampling
-        database_root = self.data_root / 'gt_boxes_database_lyft'
+        database_root = self.dataset_cfg.DATABASE_ROOT
         if database_root.exists():
             database_classes = [database_root / cls_name for cls_name in class_names]
             self.gt_database = dict()
@@ -173,7 +164,7 @@ class NuScenesDataset(DatasetTemplate):
         current_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, current_lidar_tk))
 
         sweeps_info = get_sweeps_token(self.nusc, current_lidar_tk, n_sweeps=num_sweeps, return_time_lag=True, return_sweep_idx=True)
-        points = list()
+        points_original = list()
         for (lidar_tk, timelag, sweep_idx) in sweeps_info:
             pcd = get_one_pointcloud(self.nusc, lidar_tk)
             pcd = np.pad(pcd, pad_width=[(0, 0), (0, 3)], constant_values=-1)
@@ -185,64 +176,98 @@ class NuScenesDataset(DatasetTemplate):
             glob_se3_past =  get_nuscenes_sensor_pose_in_global(self.nusc, lidar_tk)
             current_se3_past = current_se3_glob @ glob_se3_past
             apply_se3_(current_se3_past, points_=pcd)
-            points.append(pcd)
+            points_original.append(pcd)
             
-        points_original = np.concatenate(points, axis=0)
+        points_original = np.concatenate(points_original, axis=0)  # (N_ori_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
 
+        # -----------------------------
+        # get sampled points
         if self.training:
-            # TODO: [on going] copy-paste from gt_database
-            points, boxes = list(), list()
-            # ['car: 5', 'pedestrian: 5']
+            sampled_points, sampled_boxes, sampled_boxes_name, sampled_boxes_velo, instances_tf = list(), list(), list(), list(), list()
             instance_index = 0  # running variable
             for cls_name in self.sample_group.keys():
                 sampled_trajectories_path = self.sample_with_fixed_number(cls_name)
                 for traj_path in sampled_trajectories_path:
                     traj_points, traj_boxes, _ = load_1traj(traj_path, 
+                                                            instance_index,
                                                             num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
-                                                            src_frequency=5,  # TODO: check
-                                                            target_frequency=20  # frequency of NuScenes
+                                                            src_frequency=5.,
+                                                            target_frequency=20.  # frequency of NuScenes
                                                             )
-                    # compute points' instance index
-                    traj_points[:, -1] = instance_index
-                    
-                    # TODO: compute instance_tf with gt_boxes == info's
+                    # traj_points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
+                    # traj_boxes: (N_box, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
+
+                    # compute instance_tf with gt_boxes == info's
+                    traj_correction_tf = compute_correction_tf(traj_boxes)  # (N_boxes, 4, 4)
+                    padded_traj_correction_tf = np.zeros(self.dataset_cfg.MAX_SWEEPS, 4, 4)  # NOTE: hard-code freq of src < freq of target
+                    padded_traj_correction_tf[traj_boxes[:, -2].astype(int)] = traj_correction_tf
+
+                    # compute velo
+                    box_velo = (traj_boxes[-1, :2] - traj_boxes[0, :2]) / 0.5  # (2,)
+
+                    # store
+                    sampled_points.append(traj_points)
+                    sampled_boxes.append(traj_boxes[-1])
+                    sampled_boxes_name.append(cls_name)
+                    sampled_boxes_velo.append(box_velo)
+                    instances_tf.append(padded_traj_correction_tf)
 
                     # move on to the next traj
                     instance_index += 1
 
-            # TODO: check last_box of each traj, see if they overlap with anyone, if yes, remove points
+            sampled_points = np.concatenate(sampled_points)  # (N_sampled_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
+            sampled_boxes = np.concatenate(sampled_boxes)  # (N_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
+            sampled_boxes_name = np.array(sampled_boxes_name)  # (N_inst,)
+            sampled_boxes_velo = np.stack(sampled_boxes_velo, axis=0)  # (N_inst, 2)
+            instances_tf = np.stack(instances_tf, axis=0)  # (N_inst, N_sweep in src, 4, 4)
 
-        # TODO: get gt_boxes from info but put them in a different name 
-        # TODO: shutdown OpenPCDet's native database sampling
+            # check last_box of each traj, see if they overlap with anyone, if yes, remove points
+            iou = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, :7], sampled_boxes[:, :7])
+            iou[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0  # (N_inst, N_inst)
+            mask_valid_inst = iou.max(axis=1) == 0  # (N_inst,)
+            # remove invalid sampled_boxes & points
+            valid_instance_ids = np.arange(sampled_boxes.shape[0])[mask_valid_inst]  # (N_valid_inst,)
+            mask_valid_points = np.any(sampled_points[:, -1].astype(int).reshape(-1, 1) == valid_instance_ids.reshape(1, -1), axis=1)  # (N_pts,)
+            sampled_points = sampled_points[mask_valid_points]  # (N_sampled_pts, 5 + 2)
 
-        map_database_dir = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
-        _out = revised_instance_centric_get_sweeps(self.nusc, info['token'], num_sweeps, self.class_names,
-                                                   use_hd_map=self.dataset_cfg.get('USE_HD_MAP', False),
-                                                   map_database_path=map_database_dir,
-                                                   map_point_cloud_range=self.map_point_cloud_range,
-                                                   map_bev_image_resolution=self.map_bev_image_resolution)
-        points = _out['points']  # (N, C)
+            sampled_boxes = sampled_boxes[mask_valid_inst]  # (N_val_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
+            sampled_boxes_name = sampled_boxes_name[mask_valid_inst]  # (N_val_inst,)
+            sampled_boxes_velo = sampled_boxes_velo[mask_valid_inst]  # (N_val_inst, 2)
+            instances_tf = instances_tf[mask_valid_inst]  # (N_val_inst, N_sweep in src, 4, 4)
+            assert sampled_boxes.shape[0] > 0
+            
+            # remove original points inside each valid sampled box
+            points_box_index = roiaware_pool3d_utils.points_in_boxes_cpu(
+                torch.from_numpy(points_original[:, :3]).float(), 
+                torch.from_numpy(sampled_boxes[:, :7]).float()
+            ).numpy()  # (N_val_inst, N_ori_pts)
+            mask_ori_pts_in_box = np.any(points_box_index > 0, axis=0)
+            points_original = points_original[np.logical_not(mask_ori_pts_in_box)]
 
+            # merge sampled points and original points
+            assert sampled_points.shape[0] > 0
+            points = np.concatenate([points_original, sampled_points])
+            gt_boxes = np.concatenate([sampled_boxes[:, :7], sampled_boxes_velo], 
+                                      axis=1)  # (N_val_inst, 9) - x, y, z, dx, dy, dz, yaw, vx, vy
+            gt_names = sampled_boxes_name
+        else:
+            # validation & testing
+            points = points_original
+            gt_boxes = info['gt_boxes']
+            gt_names = info['gt_names']
 
         input_dict = {
             'points': points,
-            'instances_tf': _out['instances_tf'],
             'frame_id': Path(info['lidar_path']).stem,
-            'metadata': {
-                'token': info['token'],
-                'num_sweeps': num_sweeps,
-                'num_original_instances': _out['instances_tf'].shape[0],
-                'num_original_boxes': _out['gt_boxes'].shape[0],
-                'tf_target_from_glob': _out['target_from_glob'],
-                'use_hd_map': self.dataset_cfg.get('USE_HD_MAP', False)
-            }
+            'metadata': {'token': info['token'],
+                         'num_sweeps_target': num_sweeps},
+            'gt_boxes': gt_boxes,
+            'gt_names': gt_names  # str
         }
 
-        # overwrite gt_boxes & gt_names
-        input_dict.update({
-            'gt_boxes': _out['gt_boxes'],
-            'gt_names': _out['gt_names']
-        })
+        if self.training:
+            input_dict['instances_tf'] = instances_tf
+            input_dict['metadata']['num_sampled_boxes'] = gt_boxes.shape[0]
 
         # data augmentation & other stuff
         data_dict = self.prepare_data(data_dict=input_dict)
@@ -357,8 +382,8 @@ class NuScenesDataset(DatasetTemplate):
         )
         return ap_result_str, ap_dict
 
-    def create_groundtruth_database(self):
-        create_database(self.root_path, classes_of_interest=set(self.class_names))
+    def create_groundtruth_database(self, lyft_root: str, classes_of_interest: list):
+        create_database(Path(lyft_root), classes_of_interest=set(classes_of_interest))
 
     def create_hd_map_database(self):
         assert len(self.infos) > 0, "remember to call create_nuscenes_infos first"
@@ -451,11 +476,6 @@ if __name__ == '__main__':
     parser.add_argument('--no-create_groundtruth_database', dest='create_groundtruth_database', action='store_false')
     parser.set_defaults(create_groundtruth_database=False)
 
-    parser.add_argument('--create_hd_map_database', action='store_true')
-    parser.add_argument('--no-create_hd_map_database', dest='create_hd_map_database', action='store_false')
-    parser.set_defaults(create_hd_map_database=False)
-
-
     parser.add_argument('--training', action='store_true')
     parser.add_argument('--no-training', dest='training', action='store_false')
     parser.set_defaults(training=True)
@@ -475,16 +495,14 @@ if __name__ == '__main__':
             max_sweeps=dataset_cfg.MAX_SWEEPS,
         )
 
-    if args.create_groundtruth_database or args.create_hd_map_database:
+    if args.create_groundtruth_database:
         nuscenes_dataset = NuScenesDataset(
             dataset_cfg=dataset_cfg, class_names=None,
             root_path=ROOT_DIR / 'data' / 'nuscenes',
             logger=common_utils.create_logger(), training=args.training
         )
-        if args.create_groundtruth_database:
-            assert args.training, "expect args.training == True; get False"
-            nuscenes_dataset.create_groundtruth_database()
-    
-        if args.create_hd_map_database:
-            nuscenes_dataset.create_hd_map_database()
-
+        assert args.training, "expect args.training == True; get False"
+        nuscenes_dataset.create_groundtruth_database(
+            lyft_root=ROOT_DIR / 'data' / 'lyft',
+            classes_of_interest=['car',]
+        )

@@ -212,3 +212,23 @@ def make_se3(translation: Union[List[float], np.ndarray], yaw: float = None, rot
     out[:3, -1] = translation.reshape(3)
 
     return out
+
+
+def compute_correction_tf(boxes: np.ndarray) -> np.ndarray:
+    """
+    Args:
+        boxes: (N_box, 7 + C) - x, y, z, dx, dy, dz, yaw, [+ C] 
+    
+    Returns:
+        instance_tf: (N_box, 4, 4)
+    """
+    cos, sin = np.cos(boxes[:, 6]), np.sin(boxes[:, 6])
+    zeros, ones = np.zeros(boxes.shape[0]), np.ones(boxes.shape[0])
+    poses = np.stack([
+        cos,    -sin,   zeros,      boxes[:, 0],
+        sin,    cos,    zeros,      boxes[:, 1],
+        zeros,  zeros,  ones,       boxes[:, 2],
+        zeros,  zeros,  zeros,      ones,
+    ], axis=1).reshape(-1, 4, 4)
+    correction_tf = np.einsum('ij, bjk -> bik', poses[-1], np.linalg.inv(poses))
+    return correction_tf
