@@ -157,4 +157,10 @@ def print_dict(d: dict, name=''):
             print_dict(v)
         print(out)
     print('} eod ', name)
-    
+
+
+def color_points_binary(points_binary_channel: np.ndarray):
+    assert points_binary_channel.shape == (points_binary_channel.shape[0],), f"{points_binary_channel.shape} != {(points_binary_channel.shape[0],)}"
+    points_color = np.zeros((points_binary_channel.shape[0], 3))
+    points_color[points_binary_channel.astype(int) == 1, 0] = 1.0  # red for 1, black for 0
+    return points_color
