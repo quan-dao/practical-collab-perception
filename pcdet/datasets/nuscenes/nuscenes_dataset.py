@@ -187,7 +187,7 @@ class NuScenesDataset(DatasetTemplate):
 
         # -----------------------------
         # get sampled points
-        if self.training:
+        if self.training and not self.dataset_cfg.get('DEBUG', False):
             sampled_points, sampled_boxes, sampled_boxes_name, sampled_boxes_velo, instances_tf = list(), list(), list(), list(), list()
             instance_index = 0  # running variable
             for cls_name in self.sample_group.keys():
@@ -216,6 +216,8 @@ class NuScenesDataset(DatasetTemplate):
 
                     # compute velo
                     box_velo = (traj_boxes[-1, :2] - traj_boxes[0, :2]) / 0.5  # (2,)
+
+                    # TODO: store traj_boxes -> after IoU-based filtering use traj_boxes to remove g.t points that are inside
 
                     # store
                     sampled_points.append(traj_points)
@@ -280,7 +282,7 @@ class NuScenesDataset(DatasetTemplate):
             'gt_names': gt_names  # str
         }
 
-        if self.training:
+        if self.training and not self.dataset_cfg.get('DEBUG', False):
             input_dict['instances_tf'] = instances_tf
             input_dict['metadata']['num_sampled_boxes'] = gt_boxes.shape[0]
 
