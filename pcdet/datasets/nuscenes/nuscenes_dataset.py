@@ -193,14 +193,15 @@ class NuScenesDataset(DatasetTemplate):
             for cls_name in self.sample_group.keys():
                 sampled_trajectories_path = self.sample_with_fixed_number(cls_name)
                 for traj_path in sampled_trajectories_path:
-                    traj_points, traj_boxes, _ = load_1traj(traj_path, 
-                                                            instance_index,
-                                                            num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
-                                                            src_frequency=5.,
-                                                            pc_range=self.point_cloud_range,
-                                                            noise_rotation=np.random.uniform(-np.pi/3., np.pi/3.),
-                                                            target_frequency=20.  # frequency of NuScenes
-                                                            )
+                    traj_points, traj_boxes, _ = load_1traj(
+                        traj_path, 
+                        instance_index,
+                        num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
+                        src_frequency=5.,
+                        desired_range=self.point_cloud_range[3] * np.random.uniform(0.35, 1.),
+                        noise_rotation=np.random.uniform(-np.pi/3., np.pi/3.),
+                        target_frequency=20.  # frequency of NuScenes
+                    )
                     # traj_points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
                     # traj_boxes: (N_box, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
 
