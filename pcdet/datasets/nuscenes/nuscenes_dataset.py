@@ -205,6 +205,9 @@ class NuScenesDataset(DatasetTemplate):
                     # traj_points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
                     # traj_boxes: (N_box, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
 
+                    if traj_points.size == 0:
+                        continue
+
                     # compute instance_tf with gt_boxes == info's
                     traj_correction_tf = compute_correction_tf(traj_boxes)  # (N_boxes, 4, 4)
                     padded_traj_correction_tf = np.tile(np.eye(4).reshape(1, 4, 4), 
