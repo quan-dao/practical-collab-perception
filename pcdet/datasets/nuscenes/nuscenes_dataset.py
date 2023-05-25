@@ -241,7 +241,10 @@ class NuScenesDataset(DatasetTemplate):
             sampled_boxes = sampled_boxes[mask_valid_inst]  # (N_val_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
             sampled_boxes_name = sampled_boxes_name[mask_valid_inst]  # (N_val_inst,)
             sampled_boxes_velo = sampled_boxes_velo[mask_valid_inst]  # (N_val_inst, 2)
-            instances_tf = instances_tf[mask_valid_inst]  # (N_val_inst, N_sweep in src, 4, 4)
+
+            # NOTE: don't remove entry of instance_tf in order to keep the consistency between
+            # NOTE: points' instance_index & row index in instance_tf
+            # instances_tf = instances_tf[mask_valid_inst]  # (N_val_inst, N_sweep in src, 4, 4)
             assert sampled_boxes.shape[0] > 0
             
             # remove original points inside each valid sampled box
