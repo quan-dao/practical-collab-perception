@@ -162,6 +162,8 @@ def load_1traj(path_traj: Path,
                traj_index: int,
                num_sweeps_in_target: int, 
                src_frequency: float, 
+               pc_range: np.ndarray,
+               noise_rotation: float,
                target_frequency: float = 20., 
                beam_ratio: int = None):
     
@@ -221,10 +223,32 @@ def load_1traj(path_traj: Path,
     glob_se3_last_box = make_se3(boxes[-1, :3], yaw=boxes[-1, 6])
     # map points and boxes to last_box
     apply_se3_(np.linalg.inv(glob_se3_last_box), points_=points, boxes_=boxes)
-    
-    # map points and boxes from last_box to lidar
+
+    # add random local rotation here to points, last box, & instance_tf -> check augmentor_utils.py/global_rotation
+    noise_rotation = np.pi / 3.
+    cos_r, sin_r = np.cos(noise_rotation), np.sin(noise_rotation)
+    tf = np.array([
+        [cos_r,     -sin_r,     0.,     0.],
+        [sin_r,     cos_r,      0.,     0.],
+        [0.,        0.,         1.,     0.],
+        [0.,        0.,         0.,     1.],
+    ])
+    apply_se3_(tf, points_=points, boxes_=boxes)
+
     last_box_in_lidar = traj_info[-1]['box_in_lidar']
+    last_box_in_lidar[6] += noise_rotation
+
+    # map points and boxes from last_box to lidar
     lidar_se3_last_box = make_se3(last_box_in_lidar[:3], yaw=last_box_in_lidar[6])
     apply_se3_(lidar_se3_last_box, points_=points, boxes_=boxes)
+
+    last_box_in_range = np.logical_and(last_box_in_lidar[:2] > pc_range[:2],
+                                       last_box_in_lidar[:2] < pc_range[3: 5]).all()
+    if not last_box_in_range:
+        transl = (pc_range[3] - np.linalg.norm(last_box_in_lidar[:2])) * \
+            np.array([last_box_in_lidar[0], last_box_in_lidar[1], 0.]) / np.linalg.norm(last_box_in_lidar[:2])
+        tf = np.eye(4)
+        tf[:3, -1] = transl
+        apply_se3_(tf, points_=points, boxes_=boxes)
 
     return points, boxes, mask_keep_points

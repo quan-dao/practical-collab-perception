@@ -167,6 +167,11 @@ class NuScenesDataset(DatasetTemplate):
         points_original = list()
         for (lidar_tk, timelag, sweep_idx) in sweeps_info:
             pcd = get_one_pointcloud(self.nusc, lidar_tk)
+            
+            # TODO: remove ego points
+            mask_ego_points = np.all(np.abs(pcd[:, :2]) < 2.0, axis=1)
+            pcd = pcd[np.logical_not(mask_ego_points)]
+
             pcd = np.pad(pcd, pad_width=[(0, 0), (0, 3)], constant_values=-1)
             pcd[:, -3] = timelag
             pcd[:, -2] = sweep_idx
@@ -192,6 +197,8 @@ class NuScenesDataset(DatasetTemplate):
                                                             instance_index,
                                                             num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
                                                             src_frequency=5.,
+                                                            pc_range=self.point_cloud_range,
+                                                            noise_rotation=np.random.uniform(-np.pi/3., np.pi/3.),
                                                             target_frequency=20.  # frequency of NuScenes
                                                             )
                     # traj_points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
@@ -199,7 +206,8 @@ class NuScenesDataset(DatasetTemplate):
 
                     # compute instance_tf with gt_boxes == info's
                     traj_correction_tf = compute_correction_tf(traj_boxes)  # (N_boxes, 4, 4)
-                    padded_traj_correction_tf = np.zeros((self.dataset_cfg.MAX_SWEEPS, 4, 4))  # NOTE: hard-code freq of src < freq of target
+                    padded_traj_correction_tf = np.tile(np.eye(4).reshape(1, 4, 4), 
+                                                        [self.dataset_cfg.MAX_SWEEPS, 1, 1])  # NOTE: hard-code freq of src < freq of target
                     padded_traj_correction_tf[traj_boxes[:, -2].astype(int)] = traj_correction_tf
 
                     # compute velo
