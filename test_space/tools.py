@@ -55,6 +55,11 @@ def build_dataset_for_testing(dataset_cfg_file: str, class_names: list, **kwargs
     np.random.seed(666)
     cfg_from_yaml_file(dataset_cfg_file, cfg)
     cfg.CLASS_NAMES = class_names
+    if kwargs.get('debug_dataset', False):
+        cfg.DEBUG = True
+        cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
+                                               'random_world_rotation', 'random_world_scaling']
+
     if kwargs.get('version', None) is not None:
         cfg.VERSION = kwargs['version']
     logger = common_utils.create_logger('./artifact/dummy_log.txt')
