@@ -189,6 +189,7 @@ class NuScenesDataset(DatasetTemplate):
         # get sampled points
         if self.training and not self.dataset_cfg.get('DEBUG', False):
             sampled_points, sampled_boxes, sampled_boxes_name, sampled_boxes_velo, instances_tf = list(), list(), list(), list(), list()
+            sampled_traj_boxes = list()
             instance_index = 0  # running variable
             for cls_name in self.sample_group.keys():
                 sampled_trajectories_path = self.sample_with_fixed_number(cls_name)
@@ -198,7 +199,7 @@ class NuScenesDataset(DatasetTemplate):
                         instance_index,
                         num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
                         src_frequency=5.,
-                        desired_range=self.point_cloud_range[3] * np.random.uniform(0.35, 1.),
+                        desired_range=self.point_cloud_range[3] * np.random.uniform(0.1, 0.75),
                         noise_rotation=np.random.uniform(-np.pi/3., np.pi/3.),
                         target_frequency=20.  # frequency of NuScenes
                     )
@@ -217,7 +218,8 @@ class NuScenesDataset(DatasetTemplate):
                     # compute velo
                     box_velo = (traj_boxes[-1, :2] - traj_boxes[0, :2]) / 0.5  # (2,)
 
-                    # TODO: store traj_boxes -> after IoU-based filtering use traj_boxes to remove g.t points that are inside
+                    # store traj_boxes -> after IoU-based filtering use traj_boxes to remove g.t points that are inside  
+                    sampled_traj_boxes.append(traj_boxes)
 
                     # store
                     sampled_points.append(traj_points)
@@ -253,10 +255,11 @@ class NuScenesDataset(DatasetTemplate):
             # instances_tf = instances_tf[mask_valid_inst]  # (N_val_inst, N_sweep in src, 4, 4)
             assert sampled_boxes.shape[0] > 0
             
-            # remove original points inside each valid sampled box
+            # remove original points inside each valid sampled trajectories
+            valid_sampled_traj_boxes = np.concatenate([sampled_traj_boxes[_idx] for _idx in valid_instance_ids], axis=0)
             points_box_index = roiaware_pool3d_utils.points_in_boxes_cpu(
                 torch.from_numpy(points_original[:, :3]).float(), 
-                torch.from_numpy(sampled_boxes[:, :7]).float()
+                torch.from_numpy(valid_sampled_traj_boxes[:, :7]).float()
             ).numpy()  # (N_val_inst, N_ori_pts)
             mask_ori_pts_in_box = np.any(points_box_index > 0, axis=0)
             points_original = points_original[np.logical_not(mask_ori_pts_in_box)]
