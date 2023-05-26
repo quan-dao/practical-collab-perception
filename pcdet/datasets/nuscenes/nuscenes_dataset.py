@@ -164,7 +164,7 @@ class NuScenesDataset(DatasetTemplate):
         current_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, current_lidar_tk))
 
         sweeps_info = get_sweeps_token(self.nusc, current_lidar_tk, n_sweeps=num_sweeps, return_time_lag=True, return_sweep_idx=True)
-        points_original = list()
+        points_original, list_lidar_coord = list(), list()
         for (lidar_tk, timelag, sweep_idx) in sweeps_info:
             pcd = get_one_pointcloud(self.nusc, lidar_tk)
             
@@ -182,6 +182,10 @@ class NuScenesDataset(DatasetTemplate):
             current_se3_past = current_se3_glob @ glob_se3_past
             apply_se3_(current_se3_past, points_=pcd)
             points_original.append(pcd)
+            
+            # log coord of lidar, when this sweep in collected, in "current lidar" frame
+            lidar_coord = np.pad(current_se3_past[:3, -1], pad_width=[(0, 1)], constant_values=sweep_idx)  # (x, y, z, sweep_idx)
+            list_lidar_coord.append(lidar_coord)
             
         points_original = np.concatenate(points_original, axis=0)  # (N_ori_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
 
@@ -288,7 +292,8 @@ class NuScenesDataset(DatasetTemplate):
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token'],
-                         'num_sweeps_target': num_sweeps},
+                         'num_sweeps_target': num_sweeps,
+                         'lidar_coords': np.concatenate(list_lidar_coord)},
             'gt_boxes': gt_boxes,
             'gt_names': gt_names  # str
         }

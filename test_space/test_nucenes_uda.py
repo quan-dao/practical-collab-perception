@@ -57,15 +57,15 @@ def main(test_dataset: bool, test_dataloader: bool, chosen_batch_idx: int = 0):
         painter.show(xyz_color=points_color, boxes_velo=cur_boxes[:, -3: -1])
 
         # test correction
-        print('showing corrected')
-        instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
-        points_corrected = correct_points(points, instances_tf)
-        cur_points_corrected = points_corrected[points[:, 0].astype(int) == chosen_batch_idx]
+        # print('showing corrected')
+        # instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
+        # points_corrected = correct_points(points, instances_tf)
+        # cur_points_corrected = points_corrected[points[:, 0].astype(int) == chosen_batch_idx]
 
-        print('cur_points_corrected: ', cur_points_corrected.shape)
-        painter = PointsPainter(xyz=cur_points_corrected[:, 1: 4], boxes=cur_boxes[:, :7])
-        points_color = color_points_binary(cur_points_corrected[:, -1] > -1)
-        painter.show(xyz_color=points_color)
+        # print('cur_points_corrected: ', cur_points_corrected.shape)
+        # painter = PointsPainter(xyz=cur_points_corrected[:, 1: 4], boxes=cur_boxes[:, :7])
+        # points_color = color_points_binary(cur_points_corrected[:, -1] > -1)
+        # painter.show(xyz_color=points_color)
 
 
 if __name__ == '__main__':
