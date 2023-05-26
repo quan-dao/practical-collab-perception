@@ -32,6 +32,7 @@ POINT_FEATURE_ENCODING: {
 # UDA STUFF
 DATABASE_ROOT: ../data/lyft/gt_boxes_database_lyft
 SAMPLE_GROUP: ['car:30']
+ORACLE_POINTCLOUD: True
 # -----------------------
 
 DATA_AUGMENTOR:

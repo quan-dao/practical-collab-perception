@@ -168,7 +168,7 @@ class NuScenesDataset(DatasetTemplate):
         for (lidar_tk, timelag, sweep_idx) in sweeps_info:
             pcd = get_one_pointcloud(self.nusc, lidar_tk)
             
-            # TODO: remove ego points
+            # remove ego points
             mask_ego_points = np.all(np.abs(pcd[:, :2]) < 2.0, axis=1)
             pcd = pcd[np.logical_not(mask_ego_points)]
 
@@ -214,6 +214,14 @@ class NuScenesDataset(DatasetTemplate):
                     padded_traj_correction_tf = np.tile(np.eye(4).reshape(1, 4, 4), 
                                                         [self.dataset_cfg.MAX_SWEEPS, 1, 1])  # NOTE: hard-code freq of src < freq of target
                     padded_traj_correction_tf[traj_boxes[:, -2].astype(int)] = traj_correction_tf
+
+                    # correction using oracle trajectory
+                    if self.dataset_cfg.get('ORACLE_POINTCLOUD', False):
+                        unq_sweep_ids, inv_unq_sweep_ids = np.unique(traj_points[:, -2].astype(int), return_inverse=True)
+                        __tf = padded_traj_correction_tf[unq_sweep_ids]
+                        traj_points_tf = __tf[inv_unq_sweep_ids]  # (N_pts, 4, 4)
+                        traj_points[:, :3] = np.einsum('bij, bjk -> bik', traj_points_tf[:, :3, :3], traj_points[:, :3, np.newaxis])[:, :, 0]
+                        traj_points[:, :3] = traj_points[:, :3] + traj_points_tf[:, :3, -1]
 
                     # compute velo
                     box_velo = (traj_boxes[-1, :2] - traj_boxes[0, :2]) / 0.5  # (2,)
