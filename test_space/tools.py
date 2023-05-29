@@ -62,6 +62,10 @@ def build_dataset_for_testing(dataset_cfg_file: str, class_names: list, **kwargs
 
     if kwargs.get('version', None) is not None:
         cfg.VERSION = kwargs['version']
+
+    if kwargs.get('MAX_SWEEPS', None) is not None:
+        cfg.MAX_SWEEPS = kwargs['MAX_SWEEPS']
+
     logger = common_utils.create_logger('./artifact/dummy_log.txt')
     dataset, dataloader, _ = build_dataloader(dataset_cfg=cfg, class_names=cfg.CLASS_NAMES, batch_size=kwargs.get('batch_size', 2),
                                               dist=False, logger=logger, training=kwargs.get('training', False), total_epochs=1, seed=666,
