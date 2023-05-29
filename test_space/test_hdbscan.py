@@ -30,8 +30,7 @@ def main():
     
     # ========================================================
     points = remove_ground(points, segmenter)
-    print('points: ', points.shape)  # NOTE: lost time-stamp here!  
-
+        
     clusterer.fit(points[:, :2])
     labels = clusterer.labels_.copy()
     print('points: ', points.shape)
