@@ -69,7 +69,7 @@ class BoxFinder(object):
         self.return_fitness = return_fitness
         self.return_theta_star = return_theta_star
 
-    def fit(self, points: np.ndarray, init_theta=None):
+    def fit(self, points: np.ndarray, rough_est_heading: np.ndarray, init_theta=None):
         assert len(points.shape) == 2
         assert points.shape[1] >= 3, "need xyz"
         xy = points[:, : 2]
@@ -123,7 +123,7 @@ class BoxFinder(object):
         if self.return_in_form == 'edges_homogeneous_coord': 
             out = [edges,]
         else:
-            box_bev, mean_z = self.cvt_4edges_to_box(edges, points)
+            box_bev, mean_z = self.cvt_4edges_to_box(edges, points, rough_est_heading)
             out = [box_bev, mean_z]
         
         if self.return_fitness:
@@ -167,7 +167,7 @@ class BoxFinder(object):
 
         return cost
     
-    def cvt_4edges_to_box(self, edges_homo: np.ndarray, points: np.ndarray):
+    def cvt_4edges_to_box(self, edges_homo: np.ndarray, points: np.ndarray, rough_est_heading: np.ndarray):
         """
         Convert 4-edges to [x, y, dx, dy, yaw] & compute mean z-coord of points in box
         Args:
@@ -186,16 +186,29 @@ class BoxFinder(object):
         vers = np.stack([p01, p12, p23, p30], axis=0)
         vers /= vers[:, [-1]]
 
-        box_center_xy = np.mean(vers[[0, 2], :2], axis=0)
+        center_xy = np.mean(vers[:, :2], axis=0)
+        
+        dim03 = np.linalg.norm(vers[3] - vers[0])
+        dim01 = np.linalg.norm(vers[1] - vers[0])
 
-        edge23_mid_xy = np.mean(vers[[2, 3], :2], axis=0)
-        heading_dir = edge23_mid_xy - box_center_xy
-        yaw = np.arctan2(heading_dir[1], heading_dir[0]).item()
+        if dim03 > dim01:
+            dx, dy = dim03, dim01
+            perspective_heading = vers[3] - vers[0]
+        else:
+            dx, dy = dim01, dim03
+            perspective_heading = vers[1] - vers[0]
 
-        dx = np.linalg.norm(vers[3] - vers[0]).item()
-        dy = np.linalg.norm(vers[1] - vers[0]).item()
+        heading0 = np.arctan2(perspective_heading[1], perspective_heading[0])
+        heading1 = heading0 + np.pi
 
-        box_bev = [*box_center_xy.tolist(), dx, dy, yaw]
+        _prod0 = np.array([np.cos(heading0), np.sin(heading0)]) @ rough_est_heading
+        _prod1 = np.array([np.cos(heading1), np.sin(heading1)]) @ rough_est_heading
+        if _prod0 > _prod1:
+            heading = heading0
+        else:
+            heading = heading1
+
+        box_bev = [*center_xy.tolist(), dx, dy, heading]
         mean_z = np.mean(points[:, 2]).item()
         return box_bev, mean_z
 

@@ -13,7 +13,7 @@ from workspace.o3d_visualization import PointsPainter
 from workspace.box_fusion_utils import kde_fusion
 
 
-def main():
+def main(sample_idx: int, show_last: bool):
     # init
     class_names = ['car',]
     num_sweeps = 30
@@ -26,11 +26,11 @@ def main():
         MAX_SWEEPS=num_sweeps
     )
 
-    ground_segmenter = init_ground_segmenter(th_dist=0.3)
+    ground_segmenter = init_ground_segmenter(th_dist=0.1)
 
     clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1., approx_min_span_tree=True,
                                 gen_min_span_tree=True, leaf_size=100,
-                                metric='euclidean', min_cluster_size=20, min_samples=None)
+                                metric='euclidean', min_cluster_size=30, min_samples=None)
     
     box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
 
@@ -39,7 +39,7 @@ def main():
                              random_state=0)
 
      # ---------------
-    data_dict = dataset[110]  
+    data_dict = dataset[sample_idx]  
     points = data_dict['points']  # (N, 3 + C) - x, y, z, C-channel
 
     # =================================================
@@ -80,13 +80,19 @@ def main():
         #     painter.show()
         #     print('hold')
 
+        # get rough heading estimation
+        pts_1st_group = this_points[this_points_sweep_idx == unq_sweep_idx[0], :2].mean(axis=0)
+        pts_last_group = this_points[this_points_sweep_idx == unq_sweep_idx[-1], :2].mean(axis=0)
+        rough_est_heading = pts_last_group - pts_1st_group
+        rough_est_heading /= np.linalg.norm(rough_est_heading)
+
         traj_boxes = list()
         encounter_invalid_box = False
         init_theta, prev_num_points = None, -1
         for sweep_idx in unq_sweep_idx:
             sweep_points = this_points[this_points_sweep_idx == sweep_idx]  # (N_in_sw, 3 + C)
 
-            box_bev, mean_z, theta_star = box_finder.fit(sweep_points, init_theta=init_theta)
+            box_bev, mean_z, theta_star = box_finder.fit(sweep_points, rough_est_heading, init_theta=init_theta)
             # box_bev: [x, y, dx, dy, heading]
             
             # update init_theta
@@ -97,28 +103,25 @@ def main():
             # get box's height & its z-coord of its center
             perspective_center = np.pad(box_bev[:2], pad_width=[(0, 1)], constant_values=mean_z)
             
-            dist_to_neighbor, neighbor_ids = tree_ground.query(perspective_center.reshape(1, -1), k=3, return_distance=True)
-            weights = 1.0 / np.clip(dist_to_neighbor.reshape(-1), a_min=1e-3, a_max=None)
-            ground_height_at_center = np.sum(ground_pts[neighbor_ids.reshape(-1), 2] * weights) / np.sum(weights)
-            
-            # TODO: get ground heigh for every point
+            # Tget ground heigh for every point in inside the box
             dist_to_neighbor, neighbor_ids = tree_ground.query(sweep_points[:, :3], k=3, return_distance=True)
             #  dist_to_neighbor (N, k)
+            # neighbor_ids: (N, k)
             weights = 1.0 / np.clip(dist_to_neighbor, a_min=1e-3, a_max=None)  # (N, k)
             weights = weights / weights.sum(axis=1).reshape(-1, 1)  # (N, k)
 
             ground_height = ground_pts[neighbor_ids.reshape(-1), 2].reshape(sweep_points.shape[0], -1)  # (N * k,) -> (N, k)
-            ground_height = np.sum(ground_height * weights, axis=1)
+            ground_height = np.sum(ground_height * weights, axis=1)  # (N,)
 
             box_height = np.max(sweep_points[:, 2] - ground_height)
-            center_z = ground_height_at_center + 0.5 * box_height
+            center_z = np.mean(ground_height) + 0.5 * box_height
 
             # assembly box
-            box = np.array([box_bev[0], box_bev[1], center_z, box_bev[2], box_bev[3], box_height, box_bev[4]])
+            box = np.array([box_bev[0], box_bev[1], center_z, box_bev[2], box_bev[3], box_height, box_bev[4], sweep_idx])
 
-            # filter: box's volume
-            box_volume = box[3] * box[4] * box[5]
-            if box_volume < 0.15 or box_volume > 120.:  # lower threshold as 0.15 to include pedestrian
+            # filter: box's dim
+            invalid_dim = np.logical_or(box[3: 6] < 0.05, box[3: 6] > 20).any()
+            if invalid_dim:  # lower threshold as 0.15 to include pedestrian
                 encounter_invalid_box = True
                 break
             else:
@@ -129,7 +132,7 @@ def main():
         else:
             # valid trajectory 
             traj_boxes = np.stack(traj_boxes, axis=0)
-            traj_boxes = np.pad(traj_boxes, pad_width=[(0, 0), (0, 1)], constant_values=label)  # [x, y, z, dx, dy, dz, yaw, cluster_id]
+            traj_boxes = np.pad(traj_boxes, pad_width=[(0, 0), (0, 1)], constant_values=label)  # [x, y, z, dx, dy, dz, yaw, sweep_idx, cluster_id]
             
             # aggregate boxes'size using KDE
             __traj_boxes = np.pad(traj_boxes[:, :7], pad_width=[(0, 0), (0, 2)], constant_values=0.)
@@ -140,8 +143,6 @@ def main():
             # refind boxes' location on XY-plane using RANSAC
             ransac.fit(np.expand_dims(traj_boxes[:, 0], axis=1), traj_boxes[:, 1])
             traj_boxes[:, 1] = ransac.predict(traj_boxes[:, 0].reshape(-1, 1))
-            
-            # TODO: think of a way to get better init of heading
 
             all_traj_boxes.append(traj_boxes)
     
@@ -149,17 +150,25 @@ def main():
     # =================================================
     assert len(all_traj_boxes) > 0
     all_traj_boxes = np.concatenate(all_traj_boxes)
-    painter = PointsPainter(points[:, :3], all_traj_boxes)
+
+    if show_last:
+        mask_show_pts = points[:, -2].astype(int) == num_sweeps - 1 
+        mask_show_boxes = all_traj_boxes[:, -2].astype(int) == num_sweeps - 1
+    else:
+        mask_show_pts = np.ones(points.shape[0], dtype=bool)
+        mask_show_boxes = np.ones(all_traj_boxes.shape[0], dtype=bool)
     
     labels_color = matplotlib.cm.rainbow(np.linspace(0, 1, unq_labels.shape[0]))[:, :3]
     points_color = labels_color[points_label]
     points_color[points_label == -1] = 0.0
     boxes_color = labels_color[all_traj_boxes[:, -1].astype(int)] 
 
-    painter.show(xyz_color=points_color, boxes_color=boxes_color)
+    painter = PointsPainter(points[mask_show_pts, :3], all_traj_boxes[mask_show_boxes])
+    painter.show(xyz_color=points_color[mask_show_pts], boxes_color=boxes_color[mask_show_boxes])
 
 
 
 if __name__ == '__main__':
-    main()
+    main(sample_idx=110,
+        show_last=False)
 
