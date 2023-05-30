@@ -1,5 +1,6 @@
 import math
 import torch
+import numpy as np
 
 try:
     from kornia.geometry.conversions import (
@@ -89,3 +90,17 @@ def bin_depths(depth_map, mode, depth_min, depth_max, num_bins, target=False):
         # Convert to integer
         indices = indices.type(torch.int64)
     return indices
+
+
+def make_vector(angle):    
+    return np.hstack([np.cos(angle).reshape(-1,1), 
+                      np.sin(angle).reshape(-1,1)])
+
+def get_rotation_near_weighted_mean(angles, weights=None):
+    """
+    Computes weighted mean rotation in vector space due to wrap-around of angles
+    and returns the angle that is closest to that weighted mean
+    """
+    mean_vec = np.average(make_vector(angles), axis=0, weights=weights)
+    mean_angle = np.arctan2(mean_vec[1],mean_vec[0])    
+    return angles[np.argmin(angles - mean_angle)]

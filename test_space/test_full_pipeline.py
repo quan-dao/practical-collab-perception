@@ -9,6 +9,7 @@ from test_space.tools import build_dataset_for_testing
 
 from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
 from workspace.o3d_visualization import PointsPainter
+from workspace.box_fusion_utils import kde_fusion
 
 
 def main():
@@ -63,16 +64,16 @@ def main():
         this_points = points[points_label == label]  # (N_in_cluster, 3 + C)
         
         this_points_sweep_idx = this_points[:, -2].astype(int)  # (N_in_cluster,)
-        unq_sweep_idx = np.unique(this_points_sweep_idx)
+        unq_sweep_idx, num_points_per_sweep = np.unique(this_points_sweep_idx, return_counts=True)
 
         # filter: contains points from a single sweep
         if unq_sweep_idx.shape[0] == 1:
             continue
         
-        if label in (44, 59):
-            painter = PointsPainter(this_points[:, :3])
-            painter.show()
-            print('hold')
+        # if label in (44, 59):
+        #     painter = PointsPainter(this_points[:, :3])
+        #     painter.show()
+        #     print('hold')
 
         traj_boxes = list()
         encounter_invalid_box = False
@@ -110,6 +111,13 @@ def main():
             traj_boxes = np.stack(traj_boxes, axis=0)
             traj_boxes = np.pad(traj_boxes, pad_width=[(0, 0), (0, 1)], constant_values=label)  # [x, y, z, dx, dy, dz, yaw, cluster_id]
             
+            # TODO: average boxes'size
+            __traj_boxes = np.pad(traj_boxes[:, :7], pad_width=[(0, 0), (0, 2)], constant_values=0.)
+            __traj_boxes[:, -1] = num_points_per_sweep.astype(float) / float(this_points.shape[0])
+            fused_box = kde_fusion(__traj_boxes, src_weights=__traj_boxes[:, -1])
+            traj_boxes[:, 3: 6] = fused_box[3: 6]
+            # TODO: think of a way to get better init of heading
+
             all_traj_boxes.append(traj_boxes)
     
     # =================================================

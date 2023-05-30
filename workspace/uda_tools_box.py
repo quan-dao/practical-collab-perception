@@ -54,22 +54,26 @@ def init_ground_segmenter(th_dist: float = None):
 class BoxFinder(object):
     def __init__(self, 
                  criterion: str = 'closeness', 
-                 return_in_form: str = 'edges_homogeneous_coord'):
+                 return_in_form: str = 'edges_homogeneous_coord',
+                 return_fitness: bool = False):
         
         assert criterion in ('area', 'closeness'), f"{criterion} is unknown"
         assert return_in_form in ('edges_homogeneous_coord', 'box_openpcdet')
         
         self.d0 = 0.01  # to be used for closeness covariance
-        self.angle_resolution = 0.1
+        self.angle_resolution = np.deg2rad(3.0)
         self.cost_fnc = self.__getattribute__(f"criterion_{criterion}")
         self.return_in_form = return_in_form
+        self.return_fitness = return_fitness
 
     def fit(self, points: np.ndarray):
         assert len(points.shape) == 2
         assert points.shape[1] >= 3, "need xyz"
         xy = points[:, : 2]
         queue = list()
+        
         thetas = np.arange(start=0., stop=np.pi/2.0, step=self.angle_resolution)
+        
         for _theta in thetas:
             cos, sin = np.cos(_theta), np.sin(_theta)
             e1 = np.array([cos, sin])
@@ -82,7 +86,9 @@ class BoxFinder(object):
             queue.append(q)
         
         queue = np.array(queue)
-        theta_star = thetas[np.argmax(queue)]
+        _idx_max_queue = np.argmax(queue)
+
+        theta_star = thetas[_idx_max_queue]
 
         cos, sin = np.cos(theta_star), np.sin(theta_star)
         C1_star = xy @ np.array([cos, sin])
@@ -101,13 +107,21 @@ class BoxFinder(object):
         ])
         # ax + by - c = 0
         edges[:, -1] *= -1
-
+        
         if self.return_in_form == 'edges_homogeneous_coord': 
-            return edges
-        elif self.return_in_form == 'box_openpcdet':
+            out = [edges,]
+        else:
             box_bev, mean_z = self.cvt_4edges_to_box(edges, points)
-            return box_bev, mean_z
+            out = [box_bev, mean_z]
+        
+        if self.return_fitness:
+            out.append(queue[_idx_max_queue])
 
+        if len(out) == 1:
+            return out[0]
+        else:
+            return out
+        
     def criterion_area(self, C1: np.ndarray, C2: np.ndarray):
         assert len(C1.shape) == len(C2.shape) == 1
         assert C1.shape == C2.shape
@@ -169,3 +183,4 @@ class BoxFinder(object):
         box_bev = [*box_center_xy.tolist(), dx, dy, yaw]
         mean_z = np.mean(points[:, 2]).item()
         return box_bev, mean_z
+    
