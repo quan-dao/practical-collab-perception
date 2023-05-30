@@ -55,7 +55,8 @@ class BoxFinder(object):
     def __init__(self, 
                  criterion: str = 'closeness', 
                  return_in_form: str = 'edges_homogeneous_coord',
-                 return_fitness: bool = False):
+                 return_fitness: bool = False,
+                 return_theta_star=True):
         
         assert criterion in ('area', 'closeness'), f"{criterion} is unknown"
         assert return_in_form in ('edges_homogeneous_coord', 'box_openpcdet')
@@ -65,15 +66,25 @@ class BoxFinder(object):
         self.cost_fnc = self.__getattribute__(f"criterion_{criterion}")
         self.return_in_form = return_in_form
         self.return_fitness = return_fitness
+        self.return_theta_star = return_theta_star
 
-    def fit(self, points: np.ndarray):
+    def fit(self, points: np.ndarray, init_theta=None):
         assert len(points.shape) == 2
         assert points.shape[1] >= 3, "need xyz"
         xy = points[:, : 2]
         queue = list()
         
-        thetas = np.arange(start=0., stop=np.pi/2.0, step=self.angle_resolution)
-        
+        if init_theta is None:
+            thetas = np.arange(start=0., stop=np.pi/2.0, step=self.angle_resolution)
+        else:
+            if init_theta < 0:
+                init_theta *= -1
+            if init_theta > np.pi/2.0:
+                init_theta -= np.pi/2.0
+            thetas = np.arange(start=max(0., init_theta - np.deg2rad(20.)), 
+                               stop=min(init_theta + np.deg2rad(20.), np.pi/2.0), 
+                               step=np.deg2rad(1.5))
+
         for _theta in thetas:
             cos, sin = np.cos(_theta), np.sin(_theta)
             e1 = np.array([cos, sin])
@@ -116,6 +127,9 @@ class BoxFinder(object):
         
         if self.return_fitness:
             out.append(queue[_idx_max_queue])
+
+        if self.return_theta_star:
+            out.append(theta_star)
 
         if len(out) == 1:
             return out[0]

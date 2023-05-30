@@ -31,10 +31,10 @@ def main():
                                 gen_min_span_tree=True, leaf_size=100,
                                 metric='euclidean', min_cluster_size=20, min_samples=None)
     
-    box_finder = BoxFinder(return_in_form='box_openpcdet')
+    box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
 
      # ---------------
-    data_dict = dataset[10]  
+    data_dict = dataset[110]  
     points = data_dict['points']  # (N, 3 + C) - x, y, z, C-channel
 
     # =================================================
@@ -77,11 +77,17 @@ def main():
 
         traj_boxes = list()
         encounter_invalid_box = False
+        init_theta, prev_num_points = None, -1
         for sweep_idx in unq_sweep_idx:
             sweep_points = this_points[this_points_sweep_idx == sweep_idx]  # (N_in_sw, 3 + C)
 
-            box_bev, mean_z = box_finder.fit(sweep_points)
+            box_bev, mean_z, theta_star = box_finder.fit(sweep_points, init_theta=init_theta)
             # box_bev: [x, y, dx, dy, heading]
+            
+            # update init_theta
+            if sweep_points.shape[0] > prev_num_points:
+                init_theta = theta_star
+                prev_num_points = sweep_points.shape[0]
 
             # get box's height & its z-coord of its center
             perspective_center = np.pad(box_bev[:2], pad_width=[(0, 1)], constant_values=mean_z)
@@ -90,7 +96,16 @@ def main():
             weights = 1.0 / np.clip(dist_to_neighbor.reshape(-1), a_min=1e-3, a_max=None)
             ground_height_at_center = np.sum(ground_pts[neighbor_ids.reshape(-1), 2] * weights) / np.sum(weights)
             
-            box_height = np.max(np.abs(sweep_points[:, 2]))
+            # TODO: get ground heigh for every point
+            dist_to_neighbor, neighbor_ids = tree_ground.query(sweep_points[:, :3], k=3, return_distance=True)
+            #  dist_to_neighbor (N, k)
+            weights = 1.0 / np.clip(dist_to_neighbor, a_min=1e-3, a_max=None)  # (N, k)
+            weights = weights / weights.sum(axis=1).reshape(-1, 1)  # (N, k)
+
+            ground_height = ground_pts[neighbor_ids.reshape(-1), 2].reshape(sweep_points.shape[0], -1)  # (N * k,) -> (N, k)
+            ground_height = np.sum(ground_height * weights, axis=1)
+
+            box_height = np.max(sweep_points[:, 2] - ground_height)
             center_z = ground_height_at_center + 0.5 * box_height
 
             # assembly box
@@ -98,7 +113,7 @@ def main():
 
             # filter: box's volume
             box_volume = box[3] * box[4] * box[5]
-            if box_volume < 0.5 or box_volume > 120.:
+            if box_volume < 0.15 or box_volume > 120.:  # lower threshold as 0.15 to include pedestrian
                 encounter_invalid_box = True
                 break
             else:
