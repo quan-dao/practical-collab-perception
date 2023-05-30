@@ -3,11 +3,12 @@ import hdbscan
 import matplotlib.cm
 from pathlib import Path
 from sklearn.neighbors import KDTree
+from sklearn.linear_model import RANSACRegressor
 from tqdm import tqdm
 
 from test_space.tools import build_dataset_for_testing
 
-from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
+from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder, PolynomialRegression
 from workspace.o3d_visualization import PointsPainter
 from workspace.box_fusion_utils import kde_fusion
 
@@ -32,6 +33,10 @@ def main():
                                 metric='euclidean', min_cluster_size=20, min_samples=None)
     
     box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
+
+    ransac = RANSACRegressor(PolynomialRegression(degree=2), 
+                             min_samples=5,
+                             random_state=0)
 
      # ---------------
     data_dict = dataset[110]  
@@ -126,11 +131,16 @@ def main():
             traj_boxes = np.stack(traj_boxes, axis=0)
             traj_boxes = np.pad(traj_boxes, pad_width=[(0, 0), (0, 1)], constant_values=label)  # [x, y, z, dx, dy, dz, yaw, cluster_id]
             
-            # TODO: average boxes'size
+            # aggregate boxes'size using KDE
             __traj_boxes = np.pad(traj_boxes[:, :7], pad_width=[(0, 0), (0, 2)], constant_values=0.)
             __traj_boxes[:, -1] = num_points_per_sweep.astype(float) / float(this_points.shape[0])
             fused_box = kde_fusion(__traj_boxes, src_weights=__traj_boxes[:, -1])
             traj_boxes[:, 3: 6] = fused_box[3: 6]
+
+            # refind boxes' location on XY-plane using RANSAC
+            ransac.fit(np.expand_dims(traj_boxes[:, 0], axis=1), traj_boxes[:, 1])
+            traj_boxes[:, 1] = ransac.predict(traj_boxes[:, 0].reshape(-1, 1))
+            
             # TODO: think of a way to get better init of heading
 
             all_traj_boxes.append(traj_boxes)

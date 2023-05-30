@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.neighbors import KDTree
+from sklearn.metrics import mean_squared_error
 import sys
 sys.path.insert(0, '/home/user/Desktop/python_ws/patchwork-plusplus/build/python_wrapper')
 import pypatchworkpp
@@ -197,4 +198,26 @@ class BoxFinder(object):
         box_bev = [*box_center_xy.tolist(), dx, dy, yaw]
         mean_z = np.mean(points[:, 2]).item()
         return box_bev, mean_z
-    
+
+
+class PolynomialRegression(object):
+    def __init__(self, degree=2, coeffs=None):
+        self.degree = degree
+        self.coeffs = coeffs
+
+    def fit(self, X, y):
+        self.coeffs = np.polyfit(X.ravel(), y, self.degree)
+
+    def get_params(self, deep=False):
+        return {'coeffs': self.coeffs}
+
+    def set_params(self, coeffs=None, random_state=None):
+        self.coeffs = coeffs
+
+    def predict(self, X):
+        poly_eqn = np.poly1d(self.coeffs)
+        y_hat = poly_eqn(X.ravel())
+        return y_hat
+
+    def score(self, X, y):
+        return mean_squared_error(y, self.predict(X))
