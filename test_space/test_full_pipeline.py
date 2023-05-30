@@ -53,7 +53,7 @@ def main(sample_idx: int, show_last: bool):
     # clustering
     clusterer.fit(points[:, :2])
     points_label = clusterer.labels_.copy()
-    unq_labels, inv_unq_labels = np.unique(points_label, return_inverse=True)
+    unq_labels = np.unique(points_label)
 
     # cluter iteration
     # uda_database_root = Path('artifact/uda_db')
@@ -100,10 +100,7 @@ def main(sample_idx: int, show_last: bool):
                 init_theta = theta_star
                 prev_num_points = sweep_points.shape[0]
 
-            # get box's height & its z-coord of its center
-            perspective_center = np.pad(box_bev[:2], pad_width=[(0, 1)], constant_values=mean_z)
-            
-            # Tget ground heigh for every point in inside the box
+            # get ground heigh for every point in inside the box
             dist_to_neighbor, neighbor_ids = tree_ground.query(sweep_points[:, :3], k=3, return_distance=True)
             #  dist_to_neighbor (N, k)
             # neighbor_ids: (N, k)
@@ -132,6 +129,13 @@ def main(sample_idx: int, show_last: bool):
         else:
             # valid trajectory 
             traj_boxes = np.stack(traj_boxes, axis=0)
+
+            # filter: dynamic trajectory
+            first_to_last_translation = np.linalg.norm(traj_boxes[-1, :2] - traj_boxes[0, :2])
+            if first_to_last_translation < 0.5:
+                # -> static traj => skip
+                continue
+
             traj_boxes = np.pad(traj_boxes, pad_width=[(0, 0), (0, 1)], constant_values=label)  # [x, y, z, dx, dy, dz, yaw, sweep_idx, cluster_id]
             
             # aggregate boxes'size using KDE
