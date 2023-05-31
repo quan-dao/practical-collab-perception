@@ -50,6 +50,10 @@ def main(test_dataset: bool, test_dataloader: bool, chosen_batch_idx: int = 0):
         print('showing original')
         cur_points = points[points[:, 0].astype(int) == chosen_batch_idx]
         cur_boxes = gt_boxes[chosen_batch_idx]  # (N_inst, 10)
+        cur_points_nusc = cur_points[cur_points[:, -1] < 0]
+        painter = PointsPainter(xyz=cur_points_nusc[:, 1: 4])
+        painter.show()
+
         
         print('cur_points: ', cur_points.shape)
         painter = PointsPainter(xyz=cur_points[:, 1: 4], boxes=cur_boxes[:, :7])

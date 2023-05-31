@@ -21,11 +21,11 @@ def main():
 
     clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1., approx_min_span_tree=True,
                                 gen_min_span_tree=True, leaf_size=100,
-                                metric='euclidean', min_cluster_size=20, min_samples=None)
+                                metric='euclidean', min_cluster_size=60, min_samples=None)
     
 
     # ---------------
-    data_dict = dataset[10]  
+    data_dict = dataset[110]  
     points = data_dict['points']  # (N, 3 + C) - x, y, z, C-channel
     
     # ========================================================
@@ -39,7 +39,7 @@ def main():
     
     # ========================================================
     for lb in unq_labels:
-        if lb not in [59, 44, 31]:
+        if lb not in [22, 45, 49, 51, 52, 57, 91, 92]:
             continue
         print('showing cluster: ', lb)
         mask_this_cluster = labels == lb
@@ -47,7 +47,7 @@ def main():
         painter = PointsPainter(points[:, :3])
         painter.show(xyz_color=points_color)
 
-        np.save(f'artifact/hdbscan_dataset10_cluster{lb}.npy', points[mask_this_cluster])
+        np.save(f'artifact/hdbscan_dataset110_cluster{lb}.npy', points[mask_this_cluster])
 
     return 
     # TODO: visualize 20 largest clusters

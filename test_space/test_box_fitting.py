@@ -8,12 +8,15 @@ from workspace.box_fusion_utils import kde_fusion
 
 
 def main():
-    points = np.load('artifact/hdbscan_dataset10_cluster44.npy')
+    points = np.load('artifact/hdbscan_dataset110_cluster22.npy')
     print('points: ', points.shape)
     print(points[:5])
     
     points_sweep_idx = points[:, -2].astype(int)
     unq_sweep_idx  = np.unique(points_sweep_idx)
+
+    rough_est_heading = (points[points_sweep_idx == unq_sweep_idx[0], :2]).mean(axis=0) - (points[points_sweep_idx == unq_sweep_idx[-1], :2]).mean(axis=0)
+    rough_est_heading /= np.linalg.norm(rough_est_heading)
 
     fig, ax = plt.subplots()
     ax.set_aspect('equal', adjustable='box')
@@ -26,7 +29,7 @@ def main():
     
         mask_this_sweep = points_sweep_idx == sweep_idx
         
-        rect, fitness = box_finder.fit(points[mask_this_sweep])
+        rect, fitness, theta_star = box_finder.fit(points[mask_this_sweep], rough_est_heading)
         print(f'sweep {sweep_idx}: fitness = {fitness} | num points: {mask_this_sweep.sum()}')
         fitnesses.append(fitness)
         num_points.append(mask_this_sweep.sum())
@@ -48,9 +51,6 @@ def main():
         # ax.plot(vers[[2, 3], 0], vers[[2, 3], 1], color='b')
         # ax.plot(vers[[3, 0], 0], vers[[3, 0], 1], color='k')
         # break
-
-    fig2, ax2 = plt.subplots()
-    ax2.scatter(num_points, fitnesses)
 
     plt.show()
     

@@ -62,7 +62,7 @@ def main(sample_idx: int,
                 # invalid trajectory
                 continue
             
-            all_traj_boxes.append(traj.info['boxes_in_lidar'])
+            all_traj_boxes.append(np.pad(traj.info['boxes_in_lidar'], pad_width=[(0, 0), (0, 1)], constant_values=label))
         
         # =================================================
         # =================================================
@@ -88,7 +88,11 @@ def main(sample_idx: int,
 
 
 if __name__ == '__main__':
-    main(sample_idx=200,
+    main(sample_idx=90,
          num_sweeps=15,
          show_last=False)
+
+    # NOTE:
+    # sample 5: left of Lidar -> seeing only the back of the car -> bad box fitting
+    # sample 46: missing park cars | small cluster in the middle of a car -> perhaps failure in clustering
 

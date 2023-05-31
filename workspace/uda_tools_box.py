@@ -119,8 +119,8 @@ class BoxFinder(object):
         if self.return_in_form == 'edges_homogeneous_coord': 
             out = [edges,]
         else:
-            box_bev, mean_z = self.cvt_4edges_to_box(edges, points, rough_est_heading)
-            out = [box_bev, mean_z]
+            box_bev = self.cvt_4edges_to_box(edges, rough_est_heading)
+            out = [box_bev,]
         
         if self.return_fitness:
             out.append(fitness[_idx_max_fitness])
@@ -156,37 +156,16 @@ class BoxFinder(object):
         min_D1_D2 = np.clip(np.minimum(D1, D2), a_min=self.d0, a_max=None)  # (N_thetas, N_pts)
         fitness = np.sum(1.0 / min_D1_D2, axis=1)  # (N_thetas,)
         return fitness
-
-
-    def criterion_closeness_(self, C1: np.ndarray, C2: np.ndarray, d0: float = 0.01):
-        assert len(C1.shape) == len(C2.shape) == 1
-        assert C1.shape == C2.shape
-        c1_max, c1_min = C1.max(), C1.min()
-        c2_max, c2_min = C2.max(), C2.min()
-
-        c1_max_diff = np.abs(c1_max - C1) # (N,)
-        c1_min_diff = np.abs(C1 - c1_min)  # (N,)
-        D1 = np.min(np.stack([c1_max_diff, c1_min_diff], axis=1), axis=1)
-
-        c2_max_diff = np.abs(c2_max - C2) # (N,)
-        c2_min_diff = np.abs(C2 - c2_min)  # (N,)
-        D2 = np.min(np.stack([c2_max_diff, c2_min_diff], axis=1), axis=1)
-
-        min_D1_D2 = np.clip(np.minimum(D1, D2), a_min=d0, a_max=None)
-        cost = np.sum(1.0 / min_D1_D2)
-
-        return cost
-    
-    def cvt_4edges_to_box(self, edges_homo: np.ndarray, points: np.ndarray, rough_est_heading: np.ndarray):
+ 
+    def cvt_4edges_to_box(self, edges_homo: np.ndarray, rough_est_heading: np.ndarray):
         """
         Convert 4-edges to [x, y, dx, dy, yaw] & compute mean z-coord of points in box
         Args:
-            edges: (N, 3) - ax + by - c = 0
+            edges: (4, 3) - ax + by - c = 0
             points: (N, 3 + C) - x, y, z, C-channel
 
         Returns:
             box_bev: (5,) - x, y, dx, dy, yaw
-            mean_z: (1,) avg of z-coord of points inside
         """
         rect = edges_homo
         vers = np.stack([np.cross(rect[_i], rect[_j]) for _i, _j in zip(range(4), [1, 2, 3, 0])], 
@@ -218,5 +197,4 @@ class BoxFinder(object):
             heading = heading1
 
         box_bev = [*center_xy.tolist(), dx, dy, heading]
-        mean_z = np.mean(points[:, 2]).item()
-        return box_bev, mean_z
+        return box_bev

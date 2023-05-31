@@ -1,14 +1,12 @@
 import numpy as np
 import hdbscan
 import matplotlib.cm
-from pathlib import Path
 from sklearn.neighbors import KDTree
-from sklearn.linear_model import HuberRegressor
 from tqdm import tqdm
 
 from test_space.tools import build_dataset_for_testing
 
-from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder, PolynomialRegression
+from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
 from workspace.o3d_visualization import PointsPainter
 from workspace.box_fusion_utils import kde_fusion
 
@@ -32,9 +30,6 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool, correct_dyn_pts: boo
                                 metric='euclidean', min_cluster_size=30, min_samples=None)
     
     box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
-
-    min_samples_traj_estim = 3
-    huber = HuberRegressor(epsilon=1.75)
 
      # ---------------
     data_dict = dataset[sample_idx]  
@@ -72,7 +67,7 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool, correct_dyn_pts: boo
         unq_sweep_idx = np.unique(this_points_sweep_idx)
 
         # filter: contains points from a single sweep
-        if unq_sweep_idx.shape[0] < min_samples_traj_estim:
+        if unq_sweep_idx.shape[0] < 3:
             continue
         
         # if label in (44, 59):
@@ -210,8 +205,8 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool, correct_dyn_pts: boo
 
 
 if __name__ == '__main__':
-    main(sample_idx=10,  # 10 110 200
+    main(sample_idx=200,  # 10 110 200
          num_sweeps=15,
-         show_last=True,
-         correct_dyn_pts=True)
+         show_last=False,
+         correct_dyn_pts=False)
 
