@@ -3,6 +3,7 @@ from pathlib import Path
 from sklearn.neighbors import KDTree
 import hdbscan
 from typing import Tuple
+import pickle
 
 from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
 from workspace.box_fusion_utils import kde_fusion
@@ -27,7 +28,8 @@ class TrajectoryProcessor(object):
                               filter_max_dim: float = 10.,
                               threshold_area_small_obj: float = 0.5,
                               threshold_displacement_small_obj: float = 0.35,
-                              threshold_displacement_large_obj: float = 2.0):
+                              threshold_displacement_large_obj: float = 2.0,
+                              debug: bool = False):
         TrajectoryProcessor.num_sweeps = num_sweeps
         TrajectoryProcessor.min_num_sweeps_in_traj = min_num_sweeps_in_traj
         TrajectoryProcessor.num_ground_neighbors = num_ground_neighbors
@@ -36,10 +38,16 @@ class TrajectoryProcessor(object):
         TrajectoryProcessor.threshold_area_small_obj = threshold_area_small_obj
         TrajectoryProcessor.threshold_displacement_small_obj = threshold_displacement_small_obj
         TrajectoryProcessor.threshold_displacement_large_obj = threshold_displacement_large_obj
+        TrajectoryProcessor.debug = debug
 
-    def __init__(self, points: np.ndarray, 
+    def __init__(self) -> None:
+        self.info = None
+
+    def __call__(self, 
+                 points: np.ndarray, 
                  glob_se3_lidar: np.ndarray,
-                 box_finder: BoxFinder, tree_ground: KDTree, ground_points: np.ndarray):
+                 save_to_path: Path,
+                 box_finder: BoxFinder, tree_ground: KDTree, ground_points: np.ndarray) -> None:
         """
         Args:
             points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (always = -1 in UDA setting)]
@@ -116,7 +124,7 @@ class TrajectoryProcessor(object):
             return
 
         # -------------------------------
-        # TODO: build traj info
+        # build traj info
         # -------------------------------
         pts = points.copy()
         
@@ -127,14 +135,20 @@ class TrajectoryProcessor(object):
         pts = pts[mask_pts_valid_sweep]
 
         # map pts & traj_boxes to global frame
-        apply_se3_(glob_se3_lidar, points_=pts, boxes_=traj_boxes)
-        
-        traj_info = {
-            'points_in_glob': pts,  # (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (always = -1 in UDA setting)]
-            'boxes_in_glob': traj_boxes,  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
-            'velo': np.zeros(2)  # TODO: use KDE to fuse velo again
-        }
-        self.pickle(save_to_path=None)  # TODO
+        if not self.debug:
+            apply_se3_(glob_se3_lidar, points_=pts, boxes_=traj_boxes)
+            
+            self.info = {
+                'points_in_glob': pts,  # (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (always = -1 in UDA setting)]
+                'boxes_in_glob': traj_boxes,  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
+                'total_translation': first_to_last_translation,  # (1,)
+            }
+            self.pickle(save_to_path)
+        else:
+            # debugging -> keep pts & box in lidar coord
+            self.info = {
+                'points_in_lidar': pts, 'boxes_in_lidar': traj_boxes, 'total_translation': first_to_last_translation
+            }
 
 
     @staticmethod
@@ -200,14 +214,7 @@ class TrajectoryProcessor(object):
         traj_boxes_[:, 3: 7] = fused_box[3: 7]
 
     def pickle(self, save_to_path: Path) -> None:
-        pass  # TODO
-
-
-
-
-
-
-
-
+        with open(save_to_path, 'wb') as f:
+            pickle.dump(self.info, f)
 
 
