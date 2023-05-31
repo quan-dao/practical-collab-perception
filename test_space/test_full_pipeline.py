@@ -13,7 +13,7 @@ from workspace.o3d_visualization import PointsPainter
 from workspace.box_fusion_utils import kde_fusion
 
 
-def main(sample_idx: int, num_sweeps: int, show_last: bool):
+def main(sample_idx: int, num_sweeps: int, show_last: bool, correct_dyn_pts: bool):
     # init
     class_names = ['car',]
     dataset, dataloader = build_dataset_for_testing(
@@ -45,8 +45,8 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool):
 
     # ground segmentation
     points, ground_pts = remove_ground(points, ground_segmenter, return_ground_points=True)
-    mask_points_outlier = np.zeros(points.shape[0], dtype=bool)
-    
+    points_sweep_idx = points[:, -2].astype(int)
+
     tree_ground = KDTree(ground_pts[:, :3])  # to query for ground height given a 3d coord
 
     # clustering
@@ -153,16 +153,31 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool):
             traj_boxes[:, 3: 6] = fused_box[3: 6]
             traj_boxes[:, 6] = fused_box[6]
 
-            # filter: boxes & their points if their location are marked outlier by HuberRegressor
-            # huber.fit(traj_boxes[:, [0]], traj_boxes[:, 1])
-            # mask_outlier = huber.outliers_.copy()
-            # if np.any(mask_outlier):
-            #     outlier_sweep_ids = traj_boxes[mask_outlier, -2].astype(int)
-            #     # remove points
-            #     mask_this_points_outlier = np.any(this_points_sweep_idx.reshape(-1, 1) == outlier_sweep_ids.reshape(1, -1), axis=1)
-            #     mask_points_outlier[mask_this] = np.logical_or(mask_points_outlier[mask_this], mask_this_points_outlier)
-            #     # remove boxes
-            #     traj_boxes = traj_boxes[np.logical_not(mask_outlier)]
+            if correct_dyn_pts:
+                last_box = traj_boxes[-1]
+                cos, sin = np.cos(last_box[6]), np.sin(last_box[6])
+                last_box_pose = np.array([
+                    [cos,   -sin,   0,      last_box[0]],
+                    [sin,   cos,    0,      last_box[1]],
+                    [0,     0,      1,      last_box[2]],
+                    [0,     0,      0,      1]
+                ])
+                traj_sweep_idx = traj_boxes[:, -2].astype(int)
+                for sweep_idx in np.unique(traj_sweep_idx):
+                    mask_this_sweep = np.logical_and(mask_this, points_sweep_idx == sweep_idx)
+                    
+                    this_box = traj_boxes[traj_sweep_idx == sweep_idx].reshape(-1)
+                    cos, sin = np.cos(this_box[6]), np.sin(this_box[6])
+                    sweep_box_pose = np.array([
+                        [cos,   -sin,   0,      this_box[0]],
+                        [sin,   cos,    0,      this_box[1]],
+                        [0,     0,      1,      this_box[2]],
+                        [0,     0,      0,      1]
+                    ])
+                    tf = last_box_pose @ np.linalg.inv(sweep_box_pose)
+
+                    points[mask_this_sweep, :3] = (tf[:3, :3] @ np.expand_dims(points[mask_this_sweep, :3], axis=-1)).reshape(-1, 3) + tf[:3, -1]
+                    
 
             # store
             all_traj_boxes.append(traj_boxes)
@@ -178,11 +193,15 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool):
     else:
         mask_show_pts = np.ones(points.shape[0], dtype=bool)
         mask_show_boxes = np.ones(all_traj_boxes.shape[0], dtype=bool)
+
+    if correct_dyn_pts:
+        # show last box & all points
+        mask_show_pts = np.ones(points.shape[0], dtype=bool)
+        mask_show_boxes = all_traj_boxes[:, -2].astype(int) == num_sweeps - 1
     
     labels_color = matplotlib.cm.rainbow(np.linspace(0, 1, unq_labels.shape[0]))[:, :3]
     points_color = labels_color[points_label]
     points_color[points_label == -1] = 0.0
-    points_color[mask_points_outlier] = 0.0
     boxes_color = labels_color[all_traj_boxes[:, -1].astype(int)] 
 
     painter = PointsPainter(points[mask_show_pts, :3], all_traj_boxes[mask_show_boxes])
@@ -191,7 +210,8 @@ def main(sample_idx: int, num_sweeps: int, show_last: bool):
 
 
 if __name__ == '__main__':
-    main(sample_idx=110,  # 10 110 200
+    main(sample_idx=10,  # 10 110 200
          num_sweeps=15,
-        show_last=False)
+         show_last=True,
+         correct_dyn_pts=True)
 
