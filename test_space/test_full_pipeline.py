@@ -16,7 +16,7 @@ from workspace.box_fusion_utils import kde_fusion
 def main(sample_idx: int, show_last: bool):
     # init
     class_names = ['car',]
-    num_sweeps = 30
+    num_sweeps = 15
     dataset, dataloader = build_dataset_for_testing(
         '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml', class_names, 
         training=True,
@@ -26,7 +26,7 @@ def main(sample_idx: int, show_last: bool):
         MAX_SWEEPS=num_sweeps
     )
 
-    ground_segmenter = init_ground_segmenter(th_dist=0.1)
+    ground_segmenter = init_ground_segmenter(th_dist=0.2)
 
     clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1., approx_min_span_tree=True,
                                 gen_min_span_tree=True, leaf_size=100,
@@ -34,8 +34,9 @@ def main(sample_idx: int, show_last: bool):
     
     box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
 
-    ransac = RANSACRegressor(PolynomialRegression(degree=2), 
-                             min_samples=5,
+    min_samples_for_ransac = 3
+    ransac = RANSACRegressor(PolynomialRegression(degree=1), 
+                             min_samples=min_samples_for_ransac,
                              random_state=0)
 
      # ---------------
@@ -72,7 +73,7 @@ def main(sample_idx: int, show_last: bool):
         unq_sweep_idx, num_points_per_sweep = np.unique(this_points_sweep_idx, return_counts=True)
 
         # filter: contains points from a single sweep
-        if unq_sweep_idx.shape[0] == 1:
+        if unq_sweep_idx.shape[0] < min_samples_for_ransac:
             continue
         
         # if label in (44, 59):
@@ -117,8 +118,8 @@ def main(sample_idx: int, show_last: bool):
             box = np.array([box_bev[0], box_bev[1], center_z, box_bev[2], box_bev[3], box_height, box_bev[4], sweep_idx])
 
             # filter: box's dim
-            invalid_dim = np.logical_or(box[3: 6] < 0.05, box[3: 6] > 20).any()
-            if invalid_dim:  # lower threshold as 0.15 to include pedestrian
+            too_large_dim = np.any(box[3: 6] > 20)
+            if too_large_dim:  # lower threshold as 0.15 to include pedestrian
                 encounter_invalid_box = True
                 break
             else:
@@ -142,11 +143,17 @@ def main(sample_idx: int, show_last: bool):
             __traj_boxes = np.pad(traj_boxes[:, :7], pad_width=[(0, 0), (0, 2)], constant_values=0.)
             __traj_boxes[:, -1] = num_points_per_sweep.astype(float) / float(this_points.shape[0])
             fused_box = kde_fusion(__traj_boxes, src_weights=__traj_boxes[:, -1])
+
+            # filter: box's dimension
+            if np.logical_or(fused_box[3: 6] < 0.1, fused_box[3: 6] > 10).any():
+                # valid box => skip
+                continue
+
             traj_boxes[:, 3: 6] = fused_box[3: 6]
 
             # refind boxes' location on XY-plane using RANSAC
-            ransac.fit(np.expand_dims(traj_boxes[:, 0], axis=1), traj_boxes[:, 1])
-            traj_boxes[:, 1] = ransac.predict(traj_boxes[:, 0].reshape(-1, 1))
+            # ransac.fit(np.expand_dims(traj_boxes[:, 0], axis=1), traj_boxes[:, 1])
+            # traj_boxes[:, 1] = ransac.predict(traj_boxes[:, 0].reshape(-1, 1))
 
             all_traj_boxes.append(traj_boxes)
     
@@ -173,6 +180,6 @@ def main(sample_idx: int, show_last: bool):
 
 
 if __name__ == '__main__':
-    main(sample_idx=110,
+    main(sample_idx=110,  # 10 110 200
         show_last=False)
 
