@@ -72,8 +72,8 @@ class BoxFinder(object):
     def fit(self, points: np.ndarray, rough_est_heading: np.ndarray, init_theta=None):
         assert len(points.shape) == 2
         assert points.shape[1] >= 3, "need xyz"
-        xy = points[:, : 2]
-        queue = list()
+        
+        xy = points[:, : 2]  # (N_pts, 2)
         
         if init_theta is None:
             thetas = np.arange(start=0., stop=np.pi/2.0, step=self.angle_resolution)
@@ -86,21 +86,17 @@ class BoxFinder(object):
                                stop=min(init_theta + np.deg2rad(20.), np.pi/2.0), 
                                step=np.deg2rad(1.5))
 
-        for _theta in thetas:
-            cos, sin = np.cos(_theta), np.sin(_theta)
-            e1 = np.array([cos, sin])
-            e2 = np.array([-sin, cos])
-
-            C1 = xy @ e1  # (N,)
-            C2 = xy @ e2  # (N,)
-
-            q = self.cost_fnc(C1, C2)
-            queue.append(q)
+        cos, sin = np.cos(thetas), np.sin(thetas)
+        e1 = np.stack([cos, sin], axis=1)  # (N_theta, 2)
+        e2 = np.stack([-sin, cos], axis=1)  # (N_theta, 2)
         
-        queue = np.array(queue)
-        _idx_max_queue = np.argmax(queue)
-
-        theta_star = thetas[_idx_max_queue]
+        C1 = e1 @ xy.T  # (N_theta, N_pts)
+        C2 = e2 @ xy.T  # (N_theta, N_pts)
+        
+        fitness = self.criterion_closeness(C1, C2)  # (N_theta,)
+        
+        _idx_max_fitness = np.argmax(fitness)
+        theta_star = thetas[_idx_max_fitness]
 
         cos, sin = np.cos(theta_star), np.sin(theta_star)
         C1_star = xy @ np.array([cos, sin])
@@ -127,7 +123,7 @@ class BoxFinder(object):
             out = [box_bev, mean_z]
         
         if self.return_fitness:
-            out.append(queue[_idx_max_queue])
+            out.append(fitness[_idx_max_fitness])
 
         if self.return_theta_star:
             out.append(theta_star)
@@ -137,16 +133,32 @@ class BoxFinder(object):
         else:
             return out
         
-    def criterion_area(self, C1: np.ndarray, C2: np.ndarray):
-        assert len(C1.shape) == len(C2.shape) == 1
-        assert C1.shape == C2.shape
-        c1_max, c1_min = C1.max(), C1.min()
-        c2_max, c2_min = C2.max(), C2.min()
-        cost = -(c1_max - c1_min) * (c2_max - c2_min)
-        return cost
+    def criterion_closeness(self, C1: np.ndarray, C2: np.ndarray) -> np.ndarray:
+        """
+        Args:
+            C1: (N_thetas, N_pts)
+            C2: (N_thetas, N_pts)
+
+        Returns:
+            cost: (N_thetas,)
+        """
+        c1_max, c1_min = C1.max(axis=1), C1.min(axis=1)  # (N_thetas,), (N_thetas,)
+        c2_max, c2_min = C2.max(axis=1), C2.min(axis=1)  # (N_thetas,), (N_thetas,)
+
+        c1_max_diff = np.abs(c1_max.reshape(-1, 1) - C1)  # (N_thetas, N_pts)
+        c1_min_diff = np.abs(C1 - c1_min.reshape(-1, 1))  # (N_thetas, N_pts)
+        D1 = np.min(np.stack([c1_max_diff, c1_min_diff], axis=2), axis=2)  # (N_thetas, N_pts)
+
+        c2_max_diff = np.abs(c2_max.reshape(-1, 1) - C2)  # (N_thetas, N_pts)
+        c2_min_diff = np.abs(C2 - c2_min.reshape(-1, 1))  # (N_thetas, N_pts)
+        D2 = np.min(np.stack([c2_max_diff, c2_min_diff], axis=2), axis=2)  # (N_thetas, N_pts)
+
+        min_D1_D2 = np.clip(np.minimum(D1, D2), a_min=self.d0, a_max=None)  # (N_thetas, N_pts)
+        fitness = np.sum(1.0 / min_D1_D2, axis=1)  # (N_thetas,)
+        return fitness
 
 
-    def criterion_closeness(self, C1: np.ndarray, C2: np.ndarray, d0: float = 0.01):
+    def criterion_closeness_(self, C1: np.ndarray, C2: np.ndarray, d0: float = 0.01):
         assert len(C1.shape) == len(C2.shape) == 1
         assert C1.shape == C2.shape
         c1_max, c1_min = C1.max(), C1.min()
@@ -160,10 +172,8 @@ class BoxFinder(object):
         c2_min_diff = np.abs(C2 - c2_min)  # (N,)
         D2 = np.min(np.stack([c2_max_diff, c2_min_diff], axis=1), axis=1)
 
-        cost = 0
-        for idx in range(D1.shape[0]):
-            d = max([min(D1[idx], D2[idx]), d0])
-            cost = cost + 1.0 / d
+        min_D1_D2 = np.clip(np.minimum(D1, D2), a_min=d0, a_max=None)
+        cost = np.sum(1.0 / min_D1_D2)
 
         return cost
     
@@ -179,12 +189,9 @@ class BoxFinder(object):
             mean_z: (1,) avg of z-coord of points inside
         """
         rect = edges_homo
-        p01 = np.cross(rect[0], rect[1])
-        p12 = np.cross(rect[1], rect[2])
-        p23 = np.cross(rect[2], rect[3])
-        p30 = np.cross(rect[3], rect[0])
-        vers = np.stack([p01, p12, p23, p30], axis=0)
-        vers /= vers[:, [-1]]
+        vers = np.stack([np.cross(rect[_i], rect[_j]) for _i, _j in zip(range(4), [1, 2, 3, 0])], 
+                        axis=0)  # (4, 3)
+        vers /= vers[:, [-1]]  # normalize homogeneous coord to get regular coord
 
         center_xy = np.mean(vers[:, :2], axis=0)
         
@@ -193,14 +200,16 @@ class BoxFinder(object):
 
         if dim03 > dim01:
             dx, dy = dim03, dim01
-            perspective_heading = vers[3] - vers[0]
+            perspective_heading_dir = vers[3] - vers[0]
         else:
             dx, dy = dim01, dim03
-            perspective_heading = vers[1] - vers[0]
+            perspective_heading_dir = vers[1] - vers[0]
 
-        heading0 = np.arctan2(perspective_heading[1], perspective_heading[0])
+        # two possible headinds
+        heading0 = np.arctan2(perspective_heading_dir[1], perspective_heading_dir[0])
         heading1 = heading0 + np.pi
 
+        # find the one that is clsoer the rough estimationg of heading
         _prod0 = np.array([np.cos(heading0), np.sin(heading0)]) @ rough_est_heading
         _prod1 = np.array([np.cos(heading1), np.sin(heading1)]) @ rough_est_heading
         if _prod0 > _prod1:
@@ -211,26 +220,3 @@ class BoxFinder(object):
         box_bev = [*center_xy.tolist(), dx, dy, heading]
         mean_z = np.mean(points[:, 2]).item()
         return box_bev, mean_z
-
-
-class PolynomialRegression(object):
-    def __init__(self, degree=2, coeffs=None):
-        self.degree = degree
-        self.coeffs = coeffs
-
-    def fit(self, X, y):
-        self.coeffs = np.polyfit(X.ravel(), y, self.degree)
-
-    def get_params(self, deep=False):
-        return {'coeffs': self.coeffs}
-
-    def set_params(self, coeffs=None, random_state=None):
-        self.coeffs = coeffs
-
-    def predict(self, X):
-        poly_eqn = np.poly1d(self.coeffs)
-        y_hat = poly_eqn(X.ravel())
-        return y_hat
-
-    def score(self, X, y):
-        return mean_squared_error(y, self.predict(X))
