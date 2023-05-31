@@ -3,7 +3,7 @@ import hdbscan
 import matplotlib.cm
 from pathlib import Path
 from sklearn.neighbors import KDTree
-from sklearn.linear_model import RANSACRegressor
+from sklearn.linear_model import HuberRegressor
 from tqdm import tqdm
 
 from test_space.tools import build_dataset_for_testing
@@ -13,10 +13,9 @@ from workspace.o3d_visualization import PointsPainter
 from workspace.box_fusion_utils import kde_fusion
 
 
-def main(sample_idx: int, show_last: bool):
+def main(sample_idx: int, num_sweeps: int, show_last: bool):
     # init
     class_names = ['car',]
-    num_sweeps = 15
     dataset, dataloader = build_dataset_for_testing(
         '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml', class_names, 
         training=True,
@@ -34,10 +33,8 @@ def main(sample_idx: int, show_last: bool):
     
     box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
 
-    min_samples_for_ransac = 3
-    ransac = RANSACRegressor(PolynomialRegression(degree=1), 
-                             min_samples=min_samples_for_ransac,
-                             random_state=0)
+    min_samples_traj_estim = 3
+    huber = HuberRegressor(epsilon=1.75)
 
      # ---------------
     data_dict = dataset[sample_idx]  
@@ -48,6 +45,7 @@ def main(sample_idx: int, show_last: bool):
 
     # ground segmentation
     points, ground_pts = remove_ground(points, ground_segmenter, return_ground_points=True)
+    mask_points_outlier = np.zeros(points.shape[0], dtype=bool)
     
     tree_ground = KDTree(ground_pts[:, :3])  # to query for ground height given a 3d coord
 
@@ -66,14 +64,15 @@ def main(sample_idx: int, show_last: bool):
         if label == -1:
             # label of cluster representing outlier
             continue
-
-        this_points = points[points_label == label]  # (N_in_cluster, 3 + C)
+        
+        mask_this = points_label == label
+        this_points = points[mask_this]  # (N_in_cluster, 3 + C)
         
         this_points_sweep_idx = this_points[:, -2].astype(int)  # (N_in_cluster,)
-        unq_sweep_idx, num_points_per_sweep = np.unique(this_points_sweep_idx, return_counts=True)
+        unq_sweep_idx = np.unique(this_points_sweep_idx)
 
         # filter: contains points from a single sweep
-        if unq_sweep_idx.shape[0] < min_samples_for_ransac:
+        if unq_sweep_idx.shape[0] < min_samples_traj_estim:
             continue
         
         # if label in (44, 59):
@@ -87,7 +86,7 @@ def main(sample_idx: int, show_last: bool):
         rough_est_heading = pts_last_group - pts_1st_group
         rough_est_heading /= np.linalg.norm(rough_est_heading)
 
-        traj_boxes = list()
+        traj_boxes, num_points_per_box = list(), list()
         encounter_invalid_box = False
         init_theta, prev_num_points = None, -1
         for sweep_idx in unq_sweep_idx:
@@ -119,11 +118,11 @@ def main(sample_idx: int, show_last: bool):
 
             # filter: box's dim
             too_large_dim = np.any(box[3: 6] > 20)
-            if too_large_dim:  # lower threshold as 0.15 to include pedestrian
-                encounter_invalid_box = True
-                break
+            if too_large_dim or sweep_points.shape[0] < 5:  # lower threshold as 0.15 to include pedestrian
+                continue
             else:
                 traj_boxes.append(box)
+                num_points_per_box.append(sweep_points.shape[0])
             
         if encounter_invalid_box or len(traj_boxes) == 0:
             continue
@@ -131,18 +130,20 @@ def main(sample_idx: int, show_last: bool):
             # valid trajectory 
             traj_boxes = np.stack(traj_boxes, axis=0)
 
-            # filter: dynamic trajectory
-            first_to_last_translation = np.linalg.norm(traj_boxes[-1, :2] - traj_boxes[0, :2])
-            if first_to_last_translation < 0.5:
-                # -> static traj => skip
-                continue
-
             traj_boxes = np.pad(traj_boxes, pad_width=[(0, 0), (0, 1)], constant_values=label)  # [x, y, z, dx, dy, dz, yaw, sweep_idx, cluster_id]
             
             # aggregate boxes'size using KDE
+            num_points_per_box = np.array(num_points_per_box)
             __traj_boxes = np.pad(traj_boxes[:, :7], pad_width=[(0, 0), (0, 2)], constant_values=0.)
-            __traj_boxes[:, -1] = num_points_per_sweep.astype(float) / float(this_points.shape[0])
+            __traj_boxes[:, -1] = num_points_per_box.astype(float) / float(num_points_per_box.sum())
             fused_box = kde_fusion(__traj_boxes, src_weights=__traj_boxes[:, -1])
+
+            # filter: dynamic trajectory
+            first_to_last_translation = np.linalg.norm(traj_boxes[-1, :2] - traj_boxes[0, :2])
+            disp_threshold = 0.35 if fused_box[3] * fused_box[4] < 0.5 else 2.0
+            if first_to_last_translation < disp_threshold:
+                # -> static traj => skip
+                continue
 
             # filter: box's dimension
             if np.logical_or(fused_box[3: 6] < 0.1, fused_box[3: 6] > 10).any():
@@ -150,11 +151,20 @@ def main(sample_idx: int, show_last: bool):
                 continue
 
             traj_boxes[:, 3: 6] = fused_box[3: 6]
+            traj_boxes[:, 6] = fused_box[6]
 
-            # refind boxes' location on XY-plane using RANSAC
-            # ransac.fit(np.expand_dims(traj_boxes[:, 0], axis=1), traj_boxes[:, 1])
-            # traj_boxes[:, 1] = ransac.predict(traj_boxes[:, 0].reshape(-1, 1))
+            # filter: boxes & their points if their location are marked outlier by HuberRegressor
+            # huber.fit(traj_boxes[:, [0]], traj_boxes[:, 1])
+            # mask_outlier = huber.outliers_.copy()
+            # if np.any(mask_outlier):
+            #     outlier_sweep_ids = traj_boxes[mask_outlier, -2].astype(int)
+            #     # remove points
+            #     mask_this_points_outlier = np.any(this_points_sweep_idx.reshape(-1, 1) == outlier_sweep_ids.reshape(1, -1), axis=1)
+            #     mask_points_outlier[mask_this] = np.logical_or(mask_points_outlier[mask_this], mask_this_points_outlier)
+            #     # remove boxes
+            #     traj_boxes = traj_boxes[np.logical_not(mask_outlier)]
 
+            # store
             all_traj_boxes.append(traj_boxes)
     
     # =================================================
@@ -172,6 +182,7 @@ def main(sample_idx: int, show_last: bool):
     labels_color = matplotlib.cm.rainbow(np.linspace(0, 1, unq_labels.shape[0]))[:, :3]
     points_color = labels_color[points_label]
     points_color[points_label == -1] = 0.0
+    points_color[mask_points_outlier] = 0.0
     boxes_color = labels_color[all_traj_boxes[:, -1].astype(int)] 
 
     painter = PointsPainter(points[mask_show_pts, :3], all_traj_boxes[mask_show_boxes])
@@ -181,5 +192,6 @@ def main(sample_idx: int, show_last: bool):
 
 if __name__ == '__main__':
     main(sample_idx=110,  # 10 110 200
+         num_sweeps=15,
         show_last=False)
 
