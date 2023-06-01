@@ -54,7 +54,10 @@ def apply_se3_(se3_tf: np.ndarray,
                    vector_=vectors, 
                    boxes_has_velocity=boxes_has_velocity)
         out = [ele for ele in [points, boxes, vectors] if ele is not None]
-        return out
+        if len(out) == 1:
+            return out[0]
+        else:
+            return out
 
     if points_ is not None:
         assert points_.shape[1] >= 3, f"points_.shape: {points_.shape}"

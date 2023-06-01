@@ -11,12 +11,14 @@ from workspace.o3d_visualization import PointsPainter
 from workspace.nuscenes_temporal_utils import apply_se3_, map_points_on_traj_to_local_frame
 
 
+np.random.seed(666)
+
 def main(num_sweeps: int = 15, 
          pc_range: np.array = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0])):
     database_root = Path(f'../data/nuscenes/v1.0-mini/discovered_database_{num_sweeps}sweeps')
     trajs_path = list(database_root.glob('*.pkl'))
     trajs_path.sort()
-    trajs_label = np.array(trajs_path)
+    trajs_path = np.array(trajs_path)
     print(f'found {trajs_path.shape[0]} trajectories')
 
     grid_size_meters = pc_range[3:] - pc_range[:3]
@@ -74,12 +76,12 @@ def main(num_sweeps: int = 15,
     trajs_path = trajs_path[valid_trajs_idx]
 
     # umap full
-    reducer = umap.UMAP(n_components=3)  # 2 -> 10 clusters; 3-> 9 clusters; 4-> 9 clusters
+    reducer = umap.UMAP(n_components=3, random_state=78)  # 2 -> 10 clusters; 3-> 9 clusters; 4-> 9 clusters
     scaled_trajs_descriptor = StandardScaler().fit_transform(trajs_descriptor)
     trajs_embedded = reducer.fit_transform(scaled_trajs_descriptor)
 
     # umap static
-    reducer_static = umap.UMAP(n_components=3)
+    reducer_static = umap.UMAP(n_components=3, random_state=78)
     scaled_trajs_static_descriptor = StandardScaler().fit_transform(trajs_static_descriptor)
     reducer_static.fit(scaled_trajs_static_descriptor)
     with open(f'artifact/umap_static_{num_sweeps}sweeps_v1.0-mini.pkl', 'wb') as f:
@@ -107,6 +109,8 @@ def main(num_sweeps: int = 15,
     indices_trajs_path = np.arange(trajs_path.shape[0])
     trajs_prob = clusterer.probabilities_
     for label, num_trajs_in_cluster in zip(unq_labels, counts):
+        if label == -1:
+            continue
         # if label != 4:
         #     continue
         print(f'showing examplar of cluster {label} | size {num_trajs_in_cluster}')
@@ -114,7 +118,7 @@ def main(num_sweeps: int = 15,
         ids_by_prob = np.argsort(-trajs_prob[mask_cluster])  # (N_traj_in_cluster,)
         indices_cluster_trajs_path = indices_trajs_path[mask_cluster]  # (N_traj_in_cluster,)
 
-        for _i in range(3):
+        for _i in range(10):
             max_prob_path = trajs_path[indices_cluster_trajs_path[ids_by_prob[_i]]]
             with open(max_prob_path, 'rb') as f:
                 traj_info = pickle.load(f)
@@ -133,7 +137,7 @@ def main(num_sweeps: int = 15,
             lidar_se3_last_box = np.array([
                 [_c,    -_s,    0.,     last_box_in_lidar[0, 0]],
                 [_s,    _c,     0.,     last_box_in_lidar[0, 1]],
-                [0.,    0.,     0.,     last_box_in_lidar[0, 2]],
+                [0.,    0.,     1.,     last_box_in_lidar[0, 2]],
                 [0.,    0.,     0.,     1.]
             ])
             
@@ -153,9 +157,9 @@ def main(num_sweeps: int = 15,
             painter.show()
 
         # make cluster info {cluster embedd, cluster file path}
-        cls_name = input('>>> what class is this: ')
-        if cls_name not in ('car', 'ped'):
-            continue
+        # cls_name = input('>>> what class is this: ')
+        # if cls_name not in ('car', 'ped'):
+        #     continue
 
         members_path = [trajs_path[_i] for _i in indices_cluster_trajs_path]
         cluster_top_members_static_desc = scaled_trajs_static_descriptor[mask_cluster][ids_by_prob[:30]]
@@ -165,7 +169,7 @@ def main(num_sweeps: int = 15,
             'members_path': members_path,
             'cluster_top_members_static_embed': cluster_top_members_static_embed
         }
-        with open(f'artifact/cluster_info_{cls_name}_{num_sweeps}sweeps.pkl', 'wb') as f:
+        with open(f'artifact/cluster_info_{label}_{num_sweeps}sweeps.pkl', 'wb') as f:
             pickle.dump(cluster_info, f)
 
 
