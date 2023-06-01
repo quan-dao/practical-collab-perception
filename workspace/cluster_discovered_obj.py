@@ -4,12 +4,11 @@ import pickle
 from pathlib import Path
 import matplotlib.cm
 import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 import umap
 
 from workspace.o3d_visualization import PointsPainter
-from workspace.nuscenes_temporal_utils import apply_se3_
+from workspace.nuscenes_temporal_utils import apply_se3_, map_points_on_traj_to_local_frame
 
 
 def main(num_sweeps: int = 15, 
@@ -17,16 +16,24 @@ def main(num_sweeps: int = 15,
     database_root = Path(f'../data/nuscenes/v1.0-mini/discovered_database_{num_sweeps}sweeps')
     trajs_path = list(database_root.glob('*.pkl'))
     trajs_path.sort()
-    print(f'found {len(trajs_path)} trajectories')
+    trajs_label = np.array(trajs_path)
+    print(f'found {trajs_path.shape[0]} trajectories')
 
     grid_size_meters = pc_range[3:] - pc_range[:3]
 
-    trajs_descriptor = list()
-    invalid_trajs_idx = list()
+    trajs_descriptor, trajs_static_descriptor = list(), list()
+    valid_trajs_idx = list()
     for idx, path_to_traj in enumerate(trajs_path):
         with open(path_to_traj, 'rb') as f:
             traj_info = pickle.load(f)
         
+        boxes_in_glob = traj_info['boxes_in_glob']
+
+        if np.any(boxes_in_glob[0, 3: 6] < 1e-1):
+            continue
+        
+        valid_trajs_idx.append(idx)
+
         # build higher dimension descriptor
         # variance of num points
         points_in_glob = traj_info['points_in_glob']
@@ -34,30 +41,7 @@ def main(num_sweeps: int = 15,
         var_num_points = np.var(num_points_per_sweep / num_points_per_sweep.sum())
 
         # covariance of points coord in box's local frame - normalized by box'size
-        boxes_in_glob = traj_info['boxes_in_glob']
-        if np.any(boxes_in_glob[0, 3: 6] < 1e-1):
-            invalid_trajs_idx.append(idx)
-            continue
-        cos, sin = np.cos(boxes_in_glob[:, 6]), np.sin(boxes_in_glob[:, 6])
-        zeros, ones = np.zeros(boxes_in_glob.shape[0]), np.ones(boxes_in_glob.shape[0])
-        batch_glob_se3_boxes = np.stack([
-            cos,    -sin,       zeros,      boxes_in_glob[:, 0],
-            sin,     cos,       zeros,      boxes_in_glob[:, 1],
-            zeros,   zeros,     ones,       boxes_in_glob[:, 2],
-            zeros,   zeros,     zeros,      ones
-        ], axis=1).reshape(-1, 4, 4)
-        batch_boxes_se3_glob = np.linalg.inv(batch_glob_se3_boxes)  # (N_valid_sw, 4, 4)
-        
-        boxes_sweep_idx = boxes_in_glob[:, -1].astype(int)
-        assert np.unique(boxes_sweep_idx).shape[0] == boxes_sweep_idx.shape[0]
-        assert num_sweeps >= boxes_sweep_idx.shape[0]  # assert N_sw >= N_valid_sw 
-
-        pad_batch_boxes_se3_glob = np.tile(np.eye(4).reshape(1, 4, 4), (num_sweeps,1, 1))
-        pad_batch_boxes_se3_glob[boxes_sweep_idx] = batch_boxes_se3_glob  # (N_sw, 4, 4)  ! N_sw >= N_valid_sw 
-
-        points_sweep_idx = points_in_glob[:, -2].astype(int)  # (N_pts,)
-        perpoint_box_se3_glob = pad_batch_boxes_se3_glob[points_sweep_idx]  # (N_pts, 4, 4)
-        points_in_box = np.einsum('bik, bk -> bi', perpoint_box_se3_glob[:, :3, :3], points_in_glob[:, :3]) + perpoint_box_se3_glob[:, :3, -1]
+        points_in_box = map_points_on_traj_to_local_frame(points_in_glob, boxes_in_glob, num_sweeps)
         points_in_box = 2.0 * points_in_box / boxes_in_glob[0, 3: 6]
         
         cov_coord3d = np.cov(points_in_box.T)
@@ -66,35 +50,40 @@ def main(num_sweeps: int = 15,
         cov_coord3d_idp = cov_coord3d[rr[mask_above_diag], cc[mask_above_diag]]
 
         # dimension
-        dx, dy, dz = traj_info['boxes_in_glob'][0, 3: 6]
+        dx, dy, dz = boxes_in_glob[0, 3: 6]
         area_xy = dx * dy / (grid_size_meters[0] * grid_size_meters[1])
         
         # total distance travel
         travelled_dist = np.linalg.norm(boxes_in_glob[1:, :2] - boxes_in_glob[:-1, :2], axis=1).sum() \
             / np.linalg.norm(grid_size_meters[:2])
 
-        desriptor = np.array([var_num_points.item(), *cov_coord3d_idp.tolist(), area_xy, dz / grid_size_meters[2], travelled_dist])
-
-
-        trajs_descriptor.append(desriptor)
+        # assemble traj's descriptor
+        descriptor = np.array([var_num_points.item(), *cov_coord3d_idp.tolist(), area_xy, dz / grid_size_meters[2], travelled_dist])
+        static_descriptor = np.array([*cov_coord3d_idp.tolist(), area_xy, dz / grid_size_meters[2]])
+        # store
+        trajs_descriptor.append(descriptor)
+        trajs_static_descriptor.append(static_descriptor)
 
     trajs_descriptor = np.stack(trajs_descriptor, axis=0)  # (N_trajs, C)
+    trajs_static_descriptor = np.stack(trajs_static_descriptor, axis=0)  # (N_trajs, C_static)
+    valid_trajs_idx = np.array(valid_trajs_idx)
     
-    print(f'encounter {len(invalid_trajs_idx)} invalid trajs')
-    # remove invalid trajs
-    for _idx in reversed(invalid_trajs_idx):
-        del trajs_path[_idx]
-    print(f'num_valid trajs: {len(trajs_path)}')
+    # keep only valid trajs
+    print(f'encounter {trajs_path.shape[0] - valid_trajs_idx.shape[0]} invalid trajs')
+    print(f'num_valid trajs: {valid_trajs_idx.shape[0]}')
+    trajs_path = trajs_path[valid_trajs_idx]
 
-    scaled_trajs_descriptor = StandardScaler().fit_transform(trajs_descriptor)
-
-    # trajs_embedded = TSNE(n_components=2, learning_rate='auto', init='random', perplexity=10).fit_transform(scaled_trajs_descriptor)
-
+    # umap full
     reducer = umap.UMAP(n_components=3)  # 2 -> 10 clusters; 3-> 9 clusters; 4-> 9 clusters
+    scaled_trajs_descriptor = StandardScaler().fit_transform(trajs_descriptor)
     trajs_embedded = reducer.fit_transform(scaled_trajs_descriptor)
 
-    # fig, ax = plt.subplots()
-    # ax.scatter(trajs_embedded[:, 0], trajs_embedded[:, 1])
+    # umap static
+    reducer_static = umap.UMAP(n_components=3)
+    scaled_trajs_static_descriptor = StandardScaler().fit_transform(trajs_static_descriptor)
+    reducer_static.fit(scaled_trajs_static_descriptor)
+    with open(f'artifact/umap_static_{num_sweeps}sweeps_v1.0-mini.pkl', 'wb') as f:
+        pickle.dump(reducer_static, f)
 
     clusterer = hdbscan.HDBSCAN(algorithm='best',
                                 # leaf_size=100,
@@ -109,36 +98,75 @@ def main(num_sweeps: int = 15,
     trajs_color = clusters_color[trajs_label]
     trajs_color[trajs_label == -1] = 0.  # outlier
 
-    # fig, ax = plt.subplots()
-    # ax.scatter(trajs_descriptor[:, 0] * trajs_descriptor[:, 1], trajs_descriptor[:, 2], c=trajs_color)
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.scatter(trajs_embedded[:, 0], trajs_embedded[:, 1], c=trajs_color)
     plt.show()
 
     print('========================')
-    indices_trajs_path = np.arange(len(trajs_path))
+    indices_trajs_path = np.arange(trajs_path.shape[0])
     trajs_prob = clusterer.probabilities_
-    for label in unq_labels:
+    for label, num_trajs_in_cluster in zip(unq_labels, counts):
         # if label != 4:
         #     continue
-        print(f'showing examplar of cluster {label}')
+        print(f'showing examplar of cluster {label} | size {num_trajs_in_cluster}')
         mask_cluster = trajs_label == label
-        max_prob_idx = np.argsort(-trajs_prob[mask_cluster])
+        ids_by_prob = np.argsort(-trajs_prob[mask_cluster])  # (N_traj_in_cluster,)
+        indices_cluster_trajs_path = indices_trajs_path[mask_cluster]  # (N_traj_in_cluster,)
 
-        for _i in range(1):
-            max_prob_path = trajs_path[indices_trajs_path[mask_cluster][max_prob_idx[_i]]]
+        for _i in range(3):
+            max_prob_path = trajs_path[indices_cluster_trajs_path[ids_by_prob[_i]]]
             with open(max_prob_path, 'rb') as f:
                 traj_info = pickle.load(f)
 
-            points = traj_info['points_in_glob']
-            boxes = traj_info['boxes_in_glob']
-            lidar_se3_glob = np.linalg.inv(traj_info['glob_se3_lidar'])
-            apply_se3_(lidar_se3_glob, points_=points, boxes_=boxes)
+            points_in_lidar, boxes_in_lidar = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']),
+                                                         points_=traj_info['points_in_glob'], 
+                                                         boxes_=traj_info['boxes_in_glob'],
+                                                         return_transformed=True)
+            # ---
+            # for viz purpose, display points in box coordinate too
+            points_in_box = map_points_on_traj_to_local_frame(traj_info['points_in_glob'], traj_info['boxes_in_glob'], num_sweeps)
+            
+            # map points_in_box to lidar-frame using last box's coord
+            last_box_in_lidar = boxes_in_lidar[[-1]]
+            _c, _s = np.cos(last_box_in_lidar[0, 6]), np.sin(last_box_in_lidar[0, 6])
+            lidar_se3_last_box = np.array([
+                [_c,    -_s,    0.,     last_box_in_lidar[0, 0]],
+                [_s,    _c,     0.,     last_box_in_lidar[0, 1]],
+                [0.,    0.,     0.,     last_box_in_lidar[0, 2]],
+                [0.,    0.,     0.,     1.]
+            ])
+            
+            corrected_points_in_lidar = apply_se3_(lidar_se3_last_box, 
+                                                   points_=points_in_box, 
+                                                   return_transformed=True)
+            
+            # translate the whole thing by 10 meters along box's heading to make viz clearer
+            tf = np.eye(4)
+            tf[:2, -1] = 10. * np.array([np.cos(boxes_in_lidar[-1, 6]), np.sin(boxes_in_lidar[-1, 6])])
+            apply_se3_(tf, points_=corrected_points_in_lidar, boxes_=last_box_in_lidar)
 
-            painter = PointsPainter(points[:, :3], boxes[:, :7])
+            painter = PointsPainter(
+                np.concatenate([points_in_lidar[:, :3], corrected_points_in_lidar[:, :3]]),
+                np.concatenate([boxes_in_lidar[:, :7], last_box_in_lidar[:, :7]])
+            )
             painter.show()
 
+        # make cluster info {cluster embedd, cluster file path}
+        cls_name = input('>>> what class is this: ')
+        if cls_name not in ('car', 'ped'):
+            continue
+
+        members_path = [trajs_path[_i] for _i in indices_cluster_trajs_path]
+        cluster_top_members_static_desc = scaled_trajs_static_descriptor[mask_cluster][ids_by_prob[:30]]
+        cluster_top_members_static_embed = reducer_static.transform(cluster_top_members_static_desc)
+        
+        cluster_info = {
+            'members_path': members_path,
+            'cluster_top_members_static_embed': cluster_top_members_static_embed
+        }
+        with open(f'artifact/cluster_info_{cls_name}_{num_sweeps}sweeps.pkl', 'wb') as f:
+            pickle.dump(cluster_info, f)
 
 
 

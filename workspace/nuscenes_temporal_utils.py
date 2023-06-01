@@ -1,36 +1,7 @@
 import numpy as np
 from nuscenes import NuScenes
 from pyquaternion import Quaternion
-from pathlib import Path
-from typing import List, Dict, Union
-import pickle
-
-
-map_name_from_general_to_detection = {
-    'human.pedestrian.adult': 'pedestrian',
-    'human.pedestrian.child': 'pedestrian',
-    'human.pedestrian.wheelchair': 'ignore',
-    'human.pedestrian.stroller': 'ignore',
-    'human.pedestrian.personal_mobility': 'ignore',
-    'human.pedestrian.police_officer': 'pedestrian',
-    'human.pedestrian.construction_worker': 'pedestrian',
-    'animal': 'ignore',
-    'vehicle.car': 'car',
-    'vehicle.motorcycle': 'motorcycle',
-    'vehicle.bicycle': 'bicycle',
-    'vehicle.bus.bendy': 'bus',
-    'vehicle.bus.rigid': 'bus',
-    'vehicle.truck': 'truck',
-    'vehicle.construction': 'construction_vehicle',
-    'vehicle.emergency.ambulance': 'ignore',
-    'vehicle.emergency.police': 'ignore',
-    'vehicle.trailer': 'trailer',
-    'movable_object.barrier': 'barrier',
-    'movable_object.trafficcone': 'traffic_cone',
-    'movable_object.pushable_pullable': 'ignore',
-    'movable_object.debris': 'ignore',
-    'static_object.bicycle_rack': 'ignore',
-}
+from typing import List, Union, Tuple
 
 
 def tf(translation, rotation):
@@ -61,7 +32,8 @@ def rotation_matrix_to_yaw(rot: np.ndarray) -> float:
 def apply_se3_(se3_tf: np.ndarray, 
                points_: np.ndarray = None, 
                boxes_: np.ndarray = None, boxes_has_velocity: bool = False, 
-               vector_: np.ndarray = None) -> None:
+               vector_: np.ndarray = None,
+               return_transformed: bool = False) -> None:
     """
     Inplace function
 
@@ -72,6 +44,18 @@ def apply_se3_(se3_tf: np.ndarray,
         boxes_has_velocity: make boxes_velocity explicit
         vector_: (N, 2 [+ 1]) - x, y, [z]
     """
+    if return_transformed:
+        points = points_.copy() if points_ is not None else None
+        boxes = boxes_.copy() if boxes_ is not None else None
+        vectors = vector_.copy() if vector_ is not None else None
+        apply_se3_(se3_tf, 
+                   points_=points, 
+                   boxes_=boxes, 
+                   vector_=vectors, 
+                   boxes_has_velocity=boxes_has_velocity)
+        out = [ele for ele in [points, boxes, vectors] if ele is not None]
+        return out
+
     if points_ is not None:
         assert points_.shape[1] >= 3, f"points_.shape: {points_.shape}"
         points_[:, :3] = points_[:, :3] @  se3_tf[:3, :3].T + se3_tf[:3, -1]
@@ -157,34 +141,6 @@ def get_one_pointcloud(nusc: NuScenes, sweep_token: str) -> np.ndarray:
     return points
 
 
-def get_available_scenes(nusc: NuScenes) -> List[Dict]:
-    available_scenes = []
-    print('total scene num:', len(nusc.scene))
-    for scene in nusc.scene:
-        scene_token = scene['token']
-        scene_rec = nusc.get('scene', scene_token)
-        sample_rec = nusc.get('sample', scene_rec['first_sample_token'])
-        sd_rec = nusc.get('sample_data', sample_rec['data']['LIDAR_TOP'])
-        has_more_frames = True
-        scene_not_exist = False
-        while has_more_frames:
-            lidar_path, boxes, _ = nusc.get_sample_data(sd_rec['token'])
-            if not Path(lidar_path).exists():
-                scene_not_exist = True
-                break
-            else:
-                break
-            # if not sd_rec['next'] == '':
-            #     sd_rec = nusc.get('sample_data', sd_rec['next'])
-            # else:
-            #     has_more_frames = False
-        if scene_not_exist:
-            continue
-        available_scenes.append(scene)
-    print('exist scene num:', len(available_scenes))
-    return available_scenes
-
-
 def quaternion_to_yaw(q: Quaternion) -> float:
     return np.arctan2(q.rotation_matrix[1, 0], q.rotation_matrix[0, 0])
 
@@ -238,3 +194,89 @@ def compute_correction_tf(boxes: np.ndarray) -> np.ndarray:
     ], axis=1).reshape(-1, 4, 4)
     correction_tf = np.einsum('ij, bjk -> bik', poses[-1], np.linalg.inv(poses))
     return correction_tf
+
+
+def get_sweeps(nusc: NuScenes, sample_token: str, num_sweeps: int) -> Tuple[np.ndarray]:
+    """
+    Args:
+        nusc:
+        sample_token:
+        num_sweeps:
+
+    Returns:
+        points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx (== -1)]
+        glob_se3_current: (4, 4) - transformation from the current lidar frame to global frame
+    """
+    sample = nusc.get('sample', sample_token)
+    current_lidar_tk = sample['data']['LIDAR_TOP']
+    
+    glob_se3_current = get_nuscenes_sensor_pose_in_global(nusc, current_lidar_tk)
+    current_se3_glob = np.linalg.inv(glob_se3_current)
+
+    sweeps_info = get_sweeps_token(nusc, current_lidar_tk, n_sweeps=num_sweeps, return_time_lag=True, return_sweep_idx=True)
+    points, list_lidar_coord = list(), list()
+    for (lidar_tk, timelag, sweep_idx) in sweeps_info:
+        pcd = get_one_pointcloud(nusc, lidar_tk)
+        
+        # remove ego points
+        mask_ego_points = np.all(np.abs(pcd[:, :2]) < 2.0, axis=1)
+        pcd = pcd[np.logical_not(mask_ego_points)]
+
+        pcd = np.pad(pcd, pad_width=[(0, 0), (0, 3)], constant_values=-1)
+        pcd[:, -3] = timelag
+        pcd[:, -2] = sweep_idx
+        # pcd[:, -1] is instance index which is -1 in the context of UDA
+
+        # map pcd to current frame (EMC)
+        glob_se3_past =  get_nuscenes_sensor_pose_in_global(nusc, lidar_tk)
+        current_se3_past = current_se3_glob @ glob_se3_past
+        apply_se3_(current_se3_past, points_=pcd)
+        points.append(pcd)
+        
+        # log coord of lidar, when this sweep in collected, in "current lidar" frame
+        lidar_coord = np.pad(current_se3_past[:3, -1], pad_width=[(0, 1)], constant_values=sweep_idx)  # (x, y, z, sweep_idx)
+        list_lidar_coord.append(lidar_coord)
+        
+    points = np.concatenate(points, axis=0)  # (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
+
+    return points, glob_se3_current
+
+
+def map_points_on_traj_to_local_frame(points: np.ndarray, 
+                                      boxes: np.ndarray, 
+                                      num_sweeps: int) -> np.ndarray:
+    """
+    Map points scatter along a trajectory of an object to the object's local frame. 
+    Note points & boxes must be in the same frame (e.g., global frame or lidar frame)
+
+    Args:
+        points: (N_pts, 3 + C + 2) - x, y, z, C-channel, [sweep_idx, instance_idx (always=-1)]
+        boxes: (N_b, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
+        num_sweeps:
+    
+    Returns:
+        points_in_box: (N_pts, 3 + C + 2)
+    """
+    cos, sin = np.cos(boxes[:, 6]), np.sin(boxes[:, 6])
+    zeros, ones = np.zeros(boxes.shape[0]), np.ones(boxes.shape[0])
+    batch_glob_se3_boxes = np.stack([
+        cos,    -sin,       zeros,      boxes[:, 0],
+        sin,     cos,       zeros,      boxes[:, 1],
+        zeros,   zeros,     ones,       boxes[:, 2],
+        zeros,   zeros,     zeros,      ones
+    ], axis=1).reshape(-1, 4, 4)
+    batch_boxes_se3_glob = np.linalg.inv(batch_glob_se3_boxes)  # (N_valid_sw, 4, 4)
+
+    boxes_sweep_idx = boxes[:, -1].astype(int)
+    assert np.unique(boxes_sweep_idx).shape[0] == boxes_sweep_idx.shape[0]
+    assert num_sweeps >= boxes_sweep_idx.shape[0]  # assert N_sw >= N_valid_sw 
+    
+    pad_batch_boxes_se3_glob = np.tile(np.eye(4).reshape(1, 4, 4), (num_sweeps,1, 1))
+    pad_batch_boxes_se3_glob[boxes_sweep_idx] = batch_boxes_se3_glob  # (N_sw, 4, 4)  ! N_sw >= N_valid_sw
+    
+    points_sweep_idx = points[:, -2].astype(int)  # (N_pts,)
+    perpoint_box_se3_glob = pad_batch_boxes_se3_glob[points_sweep_idx]  # (N_pts, 4, 4)
+    points_in_box = np.einsum('bik, bk -> bi', perpoint_box_se3_glob[:, :3, :3], points[:, :3]) \
+        + perpoint_box_se3_glob[:, :3, -1]
+    
+    return points_in_box

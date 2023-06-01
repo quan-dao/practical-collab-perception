@@ -5,23 +5,18 @@ import pickle
 from pathlib import Path
 from typing import List
 from tqdm import tqdm
-import time
-
 from nuscenes import NuScenes
-from nuscenes.prediction import PredictHelper
-from nuscenes.prediction.input_representation.static_layers import load_all_maps
+import hdbscan
+from sklearn.neighbors import KDTree
 
 from pcdet.ops.iou3d_nms import iou3d_nms_utils
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import common_utils
 from ..dataset import DatasetTemplate
 
-
-from workspace.rev_get_sweeps_instance_centric import revised_instance_centric_get_sweeps
-from workspace.nuscenes_map_helper import MapMaker
-from workspace.uda_database_utils import create_database, load_1traj
-from workspace.nuscenes_temporal_utils import get_one_pointcloud, apply_se3_, get_sweeps_token, \
-    get_nuscenes_sensor_pose_in_global, compute_correction_tf
+from workspace.nuscenes_temporal_utils import get_sweeps
+from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
+from workspace.traj_discovery import TrajectoryProcessor
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -46,39 +41,39 @@ class NuScenesDataset(DatasetTemplate):
         # -----------------------------------
         # prepare database sampling
         database_root = Path(self.dataset_cfg.DATABASE_ROOT)
-        if database_root.exists():
-            database_classes = [database_root / cls_name for cls_name in class_names]
-            self.gt_database = dict()
-            for cls_name, database_cls in zip(class_names, database_classes):
-                cls_trajs_path = list(database_cls.glob('*.pkl'))
-                cls_trajs_path.sort()
+        # if database_root.exists():
+        #     database_classes = [database_root / cls_name for cls_name in class_names]
+        #     self.gt_database = dict()
+        #     for cls_name, database_cls in zip(class_names, database_classes):
+        #         cls_trajs_path = list(database_cls.glob('*.pkl'))
+        #         cls_trajs_path.sort()
             
-                # filter traj by length
-                invalid_traj_ids = list()
-                for traj_idx, traj_path in enumerate(cls_trajs_path):
-                    with open(traj_path, 'rb') as f:
-                        traj_info = pickle.load(f)
-                    if len(traj_info) < self.dataset_cfg.MAX_SWEEPS:
-                        invalid_traj_ids.append(traj_idx)
+        #         # filter traj by length
+        #         invalid_traj_ids = list()
+        #         for traj_idx, traj_path in enumerate(cls_trajs_path):
+        #             with open(traj_path, 'rb') as f:
+        #                 traj_info = pickle.load(f)
+        #             if len(traj_info) < self.dataset_cfg.MAX_SWEEPS:
+        #                 invalid_traj_ids.append(traj_idx)
 
-                invalid_traj_ids.reverse()
-                for _i in invalid_traj_ids:
-                    del cls_trajs_path[_i]
+        #         invalid_traj_ids.reverse()
+        #         for _i in invalid_traj_ids:
+        #             del cls_trajs_path[_i]
                 
-                self.gt_database[cls_name] = cls_trajs_path
+        #         self.gt_database[cls_name] = cls_trajs_path
 
-            self.sample_group = dict()
-            for group in self.dataset_cfg.SAMPLE_GROUP:  # ['car: 5', 'pedestrian: 5']
-                cls_name, num_to_sample = group.strip().split(':')
-                self.sample_group[cls_name] = {
-                    'num_to_sample': int(num_to_sample),
-                    'pointer': 0,
-                    'indices': np.random.permutation(len(self.gt_database[cls_name])),
-                    'num_trajectories': len(self.gt_database[cls_name])
-                }
+        #     self.sample_group = dict()
+        #     for group in self.dataset_cfg.SAMPLE_GROUP:  # ['car: 5', 'pedestrian: 5']
+        #         cls_name, num_to_sample = group.strip().split(':')
+        #         self.sample_group[cls_name] = {
+        #             'num_to_sample': int(num_to_sample),
+        #             'pointer': 0,
+        #             'indices': np.random.permutation(len(self.gt_database[cls_name])),
+        #             'num_trajectories': len(self.gt_database[cls_name])
+        #         }
 
-        else:
-            print('WARNING | database is not created yet')
+        # else:
+        #     print('WARNING | database is not created yet')
 
     def sample_with_fixed_number(self, class_name: str) -> List[Path]:
         sample_group = self.sample_group[class_name]
@@ -158,36 +153,8 @@ class NuScenesDataset(DatasetTemplate):
         num_sweeps = self.dataset_cfg.MAX_SWEEPS
 
         # -----------------------------
-        # get original points
-        sample = self.nusc.get('sample', info['token'])
-        current_lidar_tk = sample['data']['LIDAR_TOP']
-        current_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, current_lidar_tk))
-
-        sweeps_info = get_sweeps_token(self.nusc, current_lidar_tk, n_sweeps=num_sweeps, return_time_lag=True, return_sweep_idx=True)
-        points_original, list_lidar_coord = list(), list()
-        for (lidar_tk, timelag, sweep_idx) in sweeps_info:
-            pcd = get_one_pointcloud(self.nusc, lidar_tk)
-            
-            # remove ego points
-            mask_ego_points = np.all(np.abs(pcd[:, :2]) < 2.0, axis=1)
-            pcd = pcd[np.logical_not(mask_ego_points)]
-
-            pcd = np.pad(pcd, pad_width=[(0, 0), (0, 3)], constant_values=-1)
-            pcd[:, -3] = timelag
-            pcd[:, -2] = sweep_idx
-            # pcd[:, -1] is instance index which is -1 in the context of UDA
-
-            # map pcd to current frame (EMC)
-            glob_se3_past =  get_nuscenes_sensor_pose_in_global(self.nusc, lidar_tk)
-            current_se3_past = current_se3_glob @ glob_se3_past
-            apply_se3_(current_se3_past, points_=pcd)
-            points_original.append(pcd)
-            
-            # log coord of lidar, when this sweep in collected, in "current lidar" frame
-            lidar_coord = np.pad(current_se3_past[:3, -1], pad_width=[(0, 1)], constant_values=sweep_idx)  # (x, y, z, sweep_idx)
-            list_lidar_coord.append(lidar_coord)
-            
-        points_original = np.concatenate(points_original, axis=0)  # (N_ori_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
+        # get original points    
+        points_original, glob_se3_current = get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
 
         # -----------------------------
         # get sampled points
@@ -293,7 +260,7 @@ class NuScenesDataset(DatasetTemplate):
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token'],
                          'num_sweeps_target': num_sweeps,
-                         'lidar_coords': np.concatenate(list_lidar_coord)},
+                         'lidar_coords': np.stack(list_lidar_coord, axis=0)},
             'gt_boxes': gt_boxes,
             'gt_names': gt_names  # str
         }
@@ -415,33 +382,43 @@ class NuScenesDataset(DatasetTemplate):
         )
         return ap_result_str, ap_dict
 
-    def create_groundtruth_database(self, lyft_root: str, classes_of_interest: list):
-        create_database(Path(lyft_root), classes_of_interest=set(classes_of_interest))
+    def create_groundtruth_database(self):
+        assert self.training, "only create gt database from training set"
 
-    def create_hd_map_database(self):
-        assert len(self.infos) > 0, "remember to call create_nuscenes_infos first"
-        assert self.dataset_cfg.USE_HD_MAP, f"expect self.dataset_cfg.USE_HD_MAP == True, get {self.dataset_cfg.USE_HD_MAP}"
+        num_sweeps = self.dataset_cfg.get('NUM_SWEEPS_TO_BUILD_DATABASE', 15)
+        database_root = self.root_path / f'discovered_database_{num_sweeps}sweeps'
+        database_root.mkdir(parents=True, exist_ok=True)
 
-        map_maker = MapMaker(self.nusc, self.map_point_cloud_range, self.map_bev_image_resolution, 
-                            map_layers=('drivable_area', 'ped_crossing', 'walkway', 'carpark_area'))
+        # init utilities
+        ground_segmenter = init_ground_segmenter(th_dist=0.2)
+        clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1., approx_min_span_tree=True,
+                                    gen_min_span_tree=True, leaf_size=100,
+                                    metric='euclidean', min_cluster_size=30, min_samples=None)
+        box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
+        TrajectoryProcessor.setup_class_attribute(num_sweeps=num_sweeps)
 
-        database_save_path = self.root_path / "hd_map" if 'trainval' in self.dataset_cfg.VERSION else self.root_path / "mini_hd_map"
-        
-        if not database_save_path.is_dir():
-            database_save_path.mkdir(parents=True, exist_ok=True)
+        for idx in tqdm(range(len(self.infos))):
+            info = self.infos[idx]
+            points, glob_se3_current = get_sweeps(self.nusc, info['token'], num_sweeps)
 
-        start_time = time.time()
-        for idx in range(len(self.infos)):
-            sample_token = self.infos[idx]['token']
-            map_img = map_maker.get_map_in_lidar_frame(sample_token)
-            # save to hard disk
-            filename = database_save_path / f"bin_map_{sample_token}.npy"
-            np.save(filename, map_img)
+            # remove ground
+            points, ground_pts = remove_ground(points, ground_segmenter, return_ground_points=True)
+            tree_ground = KDTree(ground_pts[:, :3])  # to query for ground height given a 3d coord
 
-            if idx % 100 == 0:
-                avg_exe_time = (time.time() - start_time) / float(idx + 1)
-                print(f"finish {idx + 1} / {len(self.infos)}, avg exe time {avg_exe_time}")
-                start_time = time.time()
+            # cluster
+            clusterer.fit(points[:, :2])
+            points_label = clusterer.labels_.copy()
+            unq_labels = np.unique(points_label)
+
+            # -----
+            # -----
+            for label in unq_labels:
+                if label == -1:
+                    # label of cluster representing outlier
+                    continue
+                save_to_path = database_root / f"{info['token']}_label{label}.pkl"
+                traj = TrajectoryProcessor()
+                traj(points[points_label == label], glob_se3_current, save_to_path, box_finder, tree_ground, ground_pts)
 
 
 def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):
@@ -535,7 +512,4 @@ if __name__ == '__main__':
             logger=common_utils.create_logger(), training=args.training
         )
         assert args.training, "expect args.training == True; get False"
-        nuscenes_dataset.create_groundtruth_database(
-            lyft_root=ROOT_DIR / 'data' / 'lyft',
-            classes_of_interest=['car',]
-        )
+        nuscenes_dataset.create_groundtruth_database()
