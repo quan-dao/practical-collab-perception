@@ -5,7 +5,7 @@ import hdbscan
 from typing import Tuple
 import pickle
 
-from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
+from workspace.uda_tools_box import BoxFinder
 from workspace.box_fusion_utils import kde_fusion
 from workspace.nuscenes_temporal_utils import apply_se3_
 
@@ -141,7 +141,7 @@ class TrajectoryProcessor(object):
             self.info = {
                 'points_in_glob': pts,  # (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (always = -1 in UDA setting)]
                 'boxes_in_glob': traj_boxes,  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
-                'total_translation': first_to_last_translation,  # (1,)
+                'glob_se3_lidar': glob_se3_lidar
             }
             self.pickle(save_to_path)
         else:
