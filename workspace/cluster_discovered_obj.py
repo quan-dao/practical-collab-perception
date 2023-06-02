@@ -31,7 +31,7 @@ def main(num_sweeps: int = 15,
         
         boxes_in_glob = traj_info['boxes_in_glob']
 
-        if np.any(boxes_in_glob[0, 3: 6] < 1e-1):
+        if np.any(boxes_in_glob[0, 3: 6] < 1e-1) or np.any(traj_info['boxes_in_glob'][0, 3: 6] > 7.):
             continue
         
         valid_trajs_idx.append(idx)
@@ -83,6 +83,7 @@ def main(num_sweeps: int = 15,
     # umap static
     reducer_static = umap.UMAP(n_components=3, random_state=78)
     scaled_trajs_static_descriptor = StandardScaler().fit_transform(trajs_static_descriptor)
+    # TODO: pickle this StandardScaler().fit_transform(trajs_static_descriptor)
     reducer_static.fit(scaled_trajs_static_descriptor)
     with open(f'artifact/umap_static_{num_sweeps}sweeps_v1.0-mini.pkl', 'wb') as f:
         pickle.dump(reducer_static, f)

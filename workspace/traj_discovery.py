@@ -7,7 +7,7 @@ import pickle
 
 from workspace.uda_tools_box import BoxFinder
 from workspace.box_fusion_utils import kde_fusion
-from workspace.nuscenes_temporal_utils import apply_se3_
+from workspace.nuscenes_temporal_utils import apply_se3_, map_points_on_traj_to_local_frame
 
 
 class TrajectoryProcessor(object):
@@ -19,6 +19,8 @@ class TrajectoryProcessor(object):
     filter_max_dim, filter_min_points_in_sweep = None, None
     threshold_area_small_obj = None
     threshold_displacement_small_obj, threshold_displacement_large_obj = None, None
+    point_cloud_range = None
+    look_for_static = None
 
     @staticmethod
     def setup_class_attribute(num_sweeps: int,
@@ -29,6 +31,8 @@ class TrajectoryProcessor(object):
                               threshold_area_small_obj: float = 0.5,
                               threshold_displacement_small_obj: float = 0.35,
                               threshold_displacement_large_obj: float = 2.0,
+                              point_cloud_range: np.ndarray = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]),
+                              look_for_static: bool = False,
                               debug: bool = False):
         TrajectoryProcessor.num_sweeps = num_sweeps
         TrajectoryProcessor.min_num_sweeps_in_traj = min_num_sweeps_in_traj
@@ -38,6 +42,8 @@ class TrajectoryProcessor(object):
         TrajectoryProcessor.threshold_area_small_obj = threshold_area_small_obj
         TrajectoryProcessor.threshold_displacement_small_obj = threshold_displacement_small_obj
         TrajectoryProcessor.threshold_displacement_large_obj = threshold_displacement_large_obj
+        TrajectoryProcessor.point_cloud_range = point_cloud_range
+        TrajectoryProcessor.look_for_static = look_for_static
         TrajectoryProcessor.debug = debug
 
     def __init__(self) -> None:
@@ -92,7 +98,7 @@ class TrajectoryProcessor(object):
                             box_bev[2], box_bev[3], box_height,  # dx, dy, dz
                             box_bev[4],  # heading
                             sweep_idx])
-            if np.logical_or(box[3: 6] < 0, box[3: 6] > self.filter_max_dim).any():
+            if np.logical_or(box[3: 6] < 0.1, box[3: 6] > self.filter_max_dim).any():
                 # box has spurious dim -> skip
                 continue
             
@@ -117,8 +123,11 @@ class TrajectoryProcessor(object):
 
         # check if this traj is actually dynamic
         area_xy = traj_boxes[0, 3] * traj_boxes[0, 4]
-        threshold_disp = self.threshold_displacement_small_obj if area_xy < self.threshold_area_small_obj else \
-              self.threshold_displacement_large_obj
+        if self.look_for_static:
+            threshold_disp = 0.
+        else:
+            threshold_disp = self.threshold_displacement_small_obj if area_xy < self.threshold_area_small_obj else \
+                self.threshold_displacement_large_obj
         first_to_last_translation = np.linalg.norm(traj_boxes[-1, :2] - traj_boxes[0, :2])
         if first_to_last_translation < threshold_disp:
             return
@@ -147,7 +156,8 @@ class TrajectoryProcessor(object):
         else:
             # debugging -> keep pts & box in lidar coord
             self.info = {
-                'points_in_lidar': pts, 'boxes_in_lidar': traj_boxes, 'total_translation': first_to_last_translation
+                'points_in_lidar': pts, 
+                'boxes_in_lidar': traj_boxes
             }
 
 
@@ -216,5 +226,47 @@ class TrajectoryProcessor(object):
     def pickle(self, save_to_path: Path) -> None:
         with open(save_to_path, 'wb') as f:
             pickle.dump(self.info, f)
+
+    def build_descriptor(self, points: np.ndarray = None, boxes: np.ndarray = None, use_static_attribute_only: bool = False) -> np.ndarray:
+        if points is None:
+            assert boxes is None
+            if self.debug:
+                points = self.info['points_in_lidar']
+                boxes = self.info['boxes_in_lidar']
+            else:
+                points, boxes = self.info['points_in_glob'], self.info['boxes_in_glob']
+                apply_se3_(np.linalg.inv(self.info['glob_se3_lidar']), points_=points, boxes_=boxes)
+        
+        # covariance of points coord in box's local frame - normalized by box'size
+        points_in_box = map_points_on_traj_to_local_frame(points, boxes, self.num_sweeps)
+        points_in_box = 2.0 * points_in_box / boxes[0, 3: 6]
+        
+        cov_coord3d = np.cov(points_in_box.T)
+        cc, rr = np.meshgrid(np.arange(cov_coord3d.shape[1]), np.arange(cov_coord3d.shape[0]))
+        mask_above_diag = cc >= rr
+        cov_coord3d_idp = cov_coord3d[rr[mask_above_diag], cc[mask_above_diag]]
+
+        # normalized dimension
+        grid_size_meters = self.point_cloud_range[3:] - self.point_cloud_range[:3]
+        dx, dy, dz = boxes[0, 3: 6]
+        area_xy = dx * dy / (grid_size_meters[0] * grid_size_meters[1])
+        height = dz / grid_size_meters[2]
+
+        # assemble descriptor
+        if use_static_attribute_only:
+            descriptor = np.array([*cov_coord3d_idp.tolist(), area_xy, height])
+        else:  # -> use dynamic attributes also
+            # variance of num points
+            _, num_points_per_sweep = np.unique(points[:, -2].astype(int), return_counts=True)
+            var_num_points = np.var(num_points_per_sweep / num_points_per_sweep.sum())
+
+            # total distance travel
+            travelled_dist = np.linalg.norm(boxes[1:, :2] - boxes[:-1, :2], axis=1).sum() / np.linalg.norm(grid_size_meters[:2])
+
+            descriptor = np.array([var_num_points, *cov_coord3d_idp.tolist(), area_xy, height, travelled_dist])
+
+        return descriptor
+
+
 
 
