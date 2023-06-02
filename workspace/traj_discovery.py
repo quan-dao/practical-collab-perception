@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from sklearn.neighbors import KDTree
+from sklearn.neighbors import KDTree, LocalOutlierFactor
 import hdbscan
 from typing import Tuple
 import pickle
@@ -27,7 +27,7 @@ class TrajectoryProcessor(object):
                               min_num_sweeps_in_traj: int = 3, 
                               num_ground_neighbors: int =3,
                               filter_min_points_in_sweep: int = 5,
-                              filter_max_dim: float = 10.,
+                              filter_max_dim: float = 7.,
                               threshold_area_small_obj: float = 0.5,
                               threshold_displacement_small_obj: float = 0.35,
                               threshold_displacement_large_obj: float = 2.0,
@@ -64,6 +64,11 @@ class TrajectoryProcessor(object):
             
         """
         assert self.num_sweeps > 0, "invoke TrajectoryProcessor.setup_class_attribute() first"
+
+        # remove outlier
+        classifier = LocalOutlierFactor(n_neighbors=10)
+        mask_inliers = classifier.fit_predict(points[:, :3])
+        points = points[mask_inliers > 0]
         
         points_sweep_idx = points[:, -2].astype(int)
         unq_sweep_idx = np.unique(points_sweep_idx)
@@ -77,7 +82,6 @@ class TrajectoryProcessor(object):
         # -------------------------------
         # iterate sweep index to discover boxes
         # -------------------------------
-        iter_init_theta, iter_prev_num_points = None, -1
         traj_boxes = list()
         num_points_in_boxes = list()  # to use as confident in box fusion
 
@@ -88,7 +92,7 @@ class TrajectoryProcessor(object):
                 continue
 
             # fit a box to points in the current sweep
-            box_bev, theta_star = box_finder.fit(sweep_points, rough_est_heading, iter_init_theta)
+            box_bev, theta_star = box_finder.fit(sweep_points, rough_est_heading, None)
             
             # get box param along z-axis
             box_height, center_z = self.compute_box_height_and_center_z_coord(sweep_points, tree_ground, ground_points)
@@ -105,11 +109,6 @@ class TrajectoryProcessor(object):
             # valid box -> store
             traj_boxes.append(box)
             num_points_in_boxes.append(sweep_points.shape[0])
-
-            # update iterating vars
-            if sweep_points.shape[0] > iter_prev_num_points:
-                iter_init_theta = theta_star
-                iter_prev_num_points = sweep_points.shape[0]
         
         # -------------------------------
         # refine discoverd boxes
@@ -237,33 +236,19 @@ class TrajectoryProcessor(object):
                 points, boxes = self.info['points_in_glob'], self.info['boxes_in_glob']
                 apply_se3_(np.linalg.inv(self.info['glob_se3_lidar']), points_=points, boxes_=boxes)
         
-        # covariance of points coord in box's local frame - normalized by box'size
-        points_in_box = map_points_on_traj_to_local_frame(points, boxes, self.num_sweeps)
-        points_in_box = 2.0 * points_in_box / boxes[0, 3: 6]
-        
-        cov_coord3d = np.cov(points_in_box.T)
-        cc, rr = np.meshgrid(np.arange(cov_coord3d.shape[1]), np.arange(cov_coord3d.shape[0]))
-        mask_above_diag = cc >= rr
-        cov_coord3d_idp = cov_coord3d[rr[mask_above_diag], cc[mask_above_diag]]
-
         # normalized dimension
         grid_size_meters = self.point_cloud_range[3:] - self.point_cloud_range[:3]
-        dx, dy, dz = boxes[0, 3: 6]
-        area_xy = dx * dy / (grid_size_meters[0] * grid_size_meters[1])
-        height = dz / grid_size_meters[2]
-
+        dx, dy, dz = boxes[0, 3: 6] / grid_size_meters
+        
         # assemble descriptor
         if use_static_attribute_only:
-            descriptor = np.array([*cov_coord3d_idp.tolist(), area_xy, height])
-        else:  # -> use dynamic attributes also
-            # variance of num points
-            _, num_points_per_sweep = np.unique(points[:, -2].astype(int), return_counts=True)
-            var_num_points = np.var(num_points_per_sweep / num_points_per_sweep.sum())
-
+            descriptor = np.array([dx, dy, dz])
+        else:  
+            # -> use dynamic attributes also
             # total distance travel
             travelled_dist = np.linalg.norm(boxes[1:, :2] - boxes[:-1, :2], axis=1).sum() / np.linalg.norm(grid_size_meters[:2])
 
-            descriptor = np.array([var_num_points, *cov_coord3d_idp.tolist(), area_xy, height, travelled_dist])
+            descriptor = np.array([dx, dy, dz, travelled_dist])
 
         return descriptor
 

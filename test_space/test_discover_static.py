@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import hdbscan
 from pathlib import Path
-from pprint import pprint
 import pickle
 from sklearn.neighbors import KDTree
 import matplotlib.cm
@@ -41,8 +40,8 @@ traj_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.,
 
 box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
 
-disco_traj_root = Path('../data/nuscenes/v1.0-mini/discovered_database_15sweeps')
-disco_traj_clusters_info_root = Path('../workspace/artifact/good/')
+disco_traj_root = Path('../data/nuscenes/v1.0-mini/rev1_discovered_database_15sweeps')
+disco_traj_clusters_info_root = Path('../workspace/artifact/rev1/')
 
 
 def load_discovered_trajs(sample_token: str, disco_database_root: Path, return_in_lidar_frame: bool = True) -> np.ndarray:
@@ -67,7 +66,7 @@ def load_discovered_trajs(sample_token: str, disco_database_root: Path, return_i
 
 
 def load_trajs_static_embedding(traj_clusters_info_root: Path) -> List[np.ndarray]:
-    classes_name = ['car', 'car+cyc+motor', 'ped']
+    classes_name = ['car', 'ped']
     trajs_info_path = [traj_clusters_info_root / Path(f'cluster_info_{name}_15sweeps.pkl') for name in classes_name]
     
     clusters_top_embeddings = list()
@@ -122,14 +121,6 @@ def main(sample_idx: int):
     traj_clusterer.fit(traj_clusters_top_embeddings[:, :3])
     traj_clusterer.generate_prediction_data()
 
-    # load scaler
-    with open(disco_traj_clusters_info_root / Path('scaler_static_15sweeps_v1.0-mini.pkl'), 'rb') as f:
-        scaler = pickle.load(f)
-
-    # load embedding computer
-    with open(disco_traj_clusters_info_root / Path('umap_static_15sweeps_v1.0-mini.pkl'), 'rb') as f:
-        reducer = pickle.load(f)
-
     TrajectoryProcessor.setup_class_attribute(num_sweeps=NUM_SWEEPS, debug=True, look_for_static=True)
     all_static_traj_boxes, all_static_traj_embedding = list(), list()
     all_static_traj_boxes_last = list()
@@ -158,16 +149,12 @@ def main(sample_idx: int):
         all_static_traj_embedding.append(traj_embedding)
     
     all_static_traj_boxes = np.concatenate(all_static_traj_boxes)
-    all_static_traj_embedding = np.stack(all_static_traj_embedding, axis=0)
     all_static_traj_boxes_last = np.stack(all_static_traj_boxes_last, axis=0)
-    all_static_traj_embedding = reducer.transform(scaler.transform(all_static_traj_embedding))
+    all_static_traj_embedding = np.stack(all_static_traj_embedding, axis=0)
     
     print('assign cls for static traj')
     all_static_traj_labels, _ = hdbscan.approximate_predict(traj_clusterer, all_static_traj_embedding)
     
-    _unq_labels, _counts = np.unique(all_static_traj_labels, return_counts=True)
-    print('_unq_labels: ', _unq_labels)
-    print('_counts: ', _counts)
 
     def viz():
         print('showing filtered points & disco_boxes')
@@ -176,19 +163,30 @@ def main(sample_idx: int):
         print('---')
         
         print('showing traj_clusters embedding')
-        traj_clusters_color = np.array(['r', 'g', 'b'])
+        traj_clusters_color = np.array([
+            [1, 0, 0],
+            [0, 0, 1]
+        ]).astype(float)  # has 2 rows because has only 2 classes (car & ped)
         traj_embeddings_color = traj_clusters_color[traj_clusterer.labels_]
+        traj_embeddings_color[traj_clusterer.labels_ == -1] = 0.
+
         fig = plt.figure()
         ax = fig.add_subplot(projection='3d')
         ax.scatter(traj_clusters_top_embeddings[:, 0], 
                    traj_clusters_top_embeddings[:, 1], 
                    traj_clusters_top_embeddings[:, 2], 
                    c=traj_embeddings_color)
-        
+
+        _unq_labels, _counts = np.unique(all_static_traj_labels, return_counts=True)
+        print('_unq_labels: ', _unq_labels)
+        print('_counts: ', _counts)    
+        static_trajs_color = traj_clusters_color[all_static_traj_labels]
+        static_trajs_color[all_static_traj_labels == -1] = 0.
+
         ax.scatter(all_static_traj_embedding[:, 0], 
                    all_static_traj_embedding[:, 1], 
                    all_static_traj_embedding[:, 2], 
-                   'x', c='k')
+                   'x', c=static_trajs_color)
         plt.show()
         print('---')
 
@@ -201,7 +199,6 @@ def main(sample_idx: int):
         print('---')
 
         print('showing clustered points & static boxes & their classes')
-        traj_clusters_color = np.eye(3)
         boxes_color = traj_clusters_color[all_static_traj_labels]
         boxes_color[all_static_traj_labels == -1] = 0.
         painter = PointsPainter(points[:, :3], all_static_traj_boxes_last[:, :7])
@@ -214,7 +211,7 @@ def main(sample_idx: int):
 
 
 if __name__ == '__main__':
-    main(sample_idx=50)
+    main(sample_idx=110)
     # 46: parked cars
     # 10: has 3 moving cars
     # 110: missing 3 ped

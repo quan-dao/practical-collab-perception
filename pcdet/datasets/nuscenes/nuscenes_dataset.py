@@ -385,7 +385,7 @@ class NuScenesDataset(DatasetTemplate):
         assert self.training, "only create gt database from training set"
 
         num_sweeps = self.dataset_cfg.get('NUM_SWEEPS_TO_BUILD_DATABASE', 15)
-        database_root = self.root_path / f'discovered_database_{num_sweeps}sweeps'
+        database_root = self.root_path / f'rev1_discovered_database_{num_sweeps}sweeps'
         database_root.mkdir(parents=True, exist_ok=True)
 
         # init utilities
@@ -405,7 +405,7 @@ class NuScenesDataset(DatasetTemplate):
             tree_ground = KDTree(ground_pts[:, :3])  # to query for ground height given a 3d coord
 
             # cluster
-            clusterer.fit(points[:, :2])
+            clusterer.fit(points[:, :3])
             points_label = clusterer.labels_.copy()
             unq_labels = np.unique(points_label)
 

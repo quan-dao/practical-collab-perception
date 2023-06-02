@@ -42,7 +42,7 @@ def main(sample_idx: int,
         tree_ground = KDTree(ground_pts[:, :3])  # to query for ground height given a 3d coord
 
         # cluster
-        clusterer.fit(points[:, :2])
+        clusterer.fit(points[:, :3])
         points_label = clusterer.labels_.copy()
         
         unq_labels = np.unique(points_label)
@@ -88,7 +88,7 @@ def main(sample_idx: int,
 
 
 if __name__ == '__main__':
-    main(sample_idx=90,
+    main(sample_idx=110,
          num_sweeps=15,
          show_last=False)
 
