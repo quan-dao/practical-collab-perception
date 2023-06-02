@@ -259,8 +259,7 @@ class NuScenesDataset(DatasetTemplate):
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token'],
-                         'num_sweeps_target': num_sweeps,
-                         'lidar_coords': np.stack(list_lidar_coord, axis=0)},
+                         'num_sweeps_target': num_sweeps},
             'gt_boxes': gt_boxes,
             'gt_names': gt_names  # str
         }

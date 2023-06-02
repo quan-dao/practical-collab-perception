@@ -5,7 +5,6 @@ from pathlib import Path
 from pprint import pprint
 import pickle
 from sklearn.neighbors import KDTree
-from sklearn.preprocessing import StandardScaler
 import matplotlib.cm
 from typing import List
 import matplotlib.pyplot as plt
@@ -123,6 +122,10 @@ def main(sample_idx: int):
     traj_clusterer.fit(traj_clusters_top_embeddings[:, :3])
     traj_clusterer.generate_prediction_data()
 
+    # load scaler
+    with open(disco_traj_clusters_info_root / Path('scaler_static_15sweeps_v1.0-mini.pkl'), 'rb') as f:
+        scaler = pickle.load(f)
+
     # load embedding computer
     with open(disco_traj_clusters_info_root / Path('umap_static_15sweeps_v1.0-mini.pkl'), 'rb') as f:
         reducer = pickle.load(f)
@@ -157,7 +160,7 @@ def main(sample_idx: int):
     all_static_traj_boxes = np.concatenate(all_static_traj_boxes)
     all_static_traj_embedding = np.stack(all_static_traj_embedding, axis=0)
     all_static_traj_boxes_last = np.stack(all_static_traj_boxes_last, axis=0)
-    all_static_traj_embedding = reducer.transform(StandardScaler().fit_transform(all_static_traj_embedding))
+    all_static_traj_embedding = reducer.transform(scaler.transform(all_static_traj_embedding))
     
     print('assign cls for static traj')
     all_static_traj_labels, _ = hdbscan.approximate_predict(traj_clusterer, all_static_traj_embedding)
@@ -211,6 +214,8 @@ def main(sample_idx: int):
 
 
 if __name__ == '__main__':
-    main(sample_idx=46)
-    # 46: parked car
+    main(sample_idx=50)
+    # 46: parked cars
     # 10: has 3 moving cars
+    # 110: missing 3 ped
+    # 50: parked cars
