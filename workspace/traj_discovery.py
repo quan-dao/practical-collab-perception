@@ -234,7 +234,8 @@ class TrajectoryProcessor(object):
         with open(save_to_path, 'wb') as f:
             pickle.dump(self.info, f)
 
-    def build_descriptor(self, points: np.ndarray = None, boxes: np.ndarray = None, use_static_attribute_only: bool = False) -> np.ndarray:       
+    def build_descriptor(self, use_static_attribute_only: bool = False) -> np.ndarray:
+        boxes = self.info['boxes_in_lidar'] if self.debug else self.info['boxes_in_glob']
         # normalized dimension
         grid_size_meters = self.point_cloud_range[3:] - self.point_cloud_range[:3]
         dx, dy, dz = boxes[0, 3: 6] / grid_size_meters

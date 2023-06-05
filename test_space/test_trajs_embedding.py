@@ -7,8 +7,11 @@ from workspace.o3d_visualization import print_dict
 
 def main():
     classes_name = ['car', 'ped']
-    trajs_info_path = [f'../workspace/artifact/rev1/cluster_info_{name}_15sweeps.pkl' for name in classes_name]
+    trajs_info_path = [f'../workspace/artifact/rev1/rev1p1_cluster_info_{name}_15sweeps.pkl' for name in classes_name]
     trajs_color = ['r', 'b']
+
+    with open(f'../workspace/artifact/rev1/rev1p1_scaler_trajs_embedding_static.pkl', 'rb') as f:
+        scaler = pickle.load(f)
 
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -17,7 +20,7 @@ def main():
         with open(info_path, 'rb') as f:
             traj_info = pickle.load(f)
         print_dict(traj_info, f'{cls_name}_traj_info')
-        embeddings = traj_info['cluster_top_members_static_embed']  # (N, 3)
+        embeddings = scaler.transform(traj_info['cluster_top_members_static_embed'])  # (N, 3)
         ax.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], c=cls_color, label=cls_name)
 
     ax.legend()

@@ -440,6 +440,9 @@ class NuScenesDataset(DatasetTemplate):
 
         disco_dyna_traj_root = self.root_path / f'rev1_discovered_database_{num_sweeps}sweeps'
 
+        with open(f'./workspace/artifact/rev1/rev1p1_scaler_trajs_embedding_static.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+
         # set up trajectories cluster
         traj_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.,
                                          metric='euclidean', min_cluster_size=10, min_samples=None)
@@ -451,7 +454,7 @@ class NuScenesDataset(DatasetTemplate):
                                                            constant_values=cls_idx)
         traj_clusters_top_embeddings = np.concatenate(traj_clusters_top_embeddings)
 
-        traj_clusterer.fit(traj_clusters_top_embeddings[:, :3])
+        traj_clusterer.fit(scaler.transform(traj_clusters_top_embeddings[:, :3]))
         traj_clusterer.generate_prediction_data()
 
         # assoc self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES & class_index found by traj_clusterer
@@ -522,7 +525,9 @@ class NuScenesDataset(DatasetTemplate):
 
             # find class for static traj, then save to database
             sample_static_embedding = np.stack(sample_static_embedding, axis=0)  # (N_sta, C)
-            sample_static_labels, _ = hdbscan.approximate_predict(traj_clusterer, sample_static_embedding)  # (N_sta,)
+            sample_static_labels, sample_static_probs = hdbscan.approximate_predict(traj_clusterer, scaler.transform(sample_static_embedding))  # (N_sta,)
+            # threshold class prob
+            sample_static_labels[sample_static_probs < 0.5] = -1
             
             for idx_sta_traj, sta_traj in enumerate(sample_static_trajs):
                 sta_traj_label = sample_static_labels[idx_sta_traj]

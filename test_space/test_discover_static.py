@@ -43,6 +43,9 @@ box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
 disco_traj_root = Path('../data/nuscenes/v1.0-mini/rev1_discovered_database_15sweeps')
 disco_traj_clusters_info_root = Path('../workspace/artifact/rev1/')
 
+with open(f'../workspace/artifact/rev1/rev1p1_scaler_trajs_embedding_static.pkl', 'rb') as f:
+        scaler = pickle.load(f)
+
 
 def load_discovered_trajs(sample_token: str, disco_database_root: Path, return_in_lidar_frame: bool = True) -> np.ndarray:
     discovered_trajs_path = list(disco_database_root.glob(f'{sample_token}_label*'))
@@ -118,7 +121,7 @@ def main(sample_idx: int):
 
     # load traj_clusters' embedding
     traj_clusters_top_embeddings = load_trajs_static_embedding(disco_traj_clusters_info_root)
-    traj_clusterer.fit(traj_clusters_top_embeddings[:, :3])
+    traj_clusterer.fit(scaler.transform(traj_clusters_top_embeddings[:, :3]))
     traj_clusterer.generate_prediction_data()
 
     TrajectoryProcessor.setup_class_attribute(num_sweeps=NUM_SWEEPS, debug=True, look_for_static=True)
@@ -139,6 +142,10 @@ def main(sample_idx: int):
         if np.logical_or(traj_boxes[0, 3: 6] < 0.1, traj_boxes[0, 3: 6] > 7.).any():
             # invalid dimension -> skip
             continue
+        
+        # remove static boxes that are particularly tall
+        if traj_boxes[0, 5] > 2.0:
+            continue
 
         # compute descriptor to id class
         traj_embedding = traj.build_descriptor(use_static_attribute_only=True)
@@ -153,7 +160,9 @@ def main(sample_idx: int):
     all_static_traj_embedding = np.stack(all_static_traj_embedding, axis=0)
     
     print('assign cls for static traj')
-    all_static_traj_labels, _ = hdbscan.approximate_predict(traj_clusterer, all_static_traj_embedding)
+    all_static_traj_labels, all_static_traj_probs = hdbscan.approximate_predict(traj_clusterer, scaler.transform(all_static_traj_embedding))
+    # threshold class prob
+    all_static_traj_labels[all_static_traj_probs < 0.5] = -1
     
 
     def viz():
@@ -211,7 +220,7 @@ def main(sample_idx: int):
 
 
 if __name__ == '__main__':
-    main(sample_idx=110)
+    main(sample_idx=200)
     # 46: parked cars
     # 10: has 3 moving cars
     # 110: missing 3 ped

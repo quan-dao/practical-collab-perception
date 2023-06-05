@@ -4,6 +4,7 @@ import pickle
 from pathlib import Path
 import matplotlib.cm
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 
 from workspace.o3d_visualization import PointsPainter
 from workspace.nuscenes_temporal_utils import apply_se3_, map_points_on_traj_to_local_frame
@@ -59,16 +60,20 @@ def main(num_sweeps: int = 15,
 
     # trajectories' embedding
     trajs_embedding = trajs_descriptor
-    trajs_embedding_static = trajs_static_descriptor
-    
     clusterer = hdbscan.HDBSCAN(algorithm='best',
                                 # leaf_size=100,
                                 metric='euclidean', min_cluster_size=50, min_samples=None)
-    clusterer.fit(trajs_embedding)
+    clusterer.fit(StandardScaler().fit_transform(trajs_embedding))
     trajs_label = clusterer.labels_
     unq_labels, counts = np.unique(trajs_label, return_counts=True)
     print('unq_lalbes:\n', unq_labels)
     print('counts:\n', counts)
+
+    trajs_embedding_static = trajs_static_descriptor
+    static_scaler = StandardScaler()
+    static_scaler.fit(trajs_embedding_static)
+    with open(f'artifact/rev1/rev1p1_scaler_trajs_embedding_static.pkl', 'wb') as f:
+        pickle.dump(static_scaler, f)
 
     clusters_color = matplotlib.cm.rainbow(np.linspace(0.1, 1, unq_labels.shape[0]))[:, :3]
     trajs_color = clusters_color[trajs_label]
@@ -92,7 +97,7 @@ def main(num_sweeps: int = 15,
         ids_by_prob = np.argsort(-trajs_prob[mask_cluster])  # (N_traj_in_cluster,)
         indices_cluster_trajs_path = indices_trajs_path[mask_cluster]  # (N_traj_in_cluster,)
 
-        for _i in range(10):
+        for _i in range(15):
             max_prob_path = trajs_path[indices_cluster_trajs_path[ids_by_prob[_i]]]
             with open(max_prob_path, 'rb') as f:
                 traj_info = pickle.load(f)
@@ -138,7 +143,7 @@ def main(num_sweeps: int = 15,
             'members_path': members_path,
             'cluster_top_members_static_embed': cluster_top_members_embedding_static
         }
-        with open(f'artifact/rev1/cluster_info_{label}_{num_sweeps}sweeps.pkl', 'wb') as f:
+        with open(f'artifact/rev1/rev1p1_cluster_info_{label}_{num_sweeps}sweeps.pkl', 'wb') as f:
             pickle.dump(cluster_info, f)
 
 
