@@ -16,7 +16,7 @@ from ..dataset import DatasetTemplate
 
 from workspace.nuscenes_temporal_utils import get_sweeps
 from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
-from workspace.traj_discovery import TrajectoryProcessor
+from workspace.traj_discovery import TrajectoryProcessor, load_discovered_trajs, load_trajs_static_embedding, filter_points_in_boxes
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -418,6 +418,120 @@ class NuScenesDataset(DatasetTemplate):
                 save_to_path = database_root / f"{info['token']}_label{label}.pkl"
                 traj = TrajectoryProcessor()
                 traj(points[points_label == label], glob_se3_current, save_to_path, box_finder, tree_ground, ground_pts)
+    
+    def create_static_database(self):
+        assert self.training, "only create gt database from training set"
+        num_sweeps = self.dataset_cfg.get('NUM_SWEEPS_TO_BUILD_DATABASE', 15)
+        static_database_root = self.root_path / f'rev1_discovered_static_database_{num_sweeps}sweeps'
+        static_database_root.mkdir(parents=True, exist_ok=True)
+        
+        # ==========================
+        # init utilities
+        # ==========================
+        ground_segmenter = init_ground_segmenter(th_dist=0.2)
+
+        pts_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.,
+                                        leaf_size=100,
+                                        metric='euclidean', min_cluster_size=30, min_samples=None)
+
+        box_finder = BoxFinder(return_in_form='box_openpcdet', return_theta_star=True)
+
+        TrajectoryProcessor.setup_class_attribute(num_sweeps=num_sweeps, look_for_static=True, hold_pickle=True)
+
+        disco_dyna_traj_root = self.root_path / f'rev1_discovered_database_{num_sweeps}sweeps'
+
+        # set up trajectories cluster
+        traj_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.,
+                                         metric='euclidean', min_cluster_size=10, min_samples=None)
+        traj_clusters_top_embeddings = load_trajs_static_embedding(Path('../workspace/artifact/rev1'),
+                                                                   classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)
+        for cls_idx in range(len(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)):
+            traj_clusters_top_embeddings[cls_idx] = np.pad(traj_clusters_top_embeddings[cls_idx], 
+                                                           pad_width=[(0, 0), (0, 1)], 
+                                                           constant_values=cls_idx)
+        traj_clusters_top_embeddings = np.concatenate(traj_clusters_top_embeddings)
+
+        traj_clusterer.fit(traj_clusters_top_embeddings[:, :3])
+        traj_clusterer.generate_prediction_data()
+
+        # assoc self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES & class_index found by traj_clusterer
+        # for each group top_embedding, find the dominant label produced by traj_cluster
+        # this dominant label is associated with the predefined class name of this group
+        traj_clusterer_label2name = dict()
+        for cls_idx, cls_name in enumerate(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES):
+            _labels = traj_clusterer.labels_[traj_clusters_top_embeddings[:, -1].astype(int) == cls_idx]
+            _unq_labels, counts = np.unique(_labels, return_counts=True)
+            dominant_label = _unq_labels[np.argmax(counts)]
+            traj_clusterer_label2name[dominant_label] = cls_name
+
+        # ==========================
+        # main procedure
+        # ==========================
+        for idx in tqdm(range(len(self.infos))):  # iterate samples in the dataset
+            info = self.infos[idx]
+            points, glob_se3_current = get_sweeps(self.nusc, info['token'], num_sweeps)
+
+            # load all dyn traj found in this sample
+            disco_boxes = load_discovered_trajs(info['token'], 
+                                                disco_dyna_traj_root, 
+                                                return_in_lidar_frame=True)  # (N_disco_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
+
+            # remove ground
+            points, ground_pts = remove_ground(points, ground_segmenter, return_ground_points=True)
+            tree_ground = KDTree(ground_pts[:, :3])  # to query for ground height given a 3d coord
+
+            # remove points in disco_boxes
+            points = filter_points_in_boxes(points, disco_boxes)
+
+            # cluster remaining points
+            pts_clusterer.fit(points[:, :3])
+            points_label = pts_clusterer.labels_.copy()
+            unq_pts_labels = np.unique(points_label)
+            
+            # -----
+            # process newly found clusters
+            # -----
+            sample_static_trajs, sample_static_embedding = list(), list()
+            for p_lb in unq_pts_labels:
+                if p_lb == -1:
+                    continue
+                
+                traj = TrajectoryProcessor()
+                traj(points[points_label == p_lb], glob_se3_current, None, box_finder, tree_ground, ground_pts)
+
+                if traj.info is None:
+                    # invalid traj -> skip
+                    continue
+
+                traj_boxes = traj.info['boxes_in_lidar']
+                # check recovered boxes' dimension
+                if np.logical_or(traj_boxes[0, 3: 6] < 0.1, traj_boxes[0, 3: 6] > 7.).any():
+                    # invalid dimension -> skip
+                    continue
+
+                # compute descriptor to id class
+                traj_embedding = traj.build_descriptor(use_static_attribute_only=True)
+
+                # store
+                sample_static_trajs.append(traj)
+                sample_static_embedding.append(traj_embedding)
+
+            if len(sample_static_trajs) == 0:
+                # don't discorvery any valid static traj -> skip
+                continue
+
+            # TODO: find class for static traj, then save to database
+            sample_static_embedding = np.concatenate(sample_static_embedding)  # (N_sta, C)
+            sample_static_labels, _ = hdbscan.approximate_predict(traj_clusterer, sample_static_embedding)  # (N_sta,)
+            
+            for idx_sta_traj, sta_traj in enumerate(sample_static_trajs):
+                sta_traj_label = sample_static_labels[idx_sta_traj]
+                if sta_traj_label not in traj_clusterer_label2name:
+                    # label that doesn't have associated cls_name -> skip
+                    continue
+                # save to database
+                save_to_path = static_database_root / f"{info['token']}_label{idx_sta_traj}_{traj_clusterer_label2name[sta_traj_label]}.pkl"
+                sta_traj.pickle(save_to_path)
 
 
 def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):

@@ -1,13 +1,15 @@
 import numpy as np
-from pathlib import Path
+import torch
 from sklearn.neighbors import KDTree, LocalOutlierFactor
-import hdbscan
-from typing import Tuple
+from pathlib import Path
+from typing import Tuple, List
 import pickle
+
+from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 
 from workspace.uda_tools_box import BoxFinder
 from workspace.box_fusion_utils import kde_fusion
-from workspace.nuscenes_temporal_utils import apply_se3_, map_points_on_traj_to_local_frame
+from workspace.nuscenes_temporal_utils import apply_se3_
 
 
 class TrajectoryProcessor(object):
@@ -21,6 +23,8 @@ class TrajectoryProcessor(object):
     threshold_displacement_small_obj, threshold_displacement_large_obj = None, None
     point_cloud_range = None
     look_for_static = None
+    hold_pickle = False
+    debug = False
 
     @staticmethod
     def setup_class_attribute(num_sweeps: int,
@@ -33,6 +37,7 @@ class TrajectoryProcessor(object):
                               threshold_displacement_large_obj: float = 2.0,
                               point_cloud_range: np.ndarray = np.array([-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]),
                               look_for_static: bool = False,
+                              hold_pickle: bool = False,
                               debug: bool = False):
         TrajectoryProcessor.num_sweeps = num_sweeps
         TrajectoryProcessor.min_num_sweeps_in_traj = min_num_sweeps_in_traj
@@ -44,6 +49,7 @@ class TrajectoryProcessor(object):
         TrajectoryProcessor.threshold_displacement_large_obj = threshold_displacement_large_obj
         TrajectoryProcessor.point_cloud_range = point_cloud_range
         TrajectoryProcessor.look_for_static = look_for_static
+        TrajectoryProcessor.hold_pickle = hold_pickle
         TrajectoryProcessor.debug = debug
 
     def __init__(self) -> None:
@@ -151,7 +157,9 @@ class TrajectoryProcessor(object):
                 'boxes_in_glob': traj_boxes,  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
                 'glob_se3_lidar': glob_se3_lidar
             }
-            self.pickle(save_to_path)
+            if not self.hold_pickle:
+                # not holding pickle -> pickle right the way
+                self.pickle(save_to_path)
         else:
             # debugging -> keep pts & box in lidar coord
             self.info = {
@@ -253,5 +261,79 @@ class TrajectoryProcessor(object):
         return descriptor
 
 
+def load_discovered_trajs(sample_token: str, disco_database_root: Path, return_in_lidar_frame: bool = True) -> np.ndarray:
+    """
+    Load discovered dynamic trajs of a sampple
+
+    Args:
+        sample_token:
+        disco_database_root: where to search for precomputed boxes of dynamic trajs
+        return_in_lidar_frame: if True return boxes in LiDAR frame of the sample_token, else return in Global frame
+
+    Returns:
+        discovered_boxes: (N_disco_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
+
+    """
+    discovered_trajs_path = list(disco_database_root.glob(f'{sample_token}_label*'))
+    
+    disco_boxes = list()
+    for traj_path in discovered_trajs_path:
+        with open(traj_path, 'rb') as f:
+            traj_info = pickle.load(f)
+        if np.any(traj_info['boxes_in_glob'][0, 3: 6] < 1e-1) or np.any(traj_info['boxes_in_glob'][0, 3: 6] > 7.):
+            continue
+        if return_in_lidar_frame:
+            boxes_in_liar = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), 
+                                       boxes_=traj_info['boxes_in_glob'], 
+                                       return_transformed=True)  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx    
+            disco_boxes.append(boxes_in_liar)
+        else:
+            disco_boxes.append(traj_info['boxes_in_glob'])
+
+    disco_boxes = np.concatenate(disco_boxes, axis=0)
+    return disco_boxes
 
 
+def load_trajs_static_embedding(traj_clusters_info_root: Path, classes_name: list = ['car', 'ped']) -> List[np.ndarray]:
+    """
+    Load pre-computed embeddings of top-k members of each cluster of trajs. "Static" means embeddings are computed solely based on static attributes which are dx, dy, dz in this case.
+
+    Args:
+        traj_clusters_info_root: where to look for pre-computed static embedding
+        classes_name: names of clusters
+
+    Return:
+        clusters_top_embeddings: List[ (N_top_k, C) ]. 
+    """
+    trajs_info_path = [traj_clusters_info_root / Path(f'cluster_info_{name}_15sweeps.pkl') for name in classes_name]
+    
+    clusters_top_embeddings = list()
+    for idx, info_path in enumerate(trajs_info_path):
+        with open(info_path, 'rb') as f:
+            traj_info = pickle.load(f)
+        
+        clusters_top_embeddings.append(
+            np.pad(traj_info['cluster_top_members_static_embed'], pad_width=[(0, 0), (0, 1)], constant_values=idx)
+        )
+    
+    return clusters_top_embeddings
+
+
+def filter_points_in_boxes(points: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+    """
+    Remove points that are inside 1 of the boxes. Use for removing points inside 1 or several trajs described by a set of boxes
+    
+    Args:
+        points: (N_tot, 3 + C) - x, y, z, C-channel
+        boxes: (N_boxes, 7 + C) - x, y, z, dx, dy, dz, yaw, C-channel
+
+    Return:
+        points_outside: (N_outside, 3 + C)
+    """
+    points_box_index = roiaware_pool3d_utils.points_in_boxes_cpu(
+        torch.from_numpy(points[:, :3]).float(),
+        torch.from_numpy(boxes[:, :7]).float(),
+    ).numpy()  # (N_disco_boxes, N_pts)
+    mask_points_in_boxes = (points_box_index > 0).any(axis=0)  # (N_pts,)
+    
+    return points[np.logical_not(mask_points_in_boxes)]
