@@ -331,91 +331,117 @@ def filter_points_in_boxes(points: np.ndarray, boxes: np.ndarray) -> np.ndarray:
     return points[np.logical_not(mask_points_in_boxes)]
 
 
-def organize_dyn_trajs(disco_dyn_info_root: Path, num_sweeps: int = 15, classes_name: list = ['car', 'ped']) -> None:
-    for cls in classes_name:
-        dict_sample_token2dyn = dict()
-        with open(disco_dyn_info_root / Path(f"cluster_info_{cls}_{num_sweeps}sweeps.pkl"), 'rb') as f:
+class TrajectoriesManager(object):
+    def __init__(self, info_root: Path, static_database_root: Path, classes_name: List = ['car', 'ped'], num_sweeps: int = 15):
+        self.static_database_root = static_database_root
+        self.classes_name = classes_name
+        self.dict_classname_2_classidx = dict(zip(classes_name, range(len(classes_name))))
+        self.num_sweeps = num_sweeps
+        self.info_root = info_root
+        
+        # meta stuff of dynamic 
+        self.meta_dynamic = dict()
+        for cls in classes_name:
+            path_sample_token_2_dyn_trajs = self.info_root / Path(f"dyn_{cls}_sample_token_2_dyn_trajs.pkl")
+            if not path_sample_token_2_dyn_trajs.exists():
+                self.make_dict_sample_token_2_trajs_dynamic(cls)
+
+            with open(path_sample_token_2_dyn_trajs, 'rb') as f:
+                self.meta_dynamic[cls] = pickle.load(f)
+        
+        # meta stuff of static
+        self.meta_static = dict()
+        _paths = [self.info_root / Path(f"stat_{cls}_sample_token2dyn.pkl") for cls in self.classes_name]
+        if not (_paths[0].exists() and _paths[1].exists()):
+            self.make_dict_sample_token_2_trajs_static()
+        for cls, _pt in zip(self.classes_name, _paths):
+            with open(_pt, 'rb') as f:
+                self.meta_static[cls] = pickle.load(f)
+
+    def make_dict_sample_token_2_trajs_dynamic(self, class_name: str):
+        dict_sample_token_2_trajs = dict()
+        with open(self.info_root / Path(f"cluster_info_{class_name}_{self.num_sweeps}sweeps.pkl"), 'rb') as f:
             cluster_info = pickle.load(f)
-            
+
         for mem_path in cluster_info['members_path']:
             sample_token = str(mem_path.parts[-1]).split('_')[0]
-            if sample_token not in dict_sample_token2dyn:
-                dict_sample_token2dyn[sample_token] = [mem_path,]
+            if sample_token not in dict_sample_token_2_trajs:
+                dict_sample_token_2_trajs[sample_token] = [mem_path,]
             else:
-                dict_sample_token2dyn[sample_token].append(mem_path)
+                dict_sample_token_2_trajs[sample_token].append(mem_path)
 
-        # sort dict_sample_token2dyn[sample_token]
-        for k in dict_sample_token2dyn.keys():
-            dict_sample_token2dyn[k].sort()
+        # sort trajs of each sample according to their name to ensure consistent instance_idx
+        for k in dict_sample_token_2_trajs.keys():
+            dict_sample_token_2_trajs[k].sort()
 
-        with open(disco_dyn_info_root / Path(f"{cls}_sample_token2dyn.pkl"), 'wb') as f:
-            pickle.dump(dict_sample_token2dyn, f)
+        path_sample_token_2_dyn_trajs = self.info_root / Path(f"dyn_{class_name}_sample_token_2_dyn_trajs.pkl")
+        with open(path_sample_token_2_dyn_trajs, 'wb') as f:
+            pickle.dump(dict_sample_token_2_trajs, f)
 
+    def make_dict_sample_token_2_trajs_static(self):
+        all_paths = self.static_database_root.glob('*.pkl')
+        classes_dict_sample_token_2_trajs = dict([(cls, dict()) for cls in self.classes_name])
+        for _path in all_paths:
+            # _path := blah0/blah1/.../info['token']_label{idx_sta_traj}_{car or ped}.pkl
+            filename_components = str(_path.parts[-1]).split('_')
+            sample_token = filename_components[0]
+            cls_of_traj = filename_components[-1].split('.')[0]
+            
+            if sample_token not in classes_dict_sample_token_2_trajs[cls_of_traj]:
+                classes_dict_sample_token_2_trajs[cls_of_traj][sample_token] = [_path,]
+            else:
+                classes_dict_sample_token_2_trajs[cls_of_traj][sample_token].append(_path)
 
-def organize_static_trajs(disco_stat_root: Path, disco_stat_info_root: Path, classes_name: list = ['car', 'ped']) -> None:
-    all_paths = disco_stat_root.glob('*.pkl')
-    meta_dict = dict([(cls_name, dict()) for cls_name in classes_name])
-    for _path in all_paths:
-        # print(_path)
-        # info['token']_label{idx_sta_traj}_{car or ped}.pkl
-        filename_components = str(_path.parts[-1]).split('_')
-        sample_token = filename_components[0]
-        cls_of_traj = filename_components[-1].split('.')[0]
+        for cls in self.classes_name:
+            for sample_token in classes_dict_sample_token_2_trajs[cls].keys():
+                classes_dict_sample_token_2_trajs[cls][sample_token].sort()
+
+            with open(self.info_root / Path(f"stat_{cls}_sample_token2dyn.pkl"), 'wb') as f:
+                pickle.dump(classes_dict_sample_token_2_trajs[cls], f)
+
+    def load_disco_traj_for_1sample(self, sample_token: str, is_dyna: bool, return_in_lidar_frame: bool = True) -> np.ndarray:
+        """
+        Args:
+            sample_token:
+            car_sample_token2dyn:
+            ped_sample_token2dyn
+
+        Returns:
+            disco_dyn_boxes: (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+        """
+
+        disco_boxes = list()
+        offset_idx_traj = 0
+
+        dict_meta = self.meta_dynamic if is_dyna else self.meta_static
+            
+        for cls_name, dict_sample_token_2_trajs in dict_meta.items():
+            if sample_token not in dict_sample_token_2_trajs:
+                continue
         
-        if sample_token not in meta_dict[cls_of_traj]:
-            meta_dict[cls_of_traj][sample_token] = [_path,]
+            for idx_traj, traj_path in enumerate(dict_sample_token_2_trajs[sample_token]):
+                with open(traj_path, 'rb') as f:
+                    traj_info = pickle.load(f)
+                
+                if return_in_lidar_frame:
+                    boxes = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), 
+                                       boxes_=traj_info['boxes_in_glob'], 
+                                       return_transformed=True)  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx    
+                else:
+                    boxes = traj_info['boxes_in_glob']  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
+                
+                # append boxes with instance_idx, class_idx
+                boxes = np.pad(boxes, pad_width=[(0, 0), (0, 2)], constant_values=0)
+                boxes[:, -2] = idx_traj + offset_idx_traj
+                boxes[:, -1] = self.dict_classname_2_classidx[cls_name]
+
+                disco_boxes.append(boxes)
+
+            # make sure ped trajs don't have the same traj idx as car
+            offset_idx_traj = idx_traj + 1        
+
+        if len(disco_boxes) == 0:
+            return np.zeros([0, 10])  # box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
         else:
-            meta_dict[cls_of_traj][sample_token].append(_path)
-
-    for cls in classes_name:
-        for k in meta_dict[cls].keys():
-            meta_dict[cls][k].sort()
-
-        with open(disco_stat_info_root / Path(f"stat_{cls}_sample_token2dyn.pkl"), 'wb') as f:
-            pickle.dump(meta_dict[cls], f)
-
-
-def load_disco_traj_for_1sample(sample_token: str, car_sample_token2dyn: dict, ped_sample_token2dyn: dict, return_in_lidar_frame: bool = True) -> np.ndarray:
-    """
-    Args:
-        sample_token:
-        car_sample_token2dyn:
-        ped_sample_token2dyn
-
-    Returns:
-        disco_dyn_boxes: (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
-    """
-
-    disco_dyn_boxes = list()
-    offset_idx_traj = 0
-
-    for cls_idx, dict_sample_token2dyn in enumerate([car_sample_token2dyn, ped_sample_token2dyn]):
-        if sample_token not in dict_sample_token2dyn:
-            continue
-    
-        for idx_traj, traj_path in enumerate(dict_sample_token2dyn[sample_token]):
-            with open(traj_path, 'rb') as f:
-                traj_info = pickle.load(f)
-            
-            if return_in_lidar_frame:
-                boxes = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), 
-                                   boxes_=traj_info['boxes_in_glob'], 
-                                   return_transformed=True)  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx    
-            else:
-                boxes = traj_info['boxes_in_glob']  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
-            
-            # append boxes with instance_idx, class_idx
-            boxes = np.pad(boxes, pad_width=[(0, 0), (0, 2)], constant_values=0)
-            boxes[:, -2] = idx_traj + offset_idx_traj
-            boxes[:, -1] = cls_idx
-
-            disco_dyn_boxes.append(boxes)
-
-        # make sure ped trajs don't have the same traj idx as car
-        offset_idx_traj = idx_traj + 1        
-
-    if len(disco_dyn_boxes) == 0:
-        return np.zeros([0, 10])  # box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
-    else:
-        disco_dyn_boxes = np.concatenate(disco_dyn_boxes, axis=0)
-        return disco_dyn_boxes  # (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+            disco_boxes = np.concatenate(disco_boxes, axis=0)
+            return disco_boxes  # (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
