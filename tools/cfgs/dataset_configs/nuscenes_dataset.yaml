@@ -35,6 +35,7 @@ NUM_SWEEPS_TO_BUILD_DATABASE: 15
 DATABASE_ROOT: ../data/nuscenes/discovered_database_15sweeps
 SAMPLE_GROUP: ['car:30']
 ORACLE_POINTCLOUD: True
+DISCOVERED_DYNAMIC_CLASSES: ['car', 'ped']
 
 # -----------------------
 

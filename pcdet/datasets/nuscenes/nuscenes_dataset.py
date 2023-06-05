@@ -443,7 +443,7 @@ class NuScenesDataset(DatasetTemplate):
         # set up trajectories cluster
         traj_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.,
                                          metric='euclidean', min_cluster_size=10, min_samples=None)
-        traj_clusters_top_embeddings = load_trajs_static_embedding(Path('../workspace/artifact/rev1'),
+        traj_clusters_top_embeddings = load_trajs_static_embedding(Path('./workspace/artifact/rev1'),
                                                                    classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)
         for cls_idx in range(len(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)):
             traj_clusters_top_embeddings[cls_idx] = np.pad(traj_clusters_top_embeddings[cls_idx], 
@@ -503,7 +503,7 @@ class NuScenesDataset(DatasetTemplate):
                     # invalid traj -> skip
                     continue
 
-                traj_boxes = traj.info['boxes_in_lidar']
+                traj_boxes = traj.info['boxes_in_glob']
                 # check recovered boxes' dimension
                 if np.logical_or(traj_boxes[0, 3: 6] < 0.1, traj_boxes[0, 3: 6] > 7.).any():
                     # invalid dimension -> skip
@@ -520,8 +520,8 @@ class NuScenesDataset(DatasetTemplate):
                 # don't discorvery any valid static traj -> skip
                 continue
 
-            # TODO: find class for static traj, then save to database
-            sample_static_embedding = np.concatenate(sample_static_embedding)  # (N_sta, C)
+            # find class for static traj, then save to database
+            sample_static_embedding = np.stack(sample_static_embedding, axis=0)  # (N_sta, C)
             sample_static_labels, _ = hdbscan.approximate_predict(traj_clusterer, sample_static_embedding)  # (N_sta,)
             
             for idx_sta_traj, sta_traj in enumerate(sample_static_trajs):
@@ -599,6 +599,10 @@ if __name__ == '__main__':
     parser.add_argument('--no-create_groundtruth_database', dest='create_groundtruth_database', action='store_false')
     parser.set_defaults(create_groundtruth_database=False)
 
+    parser.add_argument('--create_static_database', action='store_true')
+    parser.add_argument('--no-create_static_database', dest='create_static_database', action='store_false')
+    parser.set_defaults(create_static_database=False)
+
     parser.add_argument('--training', action='store_true')
     parser.add_argument('--no-training', dest='training', action='store_false')
     parser.set_defaults(training=True)
@@ -618,11 +622,14 @@ if __name__ == '__main__':
             max_sweeps=dataset_cfg.MAX_SWEEPS,
         )
 
-    if args.create_groundtruth_database:
+    if args.create_groundtruth_database or args.create_static_database:
         nuscenes_dataset = NuScenesDataset(
             dataset_cfg=dataset_cfg, class_names=None,
             root_path=ROOT_DIR / 'data' / 'nuscenes',
             logger=common_utils.create_logger(), training=args.training
         )
         assert args.training, "expect args.training == True; get False"
-        nuscenes_dataset.create_groundtruth_database()
+        if args.create_groundtruth_database:
+            nuscenes_dataset.create_groundtruth_database()
+        else:
+            nuscenes_dataset.create_static_database()
