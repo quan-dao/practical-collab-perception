@@ -16,7 +16,8 @@ from ..dataset import DatasetTemplate
 
 from workspace.nuscenes_temporal_utils import get_sweeps
 from workspace.uda_tools_box import remove_ground, init_ground_segmenter, BoxFinder
-from workspace.traj_discovery import TrajectoryProcessor, load_discovered_trajs, load_trajs_static_embedding, filter_points_in_boxes
+from workspace.traj_discovery import TrajectoryProcessor, load_discovered_trajs, load_trajs_static_embedding, filter_points_in_boxes, \
+    TrajectoriesManager
 
 
 class NuScenesDataset(DatasetTemplate):
@@ -37,6 +38,13 @@ class NuScenesDataset(DatasetTemplate):
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
+
+        self.traj_manager = TrajectoriesManager(
+            info_root=Path(self.dataset_cfg.TRAJ_INFO_ROOT),
+            static_database_root=Path(self.dataset_cfg.TRAJ_STATIC_DATABASE_ROOT),
+            classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES,
+            num_sweeps=self.dataset_cfg.NUM_SWEEPS_TO_BUILD_DATABASE
+        )
 
         # -----------------------------------
         # prepare database sampling
@@ -149,12 +157,81 @@ class NuScenesDataset(DatasetTemplate):
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
             index = index % len(self.infos)
+        
         info = copy.deepcopy(self.infos[index])
-        num_sweeps = self.dataset_cfg.MAX_SWEEPS
+        num_sweeps = self.dataset_cfg.NUM_SWEEPS_TO_BUILD_DATABASE
+        
+        points, glob_se3_current = get_sweeps(self.nusc, info['token'], num_sweeps)
+        # points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx (place holder, := -1)]
 
-        # -----------------------------
-        # get original points    
-        points_original, glob_se3_current = get_sweeps(self.nusc, info['token'], self.dataset_cfg.MAX_SWEEPS)
+        # ============================================
+        if self.training:
+            disco_boxes_dyn = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
+                                                                            is_dyna=True)  # (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
+            
+            disco_boxes_stat = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
+                                                                             is_dyna=False,
+                                                                             offset_idx_traj=np.max(disco_boxes_dyn[:, -2]) + 1)  
+            
+            disco_boxes = np.concatenate([disco_boxes_dyn, disco_boxes_stat])  # (N_b, 10) - box-7, sweep_idx, inst_idx, cls_idx
+            
+            # ---------------
+            # establish point-to-box correspondant between points & disco_boxes_dyn/stat
+            # ---------------
+            box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_cpu(
+                torch.from_numpy(points[:, :3]).float(), 
+                torch.from_numpy(disco_boxes[:, :7]).float()
+            ).numpy()  # (N_b, N_pts)
+            # find background points (i.e. points that are not inside any boxes)
+            mask_pts_backgr = np.all(box_idx_of_points <= 0, axis=0)  # (N_pts,)
+
+            box_idx_of_points = (box_idx_of_points > 0).astype(int) * np.arange(disco_boxes.shape[0]).reshape(-1, 1)  # (N_b, N_pts)
+            box_idx_of_points = np.sum(box_idx_of_points, axis=0)  # (N_pts,)
+
+            # extract instance_idx for points using box_idx_of_points
+            points[:, -1] = disco_boxes[box_idx_of_points, -1]
+            
+            # use mask background to correct instance_idx & class_idx of background
+            # set instance-idx ofbackground points to -1
+            points[mask_pts_backgr, -1] = -1
+            
+            # ---------------
+            # sample dynamic trajectories
+            # ---------------
+            sp_points, sp_boxes = list(), list()
+            num_existing_boxes = disco_boxes.shape[0]
+            lidar_se3_glob = np.linalg.inv(glob_se3_current)
+            for cls in self.traj_manager.classes_name:
+                _pts, _bxs = self.traj_manager.sample_disco_database(cls, 
+                                                                     is_dyn=True, 
+                                                                     num_existing_boxes=num_existing_boxes,
+                                                                     lidar_se3_glob=lidar_se3_glob)
+                sp_points.append(_pts)
+                sp_boxes.append(_bxs)
+                num_existing_boxes += _bxs.shape[0]
+
+            sp_points = np.concatenate(sp_points)  # (N_sp_pt, 3 + C) - x,y,z,intensity,time-lag, [sweep_idx, instance_idx]
+            sp_boxes = np.concatenate(sp_boxes)  # (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
+            
+            # ---
+            # remove sampled boxes that have high overlap with existing boxes
+            # ---
+            iou = iou3d_nms_utils.boxes_bev_iou_cpu(sp_boxes[:, :7], disco_boxes[:, :7])  # (N_sp_bx, N_b)
+            mask_valid = iou.max(axis=1) < 1e-3  # (N_sp_bx,)
+            mask_invalid = np.logical_not(mask_valid)  # (N_sp_bx,)
+            invalid_instance_idx = np.unique(sp_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
+            # remove sp_points based on instance_idx
+            mask_invalid_sp_pts = sp_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
+            mask_invalid_sp_pts = mask_invalid_sp_pts.any(axis=1)  # (N_sp_pt,)
+            # apply mask 
+            sp_points = sp_points[np.logical_not(mask_invalid_sp_pts)]
+            sp_boxes = sp_boxes[mask_valid]
+
+            
+
+
+        # NOTE: class_idx of boxes & points go from 0
+        # TODO: offset class_idx or points & boxes by 1 to agree with OpenPCDet convention
 
         # -----------------------------
         # get sampled points

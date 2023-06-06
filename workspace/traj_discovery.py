@@ -9,7 +9,7 @@ from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 
 from workspace.uda_tools_box import BoxFinder
 from workspace.box_fusion_utils import kde_fusion
-from workspace.nuscenes_temporal_utils import apply_se3_
+from workspace.nuscenes_temporal_utils import apply_se3_, map_points_on_traj_to_local_frame
 
 
 class TrajectoryProcessor(object):
@@ -148,6 +148,11 @@ class TrajectoryProcessor(object):
                                       axis=1)  # (N_pts, 1) == (1, N_valid_sw) -> (N_pts,)
         pts = pts[mask_pts_valid_sweep]
 
+        # compute points' coordinate in obj's body frame (i.e. 1st step of correct points)
+        pts_in_body = map_points_on_traj_to_local_frame(pts, 
+                                                        traj_boxes, 
+                                                        self.num_sweeps)  # (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx
+
         # map pts & traj_boxes to global frame
         if not self.debug:
             apply_se3_(glob_se3_lidar, points_=pts, boxes_=traj_boxes)
@@ -155,7 +160,8 @@ class TrajectoryProcessor(object):
             self.info = {
                 'points_in_glob': pts,  # (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (always = -1 in UDA setting)]
                 'boxes_in_glob': traj_boxes,  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
-                'glob_se3_lidar': glob_se3_lidar
+                'glob_se3_lidar': glob_se3_lidar,  # (4, 4)
+                'points_in_body': pts_in_body  # (N, 3 + C)
             }
             if not self.hold_pickle:
                 # not holding pickle -> pickle right the way
@@ -164,7 +170,8 @@ class TrajectoryProcessor(object):
             # debugging -> keep pts & box in lidar coord
             self.info = {
                 'points_in_lidar': pts, 
-                'boxes_in_lidar': traj_boxes
+                'boxes_in_lidar': traj_boxes,
+                'points_in_body': pts_in_body  # (N, 3 + C)
             }
 
 
@@ -215,8 +222,7 @@ class TrajectoryProcessor(object):
 
         return box_height, center_z
 
-    @staticmethod
-    def refine_boxes(traj_boxes_: np.ndarray, num_points_in_boxes: np.ndarray) -> None:
+    def refine_boxes(self, traj_boxes_: np.ndarray, num_points_in_boxes: np.ndarray) -> None:
         """
         Args:
             traj_boxes: (N_valid_sweeps, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
@@ -229,6 +235,10 @@ class TrajectoryProcessor(object):
 
         # overwrites traj_boxes' size & heading
         traj_boxes_[:, 3: 7] = fused_box[3: 7]
+
+        if self.look_for_static:
+            # overwrites traj_boxes' x,y,z-coord too
+            traj_boxes_[:, :3] = fused_box[:3]
 
     def pickle(self, save_to_path: Path) -> None:
         with open(save_to_path, 'wb') as f:
@@ -332,7 +342,10 @@ def filter_points_in_boxes(points: np.ndarray, boxes: np.ndarray) -> np.ndarray:
 
 
 class TrajectoriesManager(object):
-    def __init__(self, info_root: Path, static_database_root: Path, classes_name: List = ['car', 'ped'], num_sweeps: int = 15):
+    def __init__(self, info_root: Path, static_database_root: Path, 
+                 classes_name: List = ['car', 'ped'], 
+                 num_sweeps: int = 15,
+                 sample_groups: List[str] = ['car:16', 'ped:16']):
         self.static_database_root = static_database_root
         self.classes_name = classes_name
         self.dict_classname_2_classidx = dict(zip(classes_name, range(len(classes_name))))
@@ -357,6 +370,46 @@ class TrajectoriesManager(object):
         for cls, _pt in zip(self.classes_name, _paths):
             with open(_pt, 'rb') as f:
                 self.meta_static[cls] = pickle.load(f)
+        
+        # =========================================================
+        # set-up for traj sampling
+        # =========================================================
+        # merge all values of dict_sample_token_2_trajs into a 1 long List
+        self.dynamic = dict([(cls, list()) for cls in self.meta_dynamic.keys()])
+        for cls in self.meta_dynamic.keys():
+            self.dynamic[cls] = self._merge_dict_values_to_1list(self.meta_dynamic[cls])
+
+        self.static = dict([(cls, list()) for cls in self.meta_static.keys()])
+        for cls in self.meta_static.items():
+            self.static[cls] = self._merge_dict_values_to_1list(self.meta_static[cls])
+            # merge static & dynamic to increase static options
+            self.static[cls].extend(self.dynamic[cls])
+
+        # info for sampling
+        self.dyn_sample_info, self.stat_sample_info = dict(), dict()
+        for s_gr in sample_groups:
+            cls, num_to_sample = s_gr.split(':')
+            num_to_sample = int(num_to_sample)
+            self.dyn_sample_info[cls] = {
+                'num_to_sample': num_to_sample // 2,
+                'pointer': 0,
+                'indices': np.random.permutation(len(self.dynamic[cls])),
+                'num_trajectories': len(self.dynamic[cls])
+            }
+            self.stat_sample_info[cls] = {
+                'num_to_sample': num_to_sample // 2,
+                'pointer': 0,
+                'indices': np.random.permutation(len(self.static[cls])),
+                'num_trajectories': len(self.static[cls])
+            }
+
+    @staticmethod
+    def _merge_dict_values_to_1list(d: dict):
+        out = []
+        for _, v in d.items():
+            assert isinstance(v, list), f"type {v} is not supported"
+            out.extend(v)
+        return out
 
     def make_dict_sample_token_2_trajs_dynamic(self, class_name: str):
         dict_sample_token_2_trajs = dict()
@@ -399,7 +452,9 @@ class TrajectoriesManager(object):
             with open(self.info_root / Path(f"stat_{cls}_sample_token2dyn.pkl"), 'wb') as f:
                 pickle.dump(classes_dict_sample_token_2_trajs[cls], f)
 
-    def load_disco_traj_for_1sample(self, sample_token: str, is_dyna: bool, return_in_lidar_frame: bool = True) -> np.ndarray:
+    def load_disco_traj_for_1sample(self, sample_token: str, is_dyna: bool, 
+                                    return_in_lidar_frame: bool = True,
+                                    offset_idx_traj: int = 0) -> np.ndarray:
         """
         Args:
             sample_token:
@@ -411,7 +466,6 @@ class TrajectoriesManager(object):
         """
 
         disco_boxes = list()
-        offset_idx_traj = 0
 
         dict_meta = self.meta_dynamic if is_dyna else self.meta_static
             
@@ -430,6 +484,10 @@ class TrajectoriesManager(object):
                 else:
                     boxes = traj_info['boxes_in_glob']  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
                 
+                if not is_dyna:
+                    # load static traj -> just return 1 box because they are all the same
+                    boxes = boxes[[-1]]  # (1, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
+
                 # append boxes with instance_idx, class_idx
                 boxes = np.pad(boxes, pad_width=[(0, 0), (0, 2)], constant_values=0)
                 boxes[:, -2] = idx_traj + offset_idx_traj
@@ -445,3 +503,126 @@ class TrajectoriesManager(object):
         else:
             disco_boxes = np.concatenate(disco_boxes, axis=0)
             return disco_boxes  # (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+
+    def sample_with_fixed_number(self, class_name: str, is_dyn: bool) -> List[Path]:
+        info = self.dyn_sample_info[class_name] if is_dyn else self.stat_sample_info[class_name]
+        bank_traj_paths = self.dynamic if is_dyn else self.static
+
+        if info['pointer'] + info['num_to_sample'] >= info['num_trajectories']:
+            info['indices'] = np.random.permutation(info['num_trajectories'])
+            info['pointer'] = 0
+        
+        pointer, num_to_sample = info['pointer'], info['num_to_sample']
+        sampled_paths = [bank_traj_paths[idx] for idx in self.info['indices'][pointer: pointer + num_to_sample]]
+        
+        # update pointer
+        info['pointer'] += num_to_sample
+
+        return sampled_paths
+
+    def _load_1sampled_trajectory(self, traj_path: Path, instance_idx: int, class_idx: int, lidar_se3_glob: np.ndarray,
+                                  is_dyn: bool) -> Tuple[np.ndarray]:
+        """
+        Args:
+            traj_path:
+            instance_idx:
+            class_idx:
+            lidar_se3_glob: tf from global frame to the current lidar frame
+
+        Returns:
+            points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (> -1)]
+            boxes: (N_b, 10) - box-7, sweep_idx, instance_idx, class_idx
+        """
+        with open(traj_path, 'rb') as f:
+            traj_info = pickle.load(f)
+        
+        if is_dyn:
+            points, boxes = apply_se3_(lidar_se3_glob, 
+                                        points_=traj_info['points_in_glob'], 
+                                        boxes_=traj_info['boxes_in_glob'],
+                                        return_transformed=True)
+        else:
+            # static: 
+            # points_in_body & boxes_in_glob[-1] -> points_in_glob
+            # points_in_glob & lidar_se3_glob -> points_in_(current)lidar
+            points = traj_info['points_in_body']
+            boxes = traj_info['boxes_in_glob'][[-1]]  # (1, 8)
+            cos_, sin_ = np.cos(boxes[0, 6]), np.sin(boxes[0, 6])
+            x, y, z = boxes[0, :3]
+            glob_se3_box = np.array([
+                [cos_,  -sin_,  0.,     x],
+                [sin_,  cos_,   0.,     y],
+                [0.,    0.,     1.,     z],
+                [0.,    0.,     0.,     1.]
+            ])
+            lidar_se3_box = lidar_se3_glob @ glob_se3_box
+            points, boxes = apply_se3_(lidar_se3_box, points_=points, boxes_=boxes, return_transformed=True)
+
+
+        # points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (place-holder, := -1)]
+        # boxes: (N_b, 8) - box-7, sweep_idx
+
+        # declare points' instance index
+        points[:, -1] = instance_idx
+
+        # pad boxes with instance_idx & class_idx
+        boxes = np.pad(boxes, pad_width=[(0, 0), (0, 2)], constant_values=0)
+        boxes[:, -2] = instance_idx
+        boxes[:, -1] = class_idx
+        return points, boxes
+
+    def load_sampled_trajectories(self, sampled_trajs_path: List[Path], 
+                                  offset_instance_idx: int, 
+                                  class_idx: int, 
+                                  lidar_se3_glob: np.ndarray,
+                                  is_dyn: bool) -> Tuple[np.ndarray]:
+        """
+        Args:
+            sampled_trajs_path:
+            offset_instance_idx: to account for instance_idx of pre-existing boxes
+            class_idx:
+            lidar_se3_glob: tf from global frame to the current lidar frame
+            is_dyn:
+
+        Returns:
+            points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (> -1)]
+            boxes: (N_b, 10) - box-7, sweep_idx, instance_idx, class_idx
+        """
+        points, boxes = list(), list()
+
+        for traj_idx, traj_path in enumerate(sampled_trajs_path):
+            pts, bxs = self._load_1sampled_trajectory(traj_path, 
+                                                      instance_idx=offset_instance_idx + traj_idx, 
+                                                      class_idx=class_idx, 
+                                                      lidar_se3_glob=lidar_se3_glob,
+                                                      is_dyn=is_dyn)
+            
+            points.append(pts)
+            boxes.append(bxs)
+        
+        return points, boxes
+
+    def sample_disco_database(self, class_name: str, 
+                              is_dyn: bool, 
+                              num_existing_boxes: int, 
+                              lidar_se3_glob: np.ndarray) -> Tuple[np.ndarray]:
+        """
+        Wrapper of sample_with_fixed_number & load_sampled_trajectories
+
+        Args:
+            class_name:
+            is_dyn:
+            num_existing_boxes: to account for instance_idx of pre-existing boxes
+            lidar_se3_glob: tf from global frame to the current lidar frame
+        
+        Returns:
+            points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (> -1)]
+            boxes: (N_b, 10) - box-7, sweep_idx, instance_idx, class_idx
+        """
+        sampled_trajs_path = self.sample_with_fixed_number(class_name, is_dyn)
+        points, boxes = self.load_sampled_trajectories(sampled_trajs_path, 
+                                                       num_existing_boxes, 
+                                                       self.dict_classname_2_classidx[class_name], 
+                                                       lidar_se3_glob, 
+                                                       is_dyn)
+        return points, boxes
