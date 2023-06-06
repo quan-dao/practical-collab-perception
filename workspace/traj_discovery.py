@@ -538,7 +538,7 @@ class TrajectoriesManager(object):
             traj_info = pickle.load(f)
         
         if is_dyn:
-            points, boxes = apply_se3_(lidar_se3_glob, 
+            points, boxes = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), 
                                         points_=traj_info['points_in_glob'], 
                                         boxes_=traj_info['boxes_in_glob'],
                                         return_transformed=True)
@@ -643,14 +643,62 @@ class TrajectoriesManager(object):
             filtered_boxes: (N_sp_bx*, 10) - box-7, sweep_idx, instance_idx, class_idx
         """
         iou = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, :7], exist_boxes[:, :7])  # (N_sp_bx, N_e_b)
-        mask_valid = iou.max(axis=1) < 1e-3  # (N_sp_bx,)
-        mask_invalid = np.logical_not(mask_valid)  # (N_sp_bx,)
+        mask_invalid = np.logical_not(iou.max(axis=1) < 1e-3)  # (N_sp_bx,)
         invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
 
         # remove sp_points based on instance_idx
         mask_invalid_sp_pts = sampled_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
         mask_invalid_sp_pts = mask_invalid_sp_pts.any(axis=1)  # (N_sp_pt,)
 
+        mask_invalid_sp_box = sampled_boxes[:, -2].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
+        mask_invalid_sp_box = mask_invalid_sp_box.any(axis=1)  # (N_sp_pt,)
+
         # apply mask 
-        return sampled_points[np.logical_not(mask_invalid_sp_pts)], sampled_boxes[mask_valid]
+        return sampled_points[np.logical_not(mask_invalid_sp_pts)], sampled_boxes[np.logical_not(mask_invalid_sp_box)]
+    
+    @staticmethod
+    def filter_sampled_boxes_by_iou_with_themselves(sampled_points:np.ndarray, sampled_boxes: np.ndarray):
+        """
+        Non-Max Suppression w/o ranking boxes
+        Args:
+            sampled_points: (N_sp_pts, 5 + 2) - point-5, sweep_idx, instance_idx
+            sampled_boxes: (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
         
+        Returns:
+            filtered_points: (N_sp_pts*, 5 + 2) - point-5, sweep_idx, instance_idx
+            filtered_boxes: (N_sp_bx*, 10) - box-7, sweep_idx, instance_idx, class_idx
+        """
+        iou = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, :7], sampled_boxes[:, :7])  # (N_sp_bx, N_sp_bx)
+        # iou[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0.
+
+        # clear iou among boxes belong to the same trajectory
+        sampled_boxes_inst_idx = sampled_boxes[:, -2].astype(int)
+        for idx in range(sampled_boxes.shape[0]):
+            inst_idx = sampled_boxes_inst_idx[idx]
+            iou[idx, sampled_boxes_inst_idx == inst_idx] = 0.
+
+        mask_iou_above_threshold = iou > 1e-3  # (N_sp_bx,)
+
+        suppressed_indices = set()
+        all_indices = np.arange(sampled_boxes.shape[0])
+        for idx in range(sampled_boxes.shape[0]):
+            if idx in suppressed_indices:
+                continue
+            new_indices_to_suppress = all_indices[mask_iou_above_threshold[idx]].tolist()
+            suppressed_indices.update(new_indices_to_suppress)
+
+        suppressed_indices = np.array(list(suppressed_indices)).astype(int)
+        mask_invalid = np.zeros(sampled_boxes.shape[0], dtype=bool)
+        mask_invalid[suppressed_indices] = True
+        
+        invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
+
+        # remove sp_points based on instance_idx
+        mask_invalid_sp_pts = sampled_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
+        mask_invalid_sp_pts = mask_invalid_sp_pts.any(axis=1)  # (N_sp_pt,)
+
+        mask_invalid_sp_box = sampled_boxes_inst_idx.reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
+        mask_invalid_sp_box = mask_invalid_sp_box.any(axis=1)  # (N_sp_pt,)
+
+        # apply mask 
+        return sampled_points[np.logical_not(mask_invalid_sp_pts)], sampled_boxes[np.logical_not(mask_invalid_sp_box)]
