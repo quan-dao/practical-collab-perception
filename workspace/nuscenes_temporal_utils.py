@@ -258,7 +258,7 @@ def map_points_on_traj_to_local_frame(points: np.ndarray,
         num_sweeps:
     
     Returns:
-        points_in_box: (N_pts, 3 + C + 2)
+        points_in_box: (N_pts, 3) - x, y, z
     """
     cos, sin = np.cos(boxes[:, 6]), np.sin(boxes[:, 6])
     zeros, ones = np.zeros(boxes.shape[0]), np.ones(boxes.shape[0])

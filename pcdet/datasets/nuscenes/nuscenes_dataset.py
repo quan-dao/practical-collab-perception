@@ -46,20 +46,9 @@ class NuScenesDataset(DatasetTemplate):
             info_root=Path(self.dataset_cfg.TRAJ_INFO_ROOT),
             static_database_root=self.root_path / f'rev1_discovered_static_database_{num_sweeps}sweeps',
             classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES,
-            num_sweeps=num_sweeps
+            num_sweeps=num_sweeps,
+            sample_groups=self.dataset_cfg.SAMPLE_GROUP
         )
-
-    def sample_with_fixed_number(self, class_name: str) -> List[Path]:
-        sample_group = self.sample_group[class_name]
-        if sample_group['pointer'] + sample_group['num_to_sample'] >= sample_group['num_trajectories']:
-            sample_group['indices'] = np.random.permutation(sample_group['num_trajectories'])
-            sample_group['pointer'] = 0
-        
-        pointer, num_to_sample = sample_group['pointer'], sample_group['num_to_sample']
-        out = [self.gt_database[class_name][idx] for idx in sample_group['indices'][pointer: pointer + num_to_sample]]
-        
-        sample_group['pointer'] += num_to_sample
-        return out
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -120,24 +109,24 @@ class NuScenesDataset(DatasetTemplate):
 
         return len(self.infos)
 
-    def sample_database(self, is_dyn: bool, glob_se3_current: np.ndarray, existing_boxes: np.ndarray):
+    def sample_database(self, is_dyn: bool, existing_boxes: np.ndarray):
         sp_points, sp_boxes = list(), list()
-        num_existing_boxes = existing_boxes.shape[0]
-        lidar_se3_glob = np.linalg.inv(glob_se3_current)
+        num_existing_instances = np.max(existing_boxes[:, -2]) + 1
         for cls in self.traj_manager.classes_name:
             _pts, _bxs = self.traj_manager.sample_disco_database(cls, 
                                                                 is_dyn=is_dyn, 
-                                                                num_existing_boxes=num_existing_boxes,
-                                                                lidar_se3_glob=lidar_se3_glob)
+                                                                num_existing_instances=num_existing_instances)
             sp_points.append(_pts)
             sp_boxes.append(_bxs)
-            num_existing_boxes += len(_bxs)
+            num_existing_instances = np.max(_bxs[:, -2]) + 1
 
         sp_points = np.concatenate(sp_points)  # (N_sp_pt, 3 + C) - x,y,z,intensity,time-lag, [sweep_idx, instance_idx]
         sp_boxes = np.concatenate(sp_boxes)  # (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
         
         sp_points, sp_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(sp_points, sp_boxes, 
-                                                                                         exist_boxes=existing_boxes)
+                                                                                          exist_boxes=existing_boxes)
+        sp_points, sp_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_themselves(sp_points, sp_boxes)
+
         return sp_points, sp_boxes
 
     def __getitem__(self, index):
@@ -174,6 +163,8 @@ class NuScenesDataset(DatasetTemplate):
             box_idx_of_points = (box_idx_of_points > 0).astype(int) * np.arange(disco_boxes.shape[0]).reshape(-1, 1)  # (N_b, N_pts)
             box_idx_of_points = np.sum(box_idx_of_points, axis=0)  # (N_pts,)
 
+            # TODO: remove original points in boxes and add points  of traj back to frame
+
             # extract instance_idx for points using box_idx_of_points
             # points[:, -1] = disco_boxes[box_idx_of_points, -1]
             
@@ -185,8 +176,8 @@ class NuScenesDataset(DatasetTemplate):
             # sample trajectories
             # ---------------
             # dynamic, then static
-            for is_dynamic in (True, False):
-                sp_points, sp_boxes = self.sample_database(is_dyn=is_dynamic, glob_se3_current=glob_se3_current, existing_boxes=disco_boxes)
+            for is_dynamic in (True, False):  # TODO: add False
+                sp_points, sp_boxes = self.sample_database(is_dyn=is_dynamic, existing_boxes=disco_boxes)
                 points = np.concatenate([points, sp_points])
                 disco_boxes = np.concatenate([disco_boxes, sp_boxes])
 

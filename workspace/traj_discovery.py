@@ -392,13 +392,13 @@ class TrajectoriesManager(object):
             cls, num_to_sample = s_gr.split(':')
             num_to_sample = int(num_to_sample)
             self.dyn_sample_info[cls] = {
-                'num_to_sample': num_to_sample // 2,
+                'num_to_sample': num_to_sample // 3,
                 'pointer': 0,
                 'indices': np.random.permutation(len(self.dynamic[cls])),
                 'num_trajectories': len(self.dynamic[cls])
             }
             self.stat_sample_info[cls] = {
-                'num_to_sample': num_to_sample // 2,
+                'num_to_sample': num_to_sample * 2 // 3,
                 'pointer': 0,
                 'indices': np.random.permutation(len(self.static[cls])),
                 'num_trajectories': len(self.static[cls])
@@ -521,14 +521,13 @@ class TrajectoriesManager(object):
 
         return sampled_paths
 
-    def _load_1sampled_trajectory(self, traj_path: Path, instance_idx: int, class_idx: int, lidar_se3_glob: np.ndarray,
+    def _load_1sampled_trajectory(self, traj_path: Path, instance_idx: int, class_idx: int,
                                   is_dyn: bool) -> Tuple[np.ndarray]:
         """
         Args:
             traj_path:
             instance_idx:
             class_idx:
-            lidar_se3_glob: tf from global frame to the current lidar frame
 
         Returns:
             points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (> -1)]
@@ -546,8 +545,11 @@ class TrajectoriesManager(object):
             # static: 
             # points_in_body & boxes_in_glob[-1] -> points_in_glob
             # points_in_glob & lidar_se3_glob -> points_in_(current)lidar
-            points = traj_info['points_in_body']
-            boxes = traj_info['boxes_in_glob'][[-1]]  # (1, 8)
+            points = traj_info['points_in_glob']
+            points[:, :3] = map_points_on_traj_to_local_frame(points,
+                                                              traj_info['boxes_in_glob'],
+                                                              self.num_sweeps)
+            boxes = traj_info['boxes_in_glob'][[-1]]
             cos_, sin_ = np.cos(boxes[0, 6]), np.sin(boxes[0, 6])
             x, y, z = boxes[0, :3]
             glob_se3_box = np.array([
@@ -556,8 +558,10 @@ class TrajectoriesManager(object):
                 [0.,    0.,     1.,     z],
                 [0.,    0.,     0.,     1.]
             ])
-            lidar_se3_box = lidar_se3_glob @ glob_se3_box
-            points, boxes = apply_se3_(lidar_se3_box, points_=points, boxes_=boxes, return_transformed=True)
+            lidar_se3_box = np.linalg.inv(traj_info['glob_se3_lidar']) @ glob_se3_box
+            apply_se3_(lidar_se3_box, points_=points)
+
+            apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), boxes_=boxes)
 
 
         # points: (N, 3 + C) - x, y, z, intensity, time-lag, [sweep_idx, instance_idx (place-holder, := -1)]
@@ -574,8 +578,7 @@ class TrajectoriesManager(object):
 
     def load_sampled_trajectories(self, sampled_trajs_path: List[Path], 
                                   offset_instance_idx: int, 
-                                  class_idx: int, 
-                                  lidar_se3_glob: np.ndarray,
+                                  class_idx: int,
                                   is_dyn: bool) -> Tuple[np.ndarray]:
         """
         Args:
@@ -594,8 +597,7 @@ class TrajectoriesManager(object):
         for traj_idx, traj_path in enumerate(sampled_trajs_path):
             pts, bxs = self._load_1sampled_trajectory(traj_path, 
                                                       instance_idx=offset_instance_idx + traj_idx, 
-                                                      class_idx=class_idx, 
-                                                      lidar_se3_glob=lidar_se3_glob,
+                                                      class_idx=class_idx,
                                                       is_dyn=is_dyn)
             
             points.append(pts)
@@ -608,8 +610,7 @@ class TrajectoriesManager(object):
 
     def sample_disco_database(self, class_name: str, 
                               is_dyn: bool, 
-                              num_existing_boxes: int, 
-                              lidar_se3_glob: np.ndarray) -> Tuple[np.ndarray]:
+                              num_existing_instances: int) -> Tuple[np.ndarray]:
         """
         Wrapper of sample_with_fixed_number & load_sampled_trajectories
 
@@ -625,9 +626,8 @@ class TrajectoriesManager(object):
         """
         sampled_trajs_path = self.sample_with_fixed_number(class_name, is_dyn)
         points, boxes = self.load_sampled_trajectories(sampled_trajs_path, 
-                                                       num_existing_boxes, 
+                                                       num_existing_instances, 
                                                        self.dict_classname_2_classidx[class_name], 
-                                                       lidar_se3_glob, 
                                                        is_dyn)
         return points, boxes
     
