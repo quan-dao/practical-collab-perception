@@ -6,6 +6,7 @@ from typing import Tuple, List
 import pickle
 
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
+from pcdet.ops.iou3d_nms import iou3d_nms_utils
 
 from workspace.uda_tools_box import BoxFinder
 from workspace.box_fusion_utils import kde_fusion
@@ -380,7 +381,7 @@ class TrajectoriesManager(object):
             self.dynamic[cls] = self._merge_dict_values_to_1list(self.meta_dynamic[cls])
 
         self.static = dict([(cls, list()) for cls in self.meta_static.keys()])
-        for cls in self.meta_static.items():
+        for cls in self.meta_static.keys():
             self.static[cls] = self._merge_dict_values_to_1list(self.meta_static[cls])
             # merge static & dynamic to increase static options
             self.static[cls].extend(self.dynamic[cls])
@@ -506,14 +507,14 @@ class TrajectoriesManager(object):
 
     def sample_with_fixed_number(self, class_name: str, is_dyn: bool) -> List[Path]:
         info = self.dyn_sample_info[class_name] if is_dyn else self.stat_sample_info[class_name]
-        bank_traj_paths = self.dynamic if is_dyn else self.static
+        bank_traj_paths = self.dynamic[class_name] if is_dyn else self.static[class_name]
 
         if info['pointer'] + info['num_to_sample'] >= info['num_trajectories']:
             info['indices'] = np.random.permutation(info['num_trajectories'])
             info['pointer'] = 0
         
         pointer, num_to_sample = info['pointer'], info['num_to_sample']
-        sampled_paths = [bank_traj_paths[idx] for idx in self.info['indices'][pointer: pointer + num_to_sample]]
+        sampled_paths = [bank_traj_paths[idx] for idx in info['indices'][pointer: pointer + num_to_sample]]
         
         # update pointer
         info['pointer'] += num_to_sample
@@ -600,6 +601,9 @@ class TrajectoriesManager(object):
             points.append(pts)
             boxes.append(bxs)
         
+        points = np.concatenate(points)
+        boxes = np.concatenate(boxes)
+        
         return points, boxes
 
     def sample_disco_database(self, class_name: str, 
@@ -626,3 +630,27 @@ class TrajectoriesManager(object):
                                                        lidar_se3_glob, 
                                                        is_dyn)
         return points, boxes
+    
+    @staticmethod
+    def filter_sampled_boxes_by_iou_with_existing(sampled_points:np.ndarray, sampled_boxes: np.ndarray, exist_boxes: np.ndarray):
+        """
+        Args:
+            sampled_points: (N_sp_pts, 5 + 2) - point-5, sweep_idx, instance_idx
+            sampled_boxes: (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
+        
+        Returns:
+            filtered_points: (N_sp_pts*, 5 + 2) - point-5, sweep_idx, instance_idx
+            filtered_boxes: (N_sp_bx*, 10) - box-7, sweep_idx, instance_idx, class_idx
+        """
+        iou = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, :7], exist_boxes[:, :7])  # (N_sp_bx, N_e_b)
+        mask_valid = iou.max(axis=1) < 1e-3  # (N_sp_bx,)
+        mask_invalid = np.logical_not(mask_valid)  # (N_sp_bx,)
+        invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
+
+        # remove sp_points based on instance_idx
+        mask_invalid_sp_pts = sampled_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
+        mask_invalid_sp_pts = mask_invalid_sp_pts.any(axis=1)  # (N_sp_pt,)
+
+        # apply mask 
+        return sampled_points[np.logical_not(mask_invalid_sp_pts)], sampled_boxes[mask_valid]
+        

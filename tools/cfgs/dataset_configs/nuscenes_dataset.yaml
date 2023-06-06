@@ -33,9 +33,11 @@ POINT_FEATURE_ENCODING: {
 
 NUM_SWEEPS_TO_BUILD_DATABASE: 15
 DATABASE_ROOT: ../data/nuscenes/discovered_database_15sweeps
-SAMPLE_GROUP: ['car:30']
+SAMPLE_GROUP: ['car:20', 'ped:10']
 ORACLE_POINTCLOUD: True
 DISCOVERED_DYNAMIC_CLASSES: ['car', 'ped']
+TRAJ_INFO_ROOT: ../workspace/artifact/rev1
+TRAJ_STATIC_DATABASE_ROOT: 
 
 # -----------------------
 

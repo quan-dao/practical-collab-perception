@@ -8,6 +8,7 @@ from tqdm import tqdm
 from nuscenes import NuScenes
 import hdbscan
 from sklearn.neighbors import KDTree
+import torch_scatter
 
 from pcdet.ops.iou3d_nms import iou3d_nms_utils
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
@@ -26,6 +27,7 @@ class NuScenesDataset(DatasetTemplate):
         super().__init__(
             dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
         )
+        self._uda_class_names = np.array(self.class_names)
         self.infos = []
         self.include_nuscenes_data(self.mode)
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
@@ -39,49 +41,13 @@ class NuScenesDataset(DatasetTemplate):
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
 
+        num_sweeps = self.dataset_cfg.NUM_SWEEPS_TO_BUILD_DATABASE
         self.traj_manager = TrajectoriesManager(
             info_root=Path(self.dataset_cfg.TRAJ_INFO_ROOT),
-            static_database_root=Path(self.dataset_cfg.TRAJ_STATIC_DATABASE_ROOT),
+            static_database_root=self.root_path / f'rev1_discovered_static_database_{num_sweeps}sweeps',
             classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES,
-            num_sweeps=self.dataset_cfg.NUM_SWEEPS_TO_BUILD_DATABASE
+            num_sweeps=num_sweeps
         )
-
-        # -----------------------------------
-        # prepare database sampling
-        database_root = Path(self.dataset_cfg.DATABASE_ROOT)
-        # if database_root.exists():
-        #     database_classes = [database_root / cls_name for cls_name in class_names]
-        #     self.gt_database = dict()
-        #     for cls_name, database_cls in zip(class_names, database_classes):
-        #         cls_trajs_path = list(database_cls.glob('*.pkl'))
-        #         cls_trajs_path.sort()
-            
-        #         # filter traj by length
-        #         invalid_traj_ids = list()
-        #         for traj_idx, traj_path in enumerate(cls_trajs_path):
-        #             with open(traj_path, 'rb') as f:
-        #                 traj_info = pickle.load(f)
-        #             if len(traj_info) < self.dataset_cfg.MAX_SWEEPS:
-        #                 invalid_traj_ids.append(traj_idx)
-
-        #         invalid_traj_ids.reverse()
-        #         for _i in invalid_traj_ids:
-        #             del cls_trajs_path[_i]
-                
-        #         self.gt_database[cls_name] = cls_trajs_path
-
-        #     self.sample_group = dict()
-        #     for group in self.dataset_cfg.SAMPLE_GROUP:  # ['car: 5', 'pedestrian: 5']
-        #         cls_name, num_to_sample = group.strip().split(':')
-        #         self.sample_group[cls_name] = {
-        #             'num_to_sample': int(num_to_sample),
-        #             'pointer': 0,
-        #             'indices': np.random.permutation(len(self.gt_database[cls_name])),
-        #             'num_trajectories': len(self.gt_database[cls_name])
-        #         }
-
-        # else:
-        #     print('WARNING | database is not created yet')
 
     def sample_with_fixed_number(self, class_name: str) -> List[Path]:
         sample_group = self.sample_group[class_name]
@@ -154,6 +120,26 @@ class NuScenesDataset(DatasetTemplate):
 
         return len(self.infos)
 
+    def sample_database(self, is_dyn: bool, glob_se3_current: np.ndarray, existing_boxes: np.ndarray):
+        sp_points, sp_boxes = list(), list()
+        num_existing_boxes = existing_boxes.shape[0]
+        lidar_se3_glob = np.linalg.inv(glob_se3_current)
+        for cls in self.traj_manager.classes_name:
+            _pts, _bxs = self.traj_manager.sample_disco_database(cls, 
+                                                                is_dyn=is_dyn, 
+                                                                num_existing_boxes=num_existing_boxes,
+                                                                lidar_se3_glob=lidar_se3_glob)
+            sp_points.append(_pts)
+            sp_boxes.append(_bxs)
+            num_existing_boxes += len(_bxs)
+
+        sp_points = np.concatenate(sp_points)  # (N_sp_pt, 3 + C) - x,y,z,intensity,time-lag, [sweep_idx, instance_idx]
+        sp_boxes = np.concatenate(sp_boxes)  # (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
+        
+        sp_points, sp_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(sp_points, sp_boxes, 
+                                                                                         exist_boxes=existing_boxes)
+        return sp_points, sp_boxes
+
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
             index = index % len(self.infos)
@@ -189,149 +175,40 @@ class NuScenesDataset(DatasetTemplate):
             box_idx_of_points = np.sum(box_idx_of_points, axis=0)  # (N_pts,)
 
             # extract instance_idx for points using box_idx_of_points
-            points[:, -1] = disco_boxes[box_idx_of_points, -1]
+            # points[:, -1] = disco_boxes[box_idx_of_points, -1]
             
             # use mask background to correct instance_idx & class_idx of background
             # set instance-idx ofbackground points to -1
-            points[mask_pts_backgr, -1] = -1
+            # points[mask_pts_backgr, -1] = -1
             
             # ---------------
-            # sample dynamic trajectories
+            # sample trajectories
             # ---------------
-            sp_points, sp_boxes = list(), list()
-            num_existing_boxes = disco_boxes.shape[0]
-            lidar_se3_glob = np.linalg.inv(glob_se3_current)
-            for cls in self.traj_manager.classes_name:
-                _pts, _bxs = self.traj_manager.sample_disco_database(cls, 
-                                                                     is_dyn=True, 
-                                                                     num_existing_boxes=num_existing_boxes,
-                                                                     lidar_se3_glob=lidar_se3_glob)
-                sp_points.append(_pts)
-                sp_boxes.append(_bxs)
-                num_existing_boxes += _bxs.shape[0]
+            # dynamic, then static
+            for is_dynamic in (True, False):
+                sp_points, sp_boxes = self.sample_database(is_dyn=is_dynamic, glob_se3_current=glob_se3_current, existing_boxes=disco_boxes)
+                points = np.concatenate([points, sp_points])
+                disco_boxes = np.concatenate([disco_boxes, sp_boxes])
 
-            sp_points = np.concatenate(sp_points)  # (N_sp_pt, 3 + C) - x,y,z,intensity,time-lag, [sweep_idx, instance_idx]
-            sp_boxes = np.concatenate(sp_boxes)  # (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
+            # ---------------
+            # extract gt_boxes from disco_boxes
+            # ---------------
+            # for each instance_idx, keep box that has the maximum sweep_idx --> gt_boxes
+            unique_insta_idx, inv_unique_insta_idx = torch.unique(torch.from_numpy(disco_boxes[:, -2]).long(), return_inverse=True)
+            per_inst_max_sweepidx, per_inst_idx_of_max_sweepidx = torch_scatter.scatter_max(
+                torch.from_numpy(disco_boxes[:, -3]).long(), 
+                inv_unique_insta_idx, 
+                dim=0)
+            gt_boxes = disco_boxes[per_inst_idx_of_max_sweepidx.numpy(), :7]
+            gt_names = self._uda_class_names[disco_boxes[per_inst_idx_of_max_sweepidx.numpy(), -1].astype(int)]
             
-            # ---
-            # remove sampled boxes that have high overlap with existing boxes
-            # ---
-            iou = iou3d_nms_utils.boxes_bev_iou_cpu(sp_boxes[:, :7], disco_boxes[:, :7])  # (N_sp_bx, N_b)
-            mask_valid = iou.max(axis=1) < 1e-3  # (N_sp_bx,)
-            mask_invalid = np.logical_not(mask_valid)  # (N_sp_bx,)
-            invalid_instance_idx = np.unique(sp_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
-            # remove sp_points based on instance_idx
-            mask_invalid_sp_pts = sp_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
-            mask_invalid_sp_pts = mask_invalid_sp_pts.any(axis=1)  # (N_sp_pt,)
-            # apply mask 
-            sp_points = sp_points[np.logical_not(mask_invalid_sp_pts)]
-            sp_boxes = sp_boxes[mask_valid]
-
-            
-
-
-        # NOTE: class_idx of boxes & points go from 0
-        # TODO: offset class_idx or points & boxes by 1 to agree with OpenPCDet convention
-
-        # -----------------------------
-        # get sampled points
-        if self.training and not self.dataset_cfg.get('DEBUG', False):
-            sampled_points, sampled_boxes, sampled_boxes_name, sampled_boxes_velo, instances_tf = list(), list(), list(), list(), list()
-            sampled_traj_boxes = list()
-            instance_index = 0  # running variable
-            for cls_name in self.sample_group.keys():
-                sampled_trajectories_path = self.sample_with_fixed_number(cls_name)
-                for traj_path in sampled_trajectories_path:
-                    traj_points, traj_boxes, _ = load_1traj(
-                        traj_path, 
-                        instance_index,
-                        num_sweeps_in_target=self.dataset_cfg.MAX_SWEEPS,
-                        src_frequency=5.,
-                        desired_range=self.point_cloud_range[3] * np.random.uniform(0.1, 0.75),
-                        noise_rotation=np.random.uniform(-np.pi/3., np.pi/3.),
-                        target_frequency=20.  # frequency of NuScenes
-                    )
-                    # traj_points: (N_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
-                    # traj_boxes: (N_box, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
-
-                    if traj_points.size == 0:
-                        continue
-
-                    # compute instance_tf with gt_boxes == info's
-                    traj_correction_tf = compute_correction_tf(traj_boxes)  # (N_boxes, 4, 4)
-                    padded_traj_correction_tf = np.tile(np.eye(4).reshape(1, 4, 4), 
-                                                        [self.dataset_cfg.MAX_SWEEPS, 1, 1])  # NOTE: hard-code freq of src < freq of target
-                    padded_traj_correction_tf[traj_boxes[:, -2].astype(int)] = traj_correction_tf
-
-                    # correction using oracle trajectory
-                    if self.dataset_cfg.get('ORACLE_POINTCLOUD', False):
-                        unq_sweep_ids, inv_unq_sweep_ids = np.unique(traj_points[:, -2].astype(int), return_inverse=True)
-                        __tf = padded_traj_correction_tf[unq_sweep_ids]
-                        traj_points_tf = __tf[inv_unq_sweep_ids]  # (N_pts, 4, 4)
-                        traj_points[:, :3] = np.einsum('bij, bjk -> bik', traj_points_tf[:, :3, :3], traj_points[:, :3, np.newaxis])[:, :, 0]
-                        traj_points[:, :3] = traj_points[:, :3] + traj_points_tf[:, :3, -1]
-
-                    # compute velo
-                    box_velo = (traj_boxes[-1, :2] - traj_boxes[0, :2]) / 0.5  # (2,)
-
-                    # store traj_boxes -> after IoU-based filtering use traj_boxes to remove g.t points that are inside  
-                    sampled_traj_boxes.append(traj_boxes)
-
-                    # store
-                    sampled_points.append(traj_points)
-                    sampled_boxes.append(traj_boxes[-1])
-                    sampled_boxes_name.append(cls_name)
-                    sampled_boxes_velo.append(box_velo)
-                    instances_tf.append(padded_traj_correction_tf)
-
-                    # move on to the next traj
-                    instance_index += 1
-
-            sampled_points = np.concatenate(sampled_points)  # (N_sampled_pts, 5 + 2) - x, y, z, intensity, timelag, [sweep_idx, inst_idx] 
-            sampled_boxes = np.stack(sampled_boxes, axis=0)  # (N_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
-            sampled_boxes_name = np.array(sampled_boxes_name)  # (N_inst,)
-            sampled_boxes_velo = np.stack(sampled_boxes_velo, axis=0)  # (N_inst, 2)
-            instances_tf = np.stack(instances_tf, axis=0)  # (N_inst, N_sweep in src, 4, 4)
-
-            # check last_box of each traj, see if they overlap with anyone, if yes, remove points
-            iou = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, :7], sampled_boxes[:, :7])
-            iou[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0  # (N_inst, N_inst)
-            mask_valid_inst = iou.max(axis=1) == 0  # (N_inst,)
-            # remove invalid sampled_boxes & points
-            valid_instance_ids = np.arange(sampled_boxes.shape[0])[mask_valid_inst]  # (N_valid_inst,)
-            mask_valid_points = np.any(sampled_points[:, -1].astype(int).reshape(-1, 1) == valid_instance_ids.reshape(1, -1), axis=1)  # (N_pts,)
-            sampled_points = sampled_points[mask_valid_points]  # (N_sampled_pts, 5 + 2)
-
-            sampled_boxes = sampled_boxes[mask_valid_inst]  # (N_val_inst, 7 + 2) - x, y, z, dx, dy, dz, yaw, [sweep_idx, inst_idx]
-            sampled_boxes_name = sampled_boxes_name[mask_valid_inst]  # (N_val_inst,)
-            sampled_boxes_velo = sampled_boxes_velo[mask_valid_inst]  # (N_val_inst, 2)
-
-            # NOTE: don't remove entry of instance_tf in order to keep the consistency between
-            # NOTE: points' instance_index & row index in instance_tf
-            # instances_tf = instances_tf[mask_valid_inst]  # (N_val_inst, N_sweep in src, 4, 4)
-            assert sampled_boxes.shape[0] > 0
-            
-            # remove original points inside each valid sampled trajectories
-            valid_sampled_traj_boxes = np.concatenate([sampled_traj_boxes[_idx] for _idx in valid_instance_ids], axis=0)
-            points_box_index = roiaware_pool3d_utils.points_in_boxes_cpu(
-                torch.from_numpy(points_original[:, :3]).float(), 
-                torch.from_numpy(valid_sampled_traj_boxes[:, :7]).float()
-            ).numpy()  # (N_val_inst, N_ori_pts)
-            mask_ori_pts_in_box = np.any(points_box_index > 0, axis=0)
-            points_original = points_original[np.logical_not(mask_ori_pts_in_box)]
-
-            # merge sampled points and original points
-            assert sampled_points.shape[0] > 0
-            points = np.concatenate([points_original, sampled_points])
-            gt_boxes = np.concatenate([sampled_boxes[:, :7], sampled_boxes_velo], 
-                                      axis=1)  # (N_val_inst, 9) - x, y, z, dx, dy, dz, yaw, vx, vy
-            gt_names = sampled_boxes_name
+            # NOTE: class_idx of boxes & points go from 0
+            # NOTE: offset class_idx or points & boxes by 1 to agree with OpenPCDet convention -> not necessary will be determined by gt_names
         else:
             # validation & testing
-            points = points_original
             gt_boxes = info['gt_boxes']
             gt_names = info['gt_names']
-
+        
         input_dict = {
             'points': points,
             'frame_id': Path(info['lidar_path']).stem,
@@ -340,10 +217,8 @@ class NuScenesDataset(DatasetTemplate):
             'gt_boxes': gt_boxes,
             'gt_names': gt_names  # str
         }
-
-        if self.training and not self.dataset_cfg.get('DEBUG', False):
-            input_dict['instances_tf'] = instances_tf
-            input_dict['metadata']['num_sampled_boxes'] = gt_boxes.shape[0]
+        if self.dataset_cfg.get('DEBUG', False):
+            input_dict['metadata']['disco_boxes'] = disco_boxes
 
         # data augmentation & other stuff
         data_dict = self.prepare_data(data_dict=input_dict)
