@@ -455,7 +455,7 @@ class TrajectoriesManager(object):
 
     def load_disco_traj_for_1sample(self, sample_token: str, is_dyna: bool, 
                                     return_in_lidar_frame: bool = True,
-                                    offset_idx_traj: int = 0) -> np.ndarray:
+                                    offset_idx_traj: int = 0) -> Tuple[np.ndarray]:
         """
         Args:
             sample_token:
@@ -463,10 +463,11 @@ class TrajectoriesManager(object):
             ped_sample_token2dyn
 
         Returns:
-            disco_dyn_boxes: (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+            disco_points: (N_pts, 5 + 2) - point-5, [sweep_idx, instance_idx]
+            disco_boxes: (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
         """
 
-        disco_boxes = list()
+        disco_points, disco_boxes = list(), list()
 
         dict_meta = self.meta_dynamic if is_dyna else self.meta_static
             
@@ -479,31 +480,39 @@ class TrajectoriesManager(object):
                     traj_info = pickle.load(f)
                 
                 if return_in_lidar_frame:
-                    boxes = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), 
-                                       boxes_=traj_info['boxes_in_glob'], 
-                                       return_transformed=True)  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx    
+                    points, boxes = apply_se3_(np.linalg.inv(traj_info['glob_se3_lidar']), 
+                                               points_=traj_info['points_in_glob'],
+                                               boxes_=traj_info['boxes_in_glob'], 
+                                               return_transformed=True)  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx    
                 else:
+                    points = traj_info['points_in_glob']  # (N_pts, 5 + 2) - point-5, [sweep_idx, instance_idx (:= -1, placeholder)]
                     boxes = traj_info['boxes_in_glob']  # (N_boxes, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
                 
                 if not is_dyna:
                     # load static traj -> just return 1 box because they are all the same
                     boxes = boxes[[-1]]  # (1, 8) - x, y, z, dx, dy, dz, heading, sweep_idx
 
+                # declare points' instance index
+                points[:, -1] = idx_traj + offset_idx_traj
+
                 # append boxes with instance_idx, class_idx
                 boxes = np.pad(boxes, pad_width=[(0, 0), (0, 2)], constant_values=0)
                 boxes[:, -2] = idx_traj + offset_idx_traj
                 boxes[:, -1] = self.dict_classname_2_classidx[cls_name]
 
+                # store
+                disco_points.append(points)
                 disco_boxes.append(boxes)
 
             # make sure ped trajs don't have the same traj idx as car
             offset_idx_traj = idx_traj + 1        
 
         if len(disco_boxes) == 0:
-            return np.zeros([0, 10])  # box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+            return np.zeros((0, 7)), np.zeros([0, 10])  # box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
         else:
-            disco_boxes = np.concatenate(disco_boxes, axis=0)
-            return disco_boxes  # (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+            disco_points = np.concatenate(disco_points, axis=0)  # (N_pts, 5 + 2) - point-5, [sweep_idx, inst_idx] 
+            disco_boxes = np.concatenate(disco_boxes, axis=0)  # (N, 10) - box-7, sweep_idx, inst_idx, cls_idx (0: car, 1: ped)
+            return disco_points, disco_boxes  
 
     def sample_with_fixed_number(self, class_name: str, is_dyn: bool) -> List[Path]:
         info = self.dyn_sample_info[class_name] if is_dyn else self.stat_sample_info[class_name]

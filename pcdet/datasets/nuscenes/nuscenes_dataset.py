@@ -141,45 +141,59 @@ class NuScenesDataset(DatasetTemplate):
 
         # ============================================
         if self.training:
-            disco_boxes_dyn = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
-                                                                            is_dyna=True)  # (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
+            disco_pts_dyn, disco_boxes_dyn = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
+                                                                                           is_dyna=True)
+            # disco_pts_dyn: (N_dyn_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+            # disco_boxes_dyn: (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
             
-            disco_boxes_stat = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
-                                                                             is_dyna=False,
-                                                                             offset_idx_traj=np.max(disco_boxes_dyn[:, -2]) + 1)  
+            disco_pts_stat, disco_boxes_stat = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
+                                                                                             is_dyna=False,
+                                                                                             offset_idx_traj=np.max(disco_boxes_dyn[:, -2]) + 1)  
             
+            disco_points = np.concatenate([disco_pts_dyn, disco_pts_stat])  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
             disco_boxes = np.concatenate([disco_boxes_dyn, disco_boxes_stat])  # (N_b, 10) - box-7, sweep_idx, inst_idx, cls_idx
             
             # ---------------
-            # establish point-to-box correspondant between points & disco_boxes_dyn/stat
+            # remove original points in boxes and add points of traj back to frame
             # ---------------
+            # points to disco_boxes correspondant
             box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_cpu(
                 torch.from_numpy(points[:, :3]).float(), 
                 torch.from_numpy(disco_boxes[:, :7]).float()
             ).numpy()  # (N_b, N_pts)
-            # find background points (i.e. points that are not inside any boxes)
+            
+            # keep only background points (i.e. points that are not inside any boxes)
             mask_pts_backgr = np.all(box_idx_of_points <= 0, axis=0)  # (N_pts,)
+            points_backgr = points[mask_pts_backgr]
 
-            box_idx_of_points = (box_idx_of_points > 0).astype(int) * np.arange(disco_boxes.shape[0]).reshape(-1, 1)  # (N_b, N_pts)
-            box_idx_of_points = np.sum(box_idx_of_points, axis=0)  # (N_pts,)
-
-            # TODO: remove original points in boxes and add points  of traj back to frame
-
-            # extract instance_idx for points using box_idx_of_points
-            # points[:, -1] = disco_boxes[box_idx_of_points, -1]
-            
-            # use mask background to correct instance_idx & class_idx of background
-            # set instance-idx ofbackground points to -1
-            # points[mask_pts_backgr, -1] = -1
-            
             # ---------------
             # sample trajectories
             # ---------------
+            all_sampled_points = list()
             # dynamic, then static
-            for is_dynamic in (True, False):  # TODO: add False
+            for is_dynamic in (True, False):
                 sp_points, sp_boxes = self.sample_database(is_dyn=is_dynamic, existing_boxes=disco_boxes)
-                points = np.concatenate([points, sp_points])
+                
+                all_sampled_points.append(sp_points)
                 disco_boxes = np.concatenate([disco_boxes, sp_boxes])
+                
+                # ---
+                # remove background points in sp_boxes
+                # ---
+                box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_cpu(
+                    torch.from_numpy(points_backgr[:, :3]).float(), 
+                    torch.from_numpy(sp_boxes[:, :7]).float()
+                ).numpy()  # (N_b, N_backgr)
+                # keep only background that are outside of every box
+                mask_valid_backgr = np.all(box_idx_of_backgr <= 0, axis=0)  # (N_backgr,)
+                points_backgr = points_backgr[mask_valid_backgr]
+            
+            all_sampled_points = np.concatenate(all_sampled_points) if len(all_sampled_points) > 0 else np.zeros((0, 7))
+
+            # ---------------
+            # assemble final points
+            # ---------------
+            points = np.concatenate([points_backgr, disco_points, all_sampled_points])
 
             # ---------------
             # extract gt_boxes from disco_boxes
