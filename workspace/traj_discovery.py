@@ -297,7 +297,7 @@ def load_discovered_trajs(sample_token: str, disco_database_root: Path, return_i
     return disco_boxes
 
 
-def load_trajs_static_embedding(traj_clusters_info_root: Path, classes_name: list = ['car', 'ped']) -> List[np.ndarray]:
+def load_trajs_static_embedding(traj_clusters_info_root: Path, classes_name: list = ['car', 'ped'], num_sweeps: int = 15) -> List[np.ndarray]:
     """
     Load pre-computed embeddings of top-k members of each cluster of trajs. "Static" means embeddings are computed solely based on static attributes which are dx, dy, dz in this case.
 
@@ -308,7 +308,7 @@ def load_trajs_static_embedding(traj_clusters_info_root: Path, classes_name: lis
     Return:
         clusters_top_embeddings: List[ (N_top_k, C) ]. 
     """
-    trajs_info_path = [traj_clusters_info_root / Path(f'cluster_info_{name}_15sweeps.pkl') for name in classes_name]
+    trajs_info_path = [traj_clusters_info_root / Path(f'rev1p1_cluster_info_{name}_{num_sweeps}sweeps.pkl') for name in classes_name]
     
     clusters_top_embeddings = list()
     for idx, info_path in enumerate(trajs_info_path):
@@ -414,7 +414,7 @@ class TrajectoriesManager(object):
 
     def make_dict_sample_token_2_trajs_dynamic(self, class_name: str):
         dict_sample_token_2_trajs = dict()
-        with open(self.info_root / Path(f"cluster_info_{class_name}_{self.num_sweeps}sweeps.pkl"), 'rb') as f:
+        with open(self.info_root / Path(f"rev1p1_cluster_info_{class_name}_{self.num_sweeps}sweeps.pkl"), 'rb') as f:
             cluster_info = pickle.load(f)
 
         for mem_path in cluster_info['members_path']:

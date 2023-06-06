@@ -397,14 +397,15 @@ class NuScenesDataset(DatasetTemplate):
 
         disco_dyna_traj_root = self.root_path / f'rev1_discovered_database_{num_sweeps}sweeps'
 
-        with open(f'./workspace/artifact/rev1/rev1p1_scaler_trajs_embedding_static.pkl', 'rb') as f:
+        with open(f'./workspace/artifact/rev1_{num_sweeps}sweeps/rev1p1_scaler_trajs_embedding_static_{num_sweeps}sweeps.pkl', 'rb') as f:
             scaler = pickle.load(f)
 
         # set up trajectories cluster
         traj_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.,
                                          metric='euclidean', min_cluster_size=10, min_samples=None)
-        traj_clusters_top_embeddings = load_trajs_static_embedding(Path('./workspace/artifact/rev1'),
-                                                                   classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)
+        traj_clusters_top_embeddings = load_trajs_static_embedding(Path(f'./workspace/artifact/rev1_{num_sweeps}sweeps'),
+                                                                   classes_name=self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES,
+                                                                   num_sweeps=num_sweeps)
         for cls_idx in range(len(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)):
             traj_clusters_top_embeddings[cls_idx] = np.pad(traj_clusters_top_embeddings[cls_idx], 
                                                            pad_width=[(0, 0), (0, 1)], 

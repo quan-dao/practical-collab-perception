@@ -4,7 +4,7 @@ DATA_PATH: '../data/nuscenes'
 VERSION: 'v1.0-trainval'
 
 MAX_SWEEPS: 10
-PRED_VELOCITY: True
+PRED_VELOCITY: False
 SET_NAN_VELOCITY_TO_ZEROS: True
 FILTER_MIN_POINTS_IN_GT: 1
 
@@ -31,12 +31,12 @@ POINT_FEATURE_ENCODING: {
 # -----------------------
 # UDA STUFF
 
-NUM_SWEEPS_TO_BUILD_DATABASE: 15
+NUM_SWEEPS_TO_BUILD_DATABASE: 10
 DATABASE_ROOT: ../data/nuscenes/discovered_database_15sweeps
 SAMPLE_GROUP: ['car:12', 'ped:12']
 ORACLE_POINTCLOUD: True
 DISCOVERED_DYNAMIC_CLASSES: ['car', 'ped']
-TRAJ_INFO_ROOT: ../workspace/artifact/rev1
+TRAJ_INFO_ROOT: ../workspace/artifact/rev1_10sweeps
 TRAJ_STATIC_DATABASE_ROOT: 
 
 # -----------------------

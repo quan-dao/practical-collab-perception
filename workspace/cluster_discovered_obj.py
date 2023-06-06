@@ -72,7 +72,7 @@ def main(num_sweeps: int = 15,
     trajs_embedding_static = trajs_static_descriptor
     static_scaler = StandardScaler()
     static_scaler.fit(trajs_embedding_static)
-    with open(f'artifact/rev1/rev1p1_scaler_trajs_embedding_static.pkl', 'wb') as f:
+    with open(f'artifact/rev1_{num_sweeps}sweeps/rev1p1_scaler_trajs_embedding_static_{num_sweeps}sweeps.pkl', 'wb') as f:
         pickle.dump(static_scaler, f)
 
     clusters_color = matplotlib.cm.rainbow(np.linspace(0.1, 1, unq_labels.shape[0]))[:, :3]
@@ -143,10 +143,10 @@ def main(num_sweeps: int = 15,
             'members_path': members_path,
             'cluster_top_members_static_embed': cluster_top_members_embedding_static
         }
-        with open(f'artifact/rev1/rev1p1_cluster_info_{label}_{num_sweeps}sweeps.pkl', 'wb') as f:
+        with open(f'artifact/rev1_{num_sweeps}sweeps/rev1p1_cluster_info_{label}_{num_sweeps}sweeps.pkl', 'wb') as f:
             pickle.dump(cluster_info, f)
 
 
 
 if __name__ == '__main__':
-    main()
+    main(num_sweeps=10)
