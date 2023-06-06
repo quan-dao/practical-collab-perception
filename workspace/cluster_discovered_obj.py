@@ -43,8 +43,8 @@ def main(num_sweeps: int = 15,
             / np.linalg.norm(grid_size_meters[:2])
 
         # assemble traj's descriptor
-        descriptor = np.array([dx, dy, dz, travelled_dist])
-        static_descriptor = np.array([dx, dy, dz])
+        descriptor = np.array([dx, dy, dz, dz/dx, dz/dy, travelled_dist])
+        static_descriptor = np.array([dx, dy, dz, dz/dx, dz/dy,])
         # store
         trajs_descriptor.append(descriptor)
         trajs_static_descriptor.append(static_descriptor)

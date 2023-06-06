@@ -412,7 +412,7 @@ class NuScenesDataset(DatasetTemplate):
                                                            constant_values=cls_idx)
         traj_clusters_top_embeddings = np.concatenate(traj_clusters_top_embeddings)
 
-        traj_clusterer.fit(scaler.transform(traj_clusters_top_embeddings[:, :3]))
+        traj_clusterer.fit(scaler.transform(traj_clusters_top_embeddings[:, :5]))
         traj_clusterer.generate_prediction_data()
 
         # assoc self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES & class_index found by traj_clusterer

@@ -20,7 +20,7 @@ def main(test_dataset: bool,
     )
 
     if test_dataset:
-        batch_dict = dataset[10]
+        batch_dict = dataset[dataset_sample_idx]
         
         print_dict(batch_dict, 'batch_dict')
 

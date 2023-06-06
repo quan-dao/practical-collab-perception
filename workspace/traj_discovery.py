@@ -253,13 +253,13 @@ class TrajectoryProcessor(object):
         
         # assemble descriptor
         if use_static_attribute_only:
-            descriptor = np.array([dx, dy, dz])
+            descriptor = np.array([dx, dy, dz, dz/dx, dz/dy])
         else:  
             # -> use dynamic attributes also
             # total distance travel
             travelled_dist = np.linalg.norm(boxes[1:, :2] - boxes[:-1, :2], axis=1).sum() / np.linalg.norm(grid_size_meters[:2])
 
-            descriptor = np.array([dx, dy, dz, travelled_dist])
+            descriptor = np.array([dx, dy, dz, dz/dx, dz/dy, travelled_dist])
 
         return descriptor
 
