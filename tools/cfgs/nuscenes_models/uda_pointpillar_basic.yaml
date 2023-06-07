@@ -1,10 +1,9 @@
-CLASS_NAMES: ['car','truck', 'construction_vehicle', 'bus', 'trailer',
-              'barrier', 'motorcycle', 'bicycle', 'pedestrian', 'traffic_cone']
+CLASS_NAMES: ['car', 'pedestrian']
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
     VERSION: 'v1.0-trainval'
-    USE_MINI_TRAINVAL: True
+    MINI_TRAINVAL_STRIDE: 4
     PRED_VELOCITY: False
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
@@ -42,35 +41,13 @@ MODEL:
         UPSAMPLE_STRIDES: [0.5, 1, 2]
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
-    # CORRECTOR:  # for evaluate baseline obj-det
-    #     NUM_SWEEPS: 10
-    #     BEV_IMAGE_STRIDE: 4
-
-    #     NUM_RAW_POINT_FEATURES: 5
-    #     POINT_FEAT_INDEX_OFFSET_FROM_RAW_FEAT:
-    #         SWEEP_INDEX: 0
-    #         INSTANCE_INDEX: 1
-    #         AUGMENTED_INSTANCE_INDEX: 2
-
-    #     SHARED_CONV_CHANNEL: 256
-    #     POINT_HEAD_MID_CHANNELS: [128]
-    #     INSTANCE_HEAD_MID_CHANNELS: [128]
-    #     EVAL_SEGMENTATION_WHILE_TRAINING: False
-    #     CORRECT_POINTS_WHILE_TRAINING: False
-    #     THRESH_CLS_PROB: 0.5
-    #     CONSISTENT_WITH: both
-
     DENSE_HEAD:
         NAME: CenterHead
         CLASS_AGNOSTIC: False
 
         CLASS_NAMES_EACH_HEAD: [
             ['car'],
-            ['truck', 'construction_vehicle'],
-            ['bus', 'trailer'],
-            ['barrier'],
-            ['motorcycle', 'bicycle'],
-            ['pedestrian', 'traffic_cone'],
+            ['pedestrian']
         ]
 
         SHARED_CONV_CHANNEL: 64
@@ -82,7 +59,7 @@ MODEL:
                 'center': {'out_channels': 2, 'num_conv': 2},
                 'center_z': {'out_channels': 1, 'num_conv': 2},
                 'dim': {'out_channels': 3, 'num_conv': 2},
-                'rot': {'out_channels': 2, 'num_conv': 2}
+                'rot': {'out_channels': 2, 'num_conv': 2},
             }
 
         TARGET_ASSIGNER_CONFIG:
@@ -99,6 +76,8 @@ MODEL:
             }
 
         POST_PROCESSING:
+            CALIB_CLS_SCORE: False
+            CALIB_CLS_SCORE_ALPHA: 0.5
             SCORE_THRESH: 0.1
             POST_CENTER_LIMIT_RANGE: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
             MAX_OBJ_PER_SAMPLE: 500
@@ -110,9 +89,7 @@ MODEL:
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
-
-        EVAL_METRIC: kitti
-
+        EVAL_METRIC: nuscenes
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 4
