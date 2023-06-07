@@ -111,7 +111,7 @@ class NuScenesDataset(DatasetTemplate):
 
     def sample_database(self, is_dyn: bool, existing_boxes: np.ndarray):
         sp_points, sp_boxes = list(), list()
-        num_existing_instances = np.max(existing_boxes[:, -2]) + 1
+        num_existing_instances = np.max(existing_boxes[:, -2]) + 1 if existing_boxes.shape[0] > 0 else 0
         for cls in self.traj_manager.classes_name:
             _pts, _bxs = self.traj_manager.sample_disco_database(cls, 
                                                                 is_dyn=is_dyn, 
@@ -123,8 +123,9 @@ class NuScenesDataset(DatasetTemplate):
         sp_points = np.concatenate(sp_points)  # (N_sp_pt, 3 + C) - x,y,z,intensity,time-lag, [sweep_idx, instance_idx]
         sp_boxes = np.concatenate(sp_boxes)  # (N_sp_bx, 10) - box-7, sweep_idx, instance_idx, class_idx
         
-        sp_points, sp_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(sp_points, sp_boxes, 
-                                                                                          exist_boxes=existing_boxes)
+        if existing_boxes.shape[0] > 0:
+            sp_points, sp_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(sp_points, sp_boxes, 
+                                                                                              exist_boxes=existing_boxes)
         sp_points, sp_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_themselves(sp_points, sp_boxes)
 
         return sp_points, sp_boxes
@@ -145,10 +146,10 @@ class NuScenesDataset(DatasetTemplate):
                                                                                            is_dyna=True)
             # disco_pts_dyn: (N_dyn_pts, 5 + 2) - point-5, sweep_idx, inst_idx
             # disco_boxes_dyn: (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
-            
+            offset_idx_traj = np.max(disco_boxes_dyn[:, -2]) + 1 if disco_boxes_dyn.shape[0] > 0 else 0
             disco_pts_stat, disco_boxes_stat = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
                                                                                              is_dyna=False,
-                                                                                             offset_idx_traj=np.max(disco_boxes_dyn[:, -2]) + 1)  
+                                                                                             offset_idx_traj=offset_idx_traj)  
             
             disco_points = np.concatenate([disco_pts_dyn, disco_pts_stat])  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
             disco_boxes = np.concatenate([disco_boxes_dyn, disco_boxes_stat])  # (N_b, 10) - box-7, sweep_idx, inst_idx, cls_idx

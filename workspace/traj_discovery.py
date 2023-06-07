@@ -292,8 +292,10 @@ def load_discovered_trajs(sample_token: str, disco_database_root: Path, return_i
             disco_boxes.append(boxes_in_liar)
         else:
             disco_boxes.append(traj_info['boxes_in_glob'])
-
-    disco_boxes = np.concatenate(disco_boxes, axis=0)
+    if len(disco_boxes) > 0:
+        disco_boxes = np.concatenate(disco_boxes, axis=0)
+    else:
+        disco_boxes = np.zeros((0, 8))
     return disco_boxes
 
 
@@ -333,6 +335,10 @@ def filter_points_in_boxes(points: np.ndarray, boxes: np.ndarray) -> np.ndarray:
     Return:
         points_outside: (N_outside, 3 + C)
     """
+    if boxes.shape[0] == 0:
+        # empty boxes -> all points are valid
+        return points
+    
     points_box_index = roiaware_pool3d_utils.points_in_boxes_cpu(
         torch.from_numpy(points[:, :3]).float(),
         torch.from_numpy(boxes[:, :7]).float(),

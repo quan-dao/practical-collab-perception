@@ -57,8 +57,9 @@ def build_dataset_for_testing(dataset_cfg_file: str, class_names: list, **kwargs
     cfg.CLASS_NAMES = class_names
     if kwargs.get('debug_dataset', False):
         cfg.DEBUG = True
-        cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
-                                               'random_world_rotation', 'random_world_scaling']
+        cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling',]
+        # cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
+        #                                        'random_world_rotation', 'random_world_scaling']
 
     if kwargs.get('version', None) is not None:
         cfg.VERSION = kwargs['version']
