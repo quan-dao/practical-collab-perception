@@ -158,13 +158,21 @@ class NuScenesDataset(DatasetTemplate):
             # remove original points in boxes and add points of traj back to frame
             # ---------------
             # points to disco_boxes correspondant
-            box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_cpu(
-                torch.from_numpy(points[:, :3]).float(), 
-                torch.from_numpy(disco_boxes[:, :7]).float()
-            ).numpy()  # (N_b, N_pts)
+            if self.dataset_cfg.get('USE_POINTS_IN_BOXES_GPU', False):
+                box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_gpu(
+                    torch.from_numpy(points[:, :3]).float().unsqueeze(0).float().cuda(),
+                    torch.from_numpy(disco_boxes[:, :7]).float().unsqueeze(0).float().cuda(),
+                ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_b)
+                mask_pts_backgr = box_idx_of_points == -1
+            else:
+                # -> use cpu
+                box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_cpu(
+                    torch.from_numpy(points[:, :3]).float(), 
+                    torch.from_numpy(disco_boxes[:, :7]).float()
+                ).numpy()  # (N_b, N_pts)
+                mask_pts_backgr = np.all(box_idx_of_points <= 0, axis=0)  # (N_pts,)
             
             # keep only background points (i.e. points that are not inside any boxes)
-            mask_pts_backgr = np.all(box_idx_of_points <= 0, axis=0)  # (N_pts,)
             points_backgr = points[mask_pts_backgr]
 
             # ---------------
@@ -181,12 +189,20 @@ class NuScenesDataset(DatasetTemplate):
                 # ---
                 # remove background points in sp_boxes
                 # ---
-                box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_cpu(
-                    torch.from_numpy(points_backgr[:, :3]).float(), 
-                    torch.from_numpy(sp_boxes[:, :7]).float()
-                ).numpy()  # (N_b, N_backgr)
+                if self.dataset_cfg.get('USE_POINTS_IN_BOXES_GPU', False):
+                    box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_gpu(
+                        torch.from_numpy(points_backgr[:, :3]).float().unsqueeze(0).float().cuda(), 
+                        torch.from_numpy(sp_boxes[:, :7]).float().unsqueeze(0).float().cuda()
+                    ).long().squeeze(0).cpu().numpy()  # (N_backgr,)
+                    mask_valid_backgr = box_idx_of_backgr == -1
+                else:
+                    # -> use cpu
+                    box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_cpu(
+                        torch.from_numpy(points_backgr[:, :3]).float(), 
+                        torch.from_numpy(sp_boxes[:, :7]).float()
+                    ).numpy()  # (N_b, N_backgr)
+                    mask_valid_backgr = np.all(box_idx_of_backgr <= 0, axis=0)  # (N_backgr,)
                 # keep only background that are outside of every box
-                mask_valid_backgr = np.all(box_idx_of_backgr <= 0, axis=0)  # (N_backgr,)
                 points_backgr = points_backgr[mask_valid_backgr]
             
             all_sampled_points = np.concatenate(all_sampled_points) if len(all_sampled_points) > 0 else np.zeros((0, 7))

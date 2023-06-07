@@ -5,6 +5,7 @@ DATA_CONFIG:
     VERSION: 'v1.0-trainval'
     MINI_TRAINVAL_STRIDE: 4
     PRED_VELOCITY: False
+    USE_POINTS_IN_BOXES_GPU: True
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: False
