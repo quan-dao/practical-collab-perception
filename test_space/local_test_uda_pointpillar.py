@@ -85,4 +85,4 @@ if __name__ == '__main__':
     #      batch_size=10)
 
     show_batch_dict(copy_from_azog=False,
-                    chosen_batch_idx=4)
+                    chosen_batch_idx=1)
