@@ -45,7 +45,7 @@ def build_test_infra(cfg_file: str, **kwargs):
                                               dist=False, logger=logger, training=kwargs.get('training', False), total_epochs=1, seed=666,
                                               workers=0)
     model = build_detector(cfg.MODEL, num_class=kwargs.get('num_class', 10), dataset=dataset)
-    if 'ckpt_file' in kwargs:
+    if kwargs.get('ckpt_dir', None) is not None:
         model.load_params_from_file(kwargs['ckpt_file'], logger, to_cpu=True)
         
     return model, dataloader

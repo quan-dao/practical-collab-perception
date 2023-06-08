@@ -87,6 +87,10 @@ def main(num_sweeps: int = 15,
     print('========================')
     indices_trajs_path = np.arange(trajs_path.shape[0])
     trajs_prob = clusterer.probabilities_
+    clusters_samples_root = Path(f'./artifact/rev1_{num_sweeps}sweeps/clusters_samples')
+    if not clusters_samples_root.exists():
+        clusters_samples_root.mkdir(parents=True, exist_ok=True)
+
     for label, num_trajs_in_cluster in zip(unq_labels, counts):
         if label == -1:
             continue
@@ -128,6 +132,15 @@ def main(num_sweeps: int = 15,
             tf = np.eye(4)
             tf[:2, -1] = 10. * np.array([np.cos(boxes_in_lidar[-1, 6]), np.sin(boxes_in_lidar[-1, 6])])
             apply_se3_(tf, points_=corrected_points_in_lidar, boxes_=last_box_in_lidar)
+
+            with open(clusters_samples_root / Path(f"cluster{label}_traj{_i}.pkl"), 'wb') as f:
+                _info = {
+                    'points_in_lidar': points_in_lidar[:, :3],
+                    'corrected_points_in_lidar': corrected_points_in_lidar[:, :3],
+                    'boxes_in_lidar': boxes_in_lidar[:, :7],
+                    'last_box_in_lidar': last_box_in_lidar[:, :7]
+                }
+                pickle.dump(_info, f)
 
             painter = PointsPainter(
                 np.concatenate([points_in_lidar[:, :3], corrected_points_in_lidar[:, :3]]),

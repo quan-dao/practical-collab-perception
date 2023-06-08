@@ -2,7 +2,12 @@ import numpy as np
 from sklearn.neighbors import KDTree
 from sklearn.metrics import mean_squared_error
 import sys
-sys.path.insert(0, '/home/user/Desktop/python_ws/patchwork-plusplus/build/python_wrapper')
+from pathlib import Path
+if Path('/home/user/Desktop/python_ws/patchwork-plusplus/build/python_wrapper').exists():
+    sys.path.insert(0, '/home/user/Desktop/python_ws/patchwork-plusplus/build/python_wrapper')
+else:
+    assert Path('/home/jupyter-dao-mq/workspace/patchwork-plusplus/build/python_wrapper').exists()
+    sys.path.insert(0, '/home/jupyter-dao-mq/workspace/patchwork-plusplus/build/python_wrapper')
 import pypatchworkpp
 
 

@@ -26,3 +26,10 @@ artifact
 .vscode
 *.png
 *.json
+*.npy
+*.gz
+*armen*
+test_kitti_*
+test_nuscenes_16*
+test_pointpillar_jr_corr_nomap*
+*.txt
