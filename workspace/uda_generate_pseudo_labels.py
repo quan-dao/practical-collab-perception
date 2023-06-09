@@ -26,7 +26,9 @@ def gen_pseudo_labels(round_idx: int,
 
     dataset, dataloader, _ = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=batch_size,
-        dist=False, logger=logger, training=True, total_epochs=1, seed=666,
+        dist=False, logger=logger, 
+        training=False,  # but dataset_cfg.INFO_PATH's val == train, set training to False to shutdown database_sampling & data_transformation
+        total_epochs=1, seed=666,
         workers=0)
     
     keep_class = 1 if class_name == 'car' else 2

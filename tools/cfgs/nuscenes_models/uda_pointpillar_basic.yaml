@@ -1,11 +1,21 @@
 CLASS_NAMES: ['car', 'pedestrian']
 
 DATA_CONFIG:
-    _BASE_CONFIG_: cfgs/dataset_configs/nuscenes_dataset.yaml
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/nuscenes_dataset.yaml
     VERSION: 'v1.0-trainval'
     MINI_TRAINVAL_STRIDE: 4
     PRED_VELOCITY: False
     USE_POINTS_IN_BOXES_GPU: True
+
+    # ====================================
+    # use these two to generate pseudo-label
+    EVAL_ON_TRAIN: True
+    INFO_PATH: {
+        'train': [nuscenes_infos_10sweeps_train.pkl],
+        'test': [nuscenes_infos_10sweeps_train.pkl],
+    }
+    # ====================================
+
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: False
