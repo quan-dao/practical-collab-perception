@@ -13,6 +13,7 @@ from .mppnet import MPPNet
 from .mppnet_e2e import MPPNetE2E
 from .pillarnet import PillarNet
 from .alginer import Aligner
+from .obj_discoverer import ObjectDiscoverer
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -29,7 +30,8 @@ __all__ = {
     'MPPNet': MPPNet,
     'MPPNetE2E': MPPNetE2E,
     'PillarNet': PillarNet,
-    'Aligner': Aligner
+    'Aligner': Aligner,
+    'ObjectDiscoverer': ObjectDiscoverer
 }
 
 

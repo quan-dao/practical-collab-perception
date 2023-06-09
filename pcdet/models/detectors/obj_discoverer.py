@@ -15,13 +15,13 @@ class ObjectDiscoverer(Detector3DTemplate):
         
         final_box_dicts = list()
         for b_idx in range(batch_dict['batch_size']):
-            disco_boxes = metadata['disco_boxes']  # (N, 10) box-7, sweep_idx, inst_idx, cls_idx
+            disco_boxes = metadata[b_idx]['disco_boxes']  # (N, 10) box-7, sweep_idx, inst_idx, cls_idx
             # NOTE: class_idx of boxes & points go from 0
             
             this_pred_dict = {
                 'pred_boxes': torch.from_numpy(disco_boxes[:, :7]).float().cuda(),
                 'pred_scores': torch.ones(disco_boxes.shape[0]).float().cuda(),
-                'pred_labels': torch.from_numpy(disco_boxes[:, -1] + 1).float().cuda()
+                'pred_labels': torch.from_numpy(disco_boxes[:, -1] + 1).long().cuda()
             }
             final_box_dicts.append(this_pred_dict)
 
