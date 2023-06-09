@@ -37,6 +37,8 @@ class NuScenesDataset(DatasetTemplate):
         if (training or self.dataset_cfg.get('EVAL_ON_TRAIN', False)) and self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) > 1:
             stride = self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1)
             self.infos = self.infos[::stride]  # use 1/4th of the trainval data
+        
+        self.all_sample_tokens = [_info['token'] for _info in self.infos]
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
@@ -307,6 +309,8 @@ class NuScenesDataset(DatasetTemplate):
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
+        from workspace.nuscenes_eval_utils import MyDetectionEval
+
         nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
 
         # init nusc_annos to make sure that every sample token of val set is included
@@ -341,7 +345,7 @@ class NuScenesDataset(DatasetTemplate):
 
         eval_set_map = {
             'v1.0-mini': 'mini_val',
-            'v1.0-trainval': 'val',
+            'v1.0-trainval': 'val' if not self.dataset_cfg.get('EVAL_ON_TRAIN', False) else 'train',
             'v1.0-test': 'test'
         }
         try:
@@ -350,15 +354,27 @@ class NuScenesDataset(DatasetTemplate):
         except:
             eval_version = 'cvpr_2019'
             eval_config = config_factory(eval_version)
-
-        nusc_eval = NuScenesEval(
-            nusc,
-            config=eval_config,
-            result_path=res_path,
-            eval_set=eval_set_map[self.dataset_cfg.VERSION],
-            output_dir=str(output_path),
-            verbose=True,
-        )
+        
+        if not self.dataset_cfg.get('EVAL_ON_TRAIN', False):
+            nusc_eval = NuScenesEval(
+                nusc,
+                config=eval_config,
+                result_path=res_path,
+                eval_set=eval_set_map[self.dataset_cfg.VERSION],
+                output_dir=str(output_path),
+                verbose=True,
+            )
+        else:
+            # eval on train
+            nusc_eval = MyDetectionEval(
+                nusc,
+                config=eval_config,
+                result_path=res_path,
+                eval_set=eval_set_map[self.dataset_cfg.VERSION],
+                output_dir=str(output_path),
+                verbose=True,
+                all_sample_tokens=self.all_sample_tokens
+            )
         metrics_summary = nusc_eval.main(plot_examples=0, render_curves=False)
 
         with open(output_path / 'metrics_summary.json', 'r') as f:
