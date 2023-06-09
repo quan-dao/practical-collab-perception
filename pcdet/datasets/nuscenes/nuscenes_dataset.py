@@ -3,7 +3,7 @@ import torch
 import copy
 import pickle
 from pathlib import Path
-from typing import List
+from typing import Tuple
 from tqdm import tqdm
 from nuscenes import NuScenes
 import hdbscan
@@ -34,7 +34,7 @@ class NuScenesDataset(DatasetTemplate):
             self.infos = self.balanced_infos_resampling(self.infos)
 
         self.infos.sort(key=lambda e: e['timestamp'])
-        if training and self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) > 1:
+        if (training or self.dataset_cfg.get('EVAL_ON_TRAIN', False)) and self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) > 1:
             stride = self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1)
             self.infos = self.infos[::stride]  # use 1/4th of the trainval data
 
@@ -109,7 +109,7 @@ class NuScenesDataset(DatasetTemplate):
 
         return len(self.infos)
 
-    def sample_database(self, is_dyn: bool, existing_boxes: np.ndarray):
+    def database_take_samples(self, is_dyn: bool, existing_boxes: np.ndarray):
         sp_points, sp_boxes = list(), list()
         num_existing_instances = np.max(existing_boxes[:, -2]) + 1 if existing_boxes.shape[0] > 0 else 0
         for cls in self.traj_manager.classes_name:
@@ -130,6 +130,31 @@ class NuScenesDataset(DatasetTemplate):
 
         return sp_points, sp_boxes
 
+    def database_load_disco_objects(self, sample_token, threshold_cluster_prob: float = 0.) -> Tuple[np.ndarray]:
+        """
+        Load discovered objects from dyn & stat database
+        
+        Args:
+            sample_token:
+            threshold_cluster_prob: # TODO
+        
+        Returns:
+            disco_pts: (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+            disco_boxes: (N_b, 10) - box-7, sweep_idx, inst_idx, cls_idx
+        """
+        disco_points, disco_boxes = list(), list()
+        offset_idx_traj = 0
+        for is_dyna in (True, False):
+            pts, boxes = self.traj_manager.load_disco_traj_for_1sample(sample_token, 
+                                                                       is_dyna, 
+                                                                       offset_idx_traj=offset_idx_traj)
+            disco_points.append(pts)
+            disco_boxes.append(boxes)
+        
+        disco_points = np.concatenate(disco_points)  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+        disco_boxes = np.concatenate(disco_boxes)  # (N_box, 10) - box-7, sweep_idx, inst_idx, class_idx
+        return disco_points, disco_boxes
+
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
             index = index % len(self.infos)
@@ -142,87 +167,97 @@ class NuScenesDataset(DatasetTemplate):
 
         # ============================================
         if self.training:
-            disco_pts_dyn, disco_boxes_dyn = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
-                                                                                           is_dyna=True)
-            # disco_pts_dyn: (N_dyn_pts, 5 + 2) - point-5, sweep_idx, inst_idx
-            # disco_boxes_dyn: (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
-            offset_idx_traj = np.max(disco_boxes_dyn[:, -2]) + 1 if disco_boxes_dyn.shape[0] > 0 else 0
-            disco_pts_stat, disco_boxes_stat = self.traj_manager.load_disco_traj_for_1sample(info['token'], 
-                                                                                             is_dyna=False,
-                                                                                             offset_idx_traj=offset_idx_traj)  
-            
-            disco_points = np.concatenate([disco_pts_dyn, disco_pts_stat])  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
-            disco_boxes = np.concatenate([disco_boxes_dyn, disco_boxes_stat])  # (N_b, 10) - box-7, sweep_idx, inst_idx, cls_idx
-            
-            # ---------------
-            # remove original points in boxes and add points of traj back to frame
-            # ---------------
-            # points to disco_boxes correspondant
-            if self.dataset_cfg.get('USE_POINTS_IN_BOXES_GPU', False):
-                box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_gpu(
-                    torch.from_numpy(points[:, :3]).float().unsqueeze(0).float().cuda(),
-                    torch.from_numpy(disco_boxes[:, :7]).float().unsqueeze(0).float().cuda(),
-                ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_b)
-                mask_pts_backgr = box_idx_of_points == -1
-            else:
-                # -> use cpu
-                box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_cpu(
-                    torch.from_numpy(points[:, :3]).float(), 
-                    torch.from_numpy(disco_boxes[:, :7]).float()
-                ).numpy()  # (N_b, N_pts)
-                mask_pts_backgr = np.all(box_idx_of_points <= 0, axis=0)  # (N_pts,)
-            
-            # keep only background points (i.e. points that are not inside any boxes)
-            points_backgr = points[mask_pts_backgr]
+            # TODO: load pseudo-label here
 
-            # ---------------
-            # sample trajectories
-            # ---------------
-            all_sampled_points = list()
-            # dynamic, then static
-            for is_dynamic in (True, False):
-                sp_points, sp_boxes = self.sample_database(is_dyn=is_dynamic, existing_boxes=disco_boxes)
+            # ---------------------------------------------------------------------------
+            # load discovered objects
+            # ---------------------------------------------------------------------------
+            if self.dataset_cfg.get('USE_DISCOVER_OBJECTS', True):
+                disco_points, disco_boxes = self.database_load_disco_objects(info['token'])
+                # disco_points: (N_dyn_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+                # disco_boxes: (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
                 
-                all_sampled_points.append(sp_points)
-                disco_boxes = np.concatenate([disco_boxes, sp_boxes])
                 
-                # ---
-                # remove background points in sp_boxes
-                # ---
+                # --
+                # remove original points in boxes and add points of traj back to frame
+                # --
+                # points to disco_boxes correspondant
                 if self.dataset_cfg.get('USE_POINTS_IN_BOXES_GPU', False):
-                    box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_gpu(
-                        torch.from_numpy(points_backgr[:, :3]).float().unsqueeze(0).float().cuda(), 
-                        torch.from_numpy(sp_boxes[:, :7]).float().unsqueeze(0).float().cuda()
-                    ).long().squeeze(0).cpu().numpy()  # (N_backgr,)
-                    mask_valid_backgr = box_idx_of_backgr == -1
+                    box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_gpu(
+                        torch.from_numpy(points[:, :3]).float().unsqueeze(0).float().cuda(),
+                        torch.from_numpy(disco_boxes[:, :7]).float().unsqueeze(0).float().cuda(),
+                    ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_b)
+                    mask_pts_backgr = box_idx_of_points == -1
                 else:
                     # -> use cpu
-                    box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_cpu(
-                        torch.from_numpy(points_backgr[:, :3]).float(), 
-                        torch.from_numpy(sp_boxes[:, :7]).float()
-                    ).numpy()  # (N_b, N_backgr)
-                    mask_valid_backgr = np.all(box_idx_of_backgr <= 0, axis=0)  # (N_backgr,)
-                # keep only background that are outside of every box
-                points_backgr = points_backgr[mask_valid_backgr]
+                    box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_cpu(
+                        torch.from_numpy(points[:, :3]).float(), 
+                        torch.from_numpy(disco_boxes[:, :7]).float()
+                    ).numpy()  # (N_b, N_pts)
+                    mask_pts_backgr = np.all(box_idx_of_points <= 0, axis=0)  # (N_pts,)
+                
+                # keep only background points (i.e. points that are not inside any boxes)
+                points_backgr = points[mask_pts_backgr]
+            else:
+                disco_points = np.zeros((0, 7))
+                points_backgr = points
+                disco_boxes = np.zeros((0, 10))
+
+            # ---------------------------------------------------------------------------
+            # sample trajectories
+            # ---------------------------------------------------------------------------
+            all_sampled_points = list()
+            if self.dataset_cfg.get('USE_DATABASE_SAMPLING', True):
+                # dynamic, then static
+                for is_dynamic in (True, False):
+                    sp_points, sp_boxes = self.database_take_samples(is_dyn=is_dynamic, existing_boxes=disco_boxes)
+                    
+                    all_sampled_points.append(sp_points)
+                    disco_boxes = np.concatenate([disco_boxes, sp_boxes])
+                    
+                    # ---
+                    # remove background points in sp_boxes
+                    # ---
+                    if self.dataset_cfg.get('USE_POINTS_IN_BOXES_GPU', False):
+                        box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_gpu(
+                            torch.from_numpy(points_backgr[:, :3]).float().unsqueeze(0).float().cuda(), 
+                            torch.from_numpy(sp_boxes[:, :7]).float().unsqueeze(0).float().cuda()
+                        ).long().squeeze(0).cpu().numpy()  # (N_backgr,)
+                        mask_valid_backgr = box_idx_of_backgr == -1
+                    else:
+                        # -> use cpu
+                        box_idx_of_backgr = roiaware_pool3d_utils.points_in_boxes_cpu(
+                            torch.from_numpy(points_backgr[:, :3]).float(), 
+                            torch.from_numpy(sp_boxes[:, :7]).float()
+                        ).numpy()  # (N_b, N_backgr)
+                        mask_valid_backgr = np.all(box_idx_of_backgr <= 0, axis=0)  # (N_backgr,)
+                    # keep only background that are outside of every box
+                    points_backgr = points_backgr[mask_valid_backgr]
             
             all_sampled_points = np.concatenate(all_sampled_points) if len(all_sampled_points) > 0 else np.zeros((0, 7))
 
-            # ---------------
+            # ---------------------------------------------------------------------------
             # assemble final points
-            # ---------------
+            # ---------------------------------------------------------------------------
             points = np.concatenate([points_backgr, disco_points, all_sampled_points])
 
-            # ---------------
+            # ---------------------------------------------------------------------------
             # extract gt_boxes from disco_boxes
-            # ---------------
-            # for each instance_idx, keep box that has the maximum sweep_idx --> gt_boxes
-            unique_insta_idx, inv_unique_insta_idx = torch.unique(torch.from_numpy(disco_boxes[:, -2]).long(), return_inverse=True)
-            per_inst_max_sweepidx, per_inst_idx_of_max_sweepidx = torch_scatter.scatter_max(
-                torch.from_numpy(disco_boxes[:, -3]).long(), 
-                inv_unique_insta_idx, 
-                dim=0)
-            gt_boxes = disco_boxes[per_inst_idx_of_max_sweepidx.numpy(), :7]
-            gt_names = self._uda_class_names[disco_boxes[per_inst_idx_of_max_sweepidx.numpy(), -1].astype(int)]
+            # ---------------------------------------------------------------------------
+            if disco_boxes.shape[0] > 0:
+                # for each instance_idx, keep box that has the maximum sweep_idx --> gt_boxes
+                unique_insta_idx, inv_unique_insta_idx = torch.unique(torch.from_numpy(disco_boxes[:, -2]).long(), 
+                                                                    return_inverse=True)
+                per_inst_max_sweepidx, per_inst_idx_of_max_sweepidx = torch_scatter.scatter_max(
+                    torch.from_numpy(disco_boxes[:, -3]).long(), 
+                    inv_unique_insta_idx, 
+                    dim=0)
+                gt_boxes = disco_boxes[per_inst_idx_of_max_sweepidx.numpy(), :7]
+                gt_names = self._uda_class_names[disco_boxes[per_inst_idx_of_max_sweepidx.numpy(), -1].astype(int)]
+            else:
+                self.logger.warning(f"sample {info['token']} does not have any disco_boxes, USE_DISCOVER_OBJECTS or USE_DATABASE_SAMPLING")
+                gt_boxes =  np.zeros((0, 7))
+                gt_names = np.array([])
             
             # NOTE: class_idx of boxes & points go from 0
             # NOTE: offset class_idx or points & boxes by 1 to agree with OpenPCDet convention -> not necessary will be determined by gt_names
@@ -240,6 +275,9 @@ class NuScenesDataset(DatasetTemplate):
             'gt_names': gt_names  # str
         }
         if self.dataset_cfg.get('DEBUG', False):
+            _, disco_boxes = self.database_load_disco_objects(info['token'])
+            # disco_boxes: (N_dyn, 10) - box-7, sweep_idx, inst_idx, cls_idx
+            
             input_dict['metadata']['disco_boxes'] = disco_boxes
 
         # data augmentation & other stuff

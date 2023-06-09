@@ -30,14 +30,12 @@ POINT_FEATURE_ENCODING: {
 
 # -----------------------
 # UDA STUFF
-
 NUM_SWEEPS_TO_BUILD_DATABASE: 10
-DATABASE_ROOT: ../data/nuscenes/discovered_database_15sweeps
-SAMPLE_GROUP: ['car:12', 'ped:12']
-ORACLE_POINTCLOUD: True
+USE_DATABASE_SAMPLING: True
+USE_DISCOVER_OBJECTS: True
 DISCOVERED_DYNAMIC_CLASSES: ['car', 'ped']
+SAMPLE_GROUP: ['car:12', 'ped:12']
 TRAJ_INFO_ROOT: ../workspace/artifact/rev1_10sweeps
-TRAJ_STATIC_DATABASE_ROOT: 
 
 # -----------------------
 

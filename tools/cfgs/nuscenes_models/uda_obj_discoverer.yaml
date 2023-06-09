@@ -6,7 +6,8 @@ DATA_CONFIG:
     MINI_TRAINVAL_STRIDE: 4
     PRED_VELOCITY: False
     
-    EVAL_DISCOVERER: True
+    DEBUG: True
+    EVAL_ON_TRAIN: True
     INFO_PATH: {
         'train': [nuscenes_infos_10sweeps_train.pkl],
         'test': [nuscenes_infos_10sweeps_train.pkl],

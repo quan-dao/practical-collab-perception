@@ -1,4 +1,6 @@
+import numpy as np
 import torch
+from typing import List, Dict
 from .detector3d_template import Detector3DTemplate
 
 
@@ -9,19 +11,17 @@ class ObjectDiscoverer(Detector3DTemplate):
 
     def forward(self, batch_dict):
         assert not self.training, "there is nothing to train"
-        gt_boxes = batch_dict['gt_boxes']  # (B, N_max, 8) - 7-box, class_idx
+        metadata: List[Dict[str, np.ndarray]] = batch_dict['metadata']
         
         final_box_dicts = list()
         for b_idx in range(batch_dict['batch_size']):
-            this_gt_boxes = gt_boxes[b_idx]
-            # remove padded gt_boxes (for batching purpose)
-            mask_real = this_gt_boxes[:, -1] > 0
-            this_gt_boxes = this_gt_boxes[mask_real]
-
+            disco_boxes = metadata['disco_boxes']  # (N, 10) box-7, sweep_idx, inst_idx, cls_idx
+            # NOTE: class_idx of boxes & points go from 0
+            
             this_pred_dict = {
-                'pred_boxes': this_gt_boxes[:, :7],
-                'pred_scores': this_gt_boxes.new_zeros(this_gt_boxes.shape[0]) + 1,
-                'pred_labels': this_gt_boxes[:, -1]
+                'pred_boxes': torch.from_numpy(disco_boxes[:, :7]).float().cuda(),
+                'pred_scores': torch.ones(disco_boxes.shape[0]).float().cuda(),
+                'pred_labels': torch.from_numpy(disco_boxes[:, -1] + 1).float().cuda()
             }
             final_box_dicts.append(this_pred_dict)
 
