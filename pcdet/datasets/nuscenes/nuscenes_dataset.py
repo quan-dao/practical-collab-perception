@@ -68,50 +68,13 @@ class NuScenesDataset(DatasetTemplate):
         self.infos.extend(nuscenes_infos)
         self.logger.info('Total samples for NuScenes dataset: %d' % (len(nuscenes_infos)))
 
-    def balanced_infos_resampling(self, infos):
-        """
-        Class-balanced sampling of nuScenes dataset from https://arxiv.org/abs/1908.09492
-        """
-        if self.class_names is None:
-            return infos
-
-        cls_infos = {name: [] for name in self.class_names}
-        for info in infos:
-            for name in set(info['gt_names']):
-                if name in self.class_names:
-                    cls_infos[name].append(info)
-
-        duplicated_samples = sum([len(v) for _, v in cls_infos.items()])
-        cls_dist = {k: len(v) / duplicated_samples for k, v in cls_infos.items()}
-
-        sampled_infos = []
-
-        frac = 1.0 / len(self.class_names)
-        ratios = [frac / v for v in cls_dist.values()]
-
-        for cur_cls_infos, ratio in zip(list(cls_infos.values()), ratios):
-            sampled_infos += np.random.choice(
-                cur_cls_infos, int(len(cur_cls_infos) * ratio)
-            ).tolist()
-        self.logger.info('Total samples after balanced resampling: %s' % (len(sampled_infos)))
-
-        cls_infos_new = {name: [] for name in self.class_names}
-        for info in sampled_infos:
-            for name in set(info['gt_names']):
-                if name in self.class_names:
-                    cls_infos_new[name].append(info)
-
-        cls_dist_new = {k: len(v) / len(sampled_infos) for k, v in cls_infos_new.items()}
-
-        return sampled_infos
-
     def __len__(self):
         if self._merge_all_iters_to_one_epoch:
             return len(self.infos) * self.total_epochs
 
         return len(self.infos)
 
-    def database_take_samples(self, is_dyn: bool, existing_boxes: np.ndarray):
+    def database_take_disco_samples(self, is_dyn: bool, existing_boxes: np.ndarray):
         sp_points, sp_boxes = list(), list()
         num_existing_instances = np.max(existing_boxes[:, -2]) + 1 if existing_boxes.shape[0] > 0 else 0
         for cls in self.traj_manager.classes_name:
@@ -132,13 +95,12 @@ class NuScenesDataset(DatasetTemplate):
 
         return sp_points, sp_boxes
 
-    def database_load_disco_objects(self, sample_token, threshold_cluster_prob: float = 0.) -> Tuple[np.ndarray]:
+    def database_load_disco_objects(self, sample_token) -> Tuple[np.ndarray]:
         """
         Load discovered objects from dyn & stat database
         
         Args:
             sample_token:
-            threshold_cluster_prob: # TODO
         
         Returns:
             disco_pts: (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
@@ -169,8 +131,6 @@ class NuScenesDataset(DatasetTemplate):
 
         # ============================================
         if self.training:
-            # TODO: load pseudo-label here
-
             # ---------------------------------------------------------------------------
             # load discovered objects
             # ---------------------------------------------------------------------------
@@ -212,7 +172,7 @@ class NuScenesDataset(DatasetTemplate):
             if self.dataset_cfg.get('USE_DATABASE_SAMPLING', True):
                 # dynamic, then static
                 for is_dynamic in (True, False):
-                    sp_points, sp_boxes = self.database_take_samples(is_dyn=is_dynamic, existing_boxes=disco_boxes)
+                    sp_points, sp_boxes = self.database_take_disco_samples(is_dyn=is_dynamic, existing_boxes=disco_boxes)
                     
                     all_sampled_points.append(sp_points)
                     disco_boxes = np.concatenate([disco_boxes, sp_boxes])

@@ -64,7 +64,7 @@ def gen_pseudo_labels(round_idx: int,
             kept_pred = pred_labels == keep_class
             pred_boxes, pred_scores, pred_labels = pred_boxes[kept_pred], pred_scores[kept_pred], pred_labels[kept_pred]
 
-            # TODO: points-to-boxes correspondant here
+            # points-to-boxes correspondant here
             box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_gpu(
                 points[:, 1: 4].unsqueeze(0), pred_boxes[:, :7].unsqueeze(0),
             ).long().squeeze(0)  # (N_pts,) to index into (N_b)
