@@ -13,10 +13,15 @@ def main(test_dataset: bool,
          test_dataloader: bool = False, 
          batch_size: int = 2, 
          save_batch_dict: bool = False,
-         load_batch_dict_from_path: str = ''):
+         load_batch_dict_from_path: str = '',
+         use_nuscenes_dataset_4self_training: bool = False):
     class_names = ['car', 'ped']
+    if not use_nuscenes_dataset_4self_training:
+        cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml'
+    else:
+        cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset_4self_training.yaml'
     dataset, dataloader = build_dataset_for_testing(
-        '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml', class_names, 
+        cfg_file, class_names, 
         training=True,
         batch_size=batch_size,
         version='v1.0-mini',
@@ -55,7 +60,8 @@ def main(test_dataset: bool,
 
         print_dict(batch_dict, 'batch_dict')
         if save_batch_dict:
-            with open('artifact/nuscenes_disco_batch_dict.pkl', 'wb') as f:
+            filename = 'artifact/nuscenes_disco_batch_dict.pkl' if not use_nuscenes_dataset_4self_training else 'artifact/nuscenes_self_training_batch_dict.pkl'
+            with open(filename, 'wb') as f:
                 pickle.dump(batch_dict, f)
 
         points = batch_dict['points']
@@ -85,6 +91,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--save_batch_dict', type=int, default=0)
     parser.add_argument('--load_batch_dict_from_path', type=str, default='')
+    parser.add_argument('--use_nuscenes_dataset_4self_training', type=int, default=0)
     args = parser.parse_args()
 
     main(test_dataset=args.test_dataset == 1,
@@ -92,5 +99,6 @@ if __name__ == '__main__':
          test_dataloader=args.test_dataloader == 1,
          batch_size=args.batch_size,
          save_batch_dict=args.save_batch_dict == 1,
-         load_batch_dict_from_path=args.load_batch_dict_from_path)
+         load_batch_dict_from_path=args.load_batch_dict_from_path,
+         use_nuscenes_dataset_4self_training=args.use_nuscenes_dataset_4self_training)
 
