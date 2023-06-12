@@ -192,23 +192,34 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
 
             # fuse pseudo-labels & discovered objects
             # NOTE: right here, inst_idx lost its meaning -> to re-estalish later by findind points-to-box corr
-            fused_pseudo_disco_boxes = list()
             box_feat_for_fusion = list(range(7)) + [-2, -1]  # box-7, class, score
-            for cls_idx in range(len(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)):
-                cls_pseudo = pseudo_boxes[pseudo_boxes[:, -1].astype(int) == cls_idx, box_feat_for_fusion]
-                cls_disco = disco_boxes[disco_boxes[:, -1].astype(int) == cls_idx, box_feat_for_fusion]
-                cls_fused, _ = label_fusion(np.concatenate([cls_pseudo, cls_disco]), 'kde_fusion', discard=4, radius=2.0)  # (N_cls_fused, 7 + 2) - box-7, class, score
-                fused_pseudo_disco_boxes.append(cls_fused)
-            
-            fused_pseudo_disco_boxes = np.concatenate(fused_pseudo_disco_boxes)  # (N_fused, 7 + 2) - box-7, class, score
+            if pseudo_boxes.shape[0] > 0 and disco_boxes.shape[0] > 0:
+                fused_pseudo_disco_boxes = list()
+                for cls_idx in range(len(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)):
+                    cls_pseudo = pseudo_boxes[pseudo_boxes[:, -1].astype(int) == cls_idx, box_feat_for_fusion]
+                    cls_disco = disco_boxes[disco_boxes[:, -1].astype(int) == cls_idx, box_feat_for_fusion]
+                    cls_fused, _ = label_fusion(np.concatenate([cls_pseudo, cls_disco]), 'kde_fusion', discard=4, radius=2.0)  # (N_cls_fused, 7 + 2) - box-7, class, score
+                    fused_pseudo_disco_boxes.append(cls_fused)
+                
+                fused_pseudo_disco_boxes = np.concatenate(fused_pseudo_disco_boxes)  # (N_fused, 7 + 2) - box-7, class, score
+            elif pseudo_boxes.shape[0] > 0:
+                fused_pseudo_disco_boxes = pseudo_boxes[box_feat_for_fusion]
+            elif disco_boxes.shape[0] > 0:
+                fused_pseudo_disco_boxes = disco_boxes[box_feat_for_fusion]
+            else:
+                # there are neither pseudo-labels nor disco-lables
+                fused_pseudo_disco_boxes = np.zeros((0, 7 + 2))  # dummy box
             
             # pad fused_boxes with sweep_idx and instance_idx
-            fused_pseudo_disco_boxes = np.concatenate([
-                fused_pseudo_disco_boxes[:, 7],  # box-7
-                np.zeros((fused_pseudo_disco_boxes.shape[0], 1)) + points_max_sweep_index,  # sweep_idx
-                np.arange(fused_pseudo_disco_boxes.shape[0]).reshape(-1, 1),  # instance_idx
-                fused_pseudo_disco_boxes[:, -2],  # class
-            ])  # (N_fused, 7 + 3) - box-7, sweep_idx, instance_idx, class_idx
+            if fused_pseudo_disco_boxes.shape[0] > 0:
+                fused_pseudo_disco_boxes = np.concatenate([
+                    fused_pseudo_disco_boxes[:, 7],  # box-7
+                    np.zeros((fused_pseudo_disco_boxes.shape[0], 1)) + points_max_sweep_index,  # sweep_idx
+                    np.arange(fused_pseudo_disco_boxes.shape[0]).reshape(-1, 1),  # instance_idx
+                    fused_pseudo_disco_boxes[:, -2],  # class
+                ])  # (N_fused, 7 + 3) - box-7, sweep_idx, instance_idx, class_idx
+            else:
+                fused_pseudo_disco_boxes = np.zeros((0, 10))
 
             # --------------------------------
             # sample pseudo-labels
@@ -223,7 +234,7 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             # --------------------------------
             # sample discovered dynamic trajectories
             # --------------------------------
-            num_existing_instances = boxes[:, -2].max() + 1
+            num_existing_instances = boxes[:, -2].max() + 1 if boxes.shape[0] > 0 else 0
             sampled_disco_pts, sampled_disco_boxes = list(), list()
             for cls_name in self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES:
                 _pts, _boxes = self.traj_manager.sample_disco_database(cls_name, is_dyn=True, 
@@ -237,8 +248,9 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             sampled_disco_boxes = np.concatenate(sampled_disco_boxes)  # (N_boxes, 10) - box-7, sweep_idx, instance_idx, class_idx
 
             # filter
-            sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(
-                sampled_disco_pts, sampled_disco_boxes, boxes)
+            if boxes.shape[0] > 0:
+                sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(
+                    sampled_disco_pts, sampled_disco_boxes, boxes)
             sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_themselves(
                 sampled_disco_pts, sampled_disco_boxes
             )
