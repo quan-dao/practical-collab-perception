@@ -60,20 +60,33 @@ def main(num_sweeps: int = 15,
 
     # trajectories' embedding
     trajs_embedding = trajs_descriptor
+    full_embed_scaler = StandardScaler()
     clusterer = hdbscan.HDBSCAN(algorithm='best',
                                 # leaf_size=100,
                                 metric='euclidean', min_cluster_size=50, min_samples=None)
-    clusterer.fit(StandardScaler().fit_transform(trajs_embedding))
+    
+    scaled_trajs_embedding = full_embed_scaler.fit_transform(trajs_embedding)
+    clusterer.fit(scaled_trajs_embedding)
+    
     trajs_label = clusterer.labels_
     unq_labels, counts = np.unique(trajs_label, return_counts=True)
     print('unq_lalbes:\n', unq_labels)
     print('counts:\n', counts)
+    # save state of full_embed_scaler & clusterer to disk
+    _path = Path(f"artifact/rev1_{num_sweeps}sweeps/rev1p1_scaler_clusterer_trajs_embedding_full_{num_sweeps}sweeps_withprob.pkl")
+    if not _path.exists():
+        with open(_path, 'wb') as f:
+            _dict_full_embedding_proccessor = {'full_scaler': full_embed_scaler, 
+                                               'full_clusterer': clusterer}
+            pickle.dump(_dict_full_embedding_proccessor, f)
 
     trajs_embedding_static = trajs_static_descriptor
     static_scaler = StandardScaler()
     static_scaler.fit(trajs_embedding_static)
-    with open(f'artifact/rev1_{num_sweeps}sweeps/rev1p1_scaler_trajs_embedding_static_{num_sweeps}sweeps.pkl', 'wb') as f:
-        pickle.dump(static_scaler, f)
+    _path = Path(f'artifact/rev1_{num_sweeps}sweeps/rev1p1_scaler_trajs_embedding_static_{num_sweeps}sweeps_withprob.pkl')
+    if not _path.exists():
+        with open(_path, 'wb') as f:
+            pickle.dump(static_scaler, f)
 
     clusters_color = matplotlib.cm.rainbow(np.linspace(0.1, 1, unq_labels.shape[0]))[:, :3]
     trajs_color = clusters_color[trajs_label]
@@ -87,7 +100,7 @@ def main(num_sweeps: int = 15,
     print('========================')
     indices_trajs_path = np.arange(trajs_path.shape[0])
     trajs_prob = clusterer.probabilities_
-    clusters_samples_root = Path(f'./artifact/rev1_{num_sweeps}sweeps/clusters_samples')
+    clusters_samples_root = Path(f'./artifact/rev1_{num_sweeps}sweeps/clusters_samples_withprob')
     if not clusters_samples_root.exists():
         clusters_samples_root.mkdir(parents=True, exist_ok=True)
 
@@ -133,14 +146,16 @@ def main(num_sweeps: int = 15,
             tf[:2, -1] = 10. * np.array([np.cos(boxes_in_lidar[-1, 6]), np.sin(boxes_in_lidar[-1, 6])])
             apply_se3_(tf, points_=corrected_points_in_lidar, boxes_=last_box_in_lidar)
 
-            with open(clusters_samples_root / Path(f"cluster{label}_traj{_i}.pkl"), 'wb') as f:
-                _info = {
-                    'points_in_lidar': points_in_lidar[:, :3],
-                    'corrected_points_in_lidar': corrected_points_in_lidar[:, :3],
-                    'boxes_in_lidar': boxes_in_lidar[:, :7],
-                    'last_box_in_lidar': last_box_in_lidar[:, :7]
-                }
-                pickle.dump(_info, f)
+            _path = clusters_samples_root / Path(f"cluster{label}_traj{_i}.pkl")
+            if not _path.exists():
+                with open(_path, 'wb') as f:
+                    _info = {
+                        'points_in_lidar': points_in_lidar[:, :3],
+                        'corrected_points_in_lidar': corrected_points_in_lidar[:, :3],
+                        'boxes_in_lidar': boxes_in_lidar[:, :7],
+                        'last_box_in_lidar': last_box_in_lidar[:, :7]
+                    }
+                    pickle.dump(_info, f)
 
             painter = PointsPainter(
                 np.concatenate([points_in_lidar[:, :3], corrected_points_in_lidar[:, :3]]),
@@ -154,10 +169,13 @@ def main(num_sweeps: int = 15,
         
         cluster_info = {
             'members_path': members_path,
-            'cluster_top_members_static_embed': cluster_top_members_embedding_static
+            'cluster_top_members_static_embed': cluster_top_members_embedding_static,
+            'members_prob': [trajs_prob[_i] for _i in indices_cluster_trajs_path]
         }
-        with open(f'artifact/rev1_{num_sweeps}sweeps/rev1p1_cluster_info_{label}_{num_sweeps}sweeps.pkl', 'wb') as f:
-            pickle.dump(cluster_info, f)
+        _path = Path(f'artifact/rev1_{num_sweeps}sweeps/rev1p1_cluster_info_{label}_{num_sweeps}sweeps_withprob.pkl')
+        if not _path.exists():
+            with open(_path, 'wb') as f:
+                pickle.dump(cluster_info, f)
 
 
 
