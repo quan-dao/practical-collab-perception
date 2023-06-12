@@ -20,7 +20,7 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
         assert self.dataset_cfg.NUM_SWEEPS_TO_BUILD_DATABASE == self.dataset_cfg.MAX_SWEEPS
         idx_teacher_round = self.dataset_cfg.PSEUDO_LABELS_BY_ROUND_IDX
 
-        self.pseudo_labels_root = self.dataset.root_path / Path(f"database_round{idx_teacher_round}_pseudo_labels")
+        self.pseudo_labels_root = self.root_path / Path(f"database_round{idx_teacher_round}_pseudo_labels")
         
         self.dict_sampleToken_2_labelsPath, self.dict_class_2_labelsPath = self.parse_pseudo_labels_root()
         dict_cls_2_score_thresh = self.filter_database_pseudo_labels_by_score_(self.dataset_cfg.PSEUDO_DATABASE_CUTOFF_PERCENTAGE)
@@ -127,7 +127,7 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
 
         existing_max_inst_idx = existing_boxes[:, -2].max() + 1 if existing_boxes.shape[0] > 0 else 0
 
-        for cls_name, list_path_psdlabels in self.dict_class_2_psdlabels.items():
+        for cls_name, list_path_psdlabels in self.dict_class_2_labelsPath.items():
             sampled_paths = _sample_with_fixed_number(self.psdlabels_sampling_info[cls_name], 
                                                       list_path_psdlabels)
             points, boxes = list(), list()
@@ -135,14 +135,16 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
                 with open(_path, 'rb') as f:
                     info = pickle.load(f)
                 
-                pts = info['points']  # (N, 5 + 2) pt-5, sweep_idx, inst_idx  
-                box = info['box']  # (7 + 3) box-7, sweep_idx, inst_idx, cls_idx
+                pts = info['points_in_lidar']  # (N, 5 + 2) pt-5, sweep_idx, inst_idx  
+                box = info['box_in_lidar']  # (7 + 3) box-7, sweep_idx, inst_idx, cls_idx
                 
                 # overwrite instance_idx of pts & box
                 pts[:, -1] = existing_max_inst_idx + _idx
-                box[-2] = existing_max_inst_idx + _idx
+                
+                box[-4] = pts[:, -2].max()  # sweep idx
+                box[-3] = existing_max_inst_idx + _idx
                 # make sure box's cls_idx is coherent
-                assert box[-1] == 0 if cls_name == 'car' else 1, f"class_idx := {box[-1]} is invalid"
+                assert box[-2] == 0 if cls_name == 'car' else 1, f"class_idx := {box[-2]} is invalid"
 
                 # store
                 points.append(pts)
@@ -174,14 +176,17 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             # --------------------------------
             # load pseudo-labels
             # --------------------------------
-            pseudo_boxes = list()
-            for path_ in self.dict_sampleToken_2_labelsPath[info['token']]:
-                with open(path_, 'rb') as f:
-                    pseudo_label_info = pickle.load(f)
+            if info['token'] in self.dict_sampleToken_2_labelsPath:
+                pseudo_boxes = list()
+                for path_ in self.dict_sampleToken_2_labelsPath[info['token']]:
+                    with open(path_, 'rb') as f:
+                        pseudo_label_info = pickle.load(f)
+                    
+                    pseudo_boxes.append(pseudo_label_info['box_in_lidar'])  # (7 + 3 + 1) - box-7, sweep_idx, inst_idx, class_idx, score
                 
-                pseudo_boxes.append(pseudo_label_info['box_in_lidar'])  # (7 + 3 + 1) - box-7, sweep_idx, inst_idx, class_idx, score
-            
-            pseudo_boxes = np.stack(pseudo_boxes, axis=0)  # (N_pbox, 7 + 3 + 1) - box-7, sweep_idx, inst_idx, class_idx, score
+                pseudo_boxes = np.stack(pseudo_boxes, axis=0)  # (N_pbox, 7 + 3 + 1) - box-7, sweep_idx, inst_idx, class_idx, score
+            else:
+                pseudo_boxes = np.zeros((0, 11))
 
             # --------------------------------
             # load discovered objects
@@ -196,9 +201,10 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             if pseudo_boxes.shape[0] > 0 and disco_boxes.shape[0] > 0:
                 fused_pseudo_disco_boxes = list()
                 for cls_idx in range(len(self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES)):
-                    cls_pseudo = pseudo_boxes[pseudo_boxes[:, -1].astype(int) == cls_idx, box_feat_for_fusion]
-                    cls_disco = disco_boxes[disco_boxes[:, -1].astype(int) == cls_idx, box_feat_for_fusion]
-                    cls_fused, _ = label_fusion(np.concatenate([cls_pseudo, cls_disco]), 'kde_fusion', discard=4, radius=2.0)  # (N_cls_fused, 7 + 2) - box-7, class, score
+                    cls_pseudo = pseudo_boxes[pseudo_boxes[:, -1].astype(int) == cls_idx]
+                    cls_disco = disco_boxes[disco_boxes[:, -1].astype(int) == cls_idx]
+                    cls_fused, _ = label_fusion(np.concatenate([cls_pseudo, cls_disco])[:, box_feat_for_fusion], 
+                                                'kde_fusion', discard=4, radius=2.0)  # (N_cls_fused, 7 + 2) - box-7, class, score
                     fused_pseudo_disco_boxes.append(cls_fused)
                 
                 fused_pseudo_disco_boxes = np.concatenate(fused_pseudo_disco_boxes)  # (N_fused, 7 + 2) - box-7, class, score
@@ -213,7 +219,7 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             # pad fused_boxes with sweep_idx and instance_idx
             if fused_pseudo_disco_boxes.shape[0] > 0:
                 fused_pseudo_disco_boxes = np.concatenate([
-                    fused_pseudo_disco_boxes[:, 7],  # box-7
+                    fused_pseudo_disco_boxes[:, :7],  # box-7
                     np.zeros((fused_pseudo_disco_boxes.shape[0], 1)) + points_max_sweep_index,  # sweep_idx
                     np.arange(fused_pseudo_disco_boxes.shape[0]).reshape(-1, 1),  # instance_idx
                     fused_pseudo_disco_boxes[:, -2],  # class
@@ -225,11 +231,12 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             # sample pseudo-labels
             # --------------------------------
             sampled_pseudo_pts, sampled_pseudo_boxes = self.database_take_pseudo_samples(fused_pseudo_disco_boxes)
-            # (N_box, 10) - 7-box, sweep_idx (:= 10), instance_idx, class_idx
+            # sampled_pseudo_pts: (N_pts, 1 + 5 + 2) - batch_idx, point-5, sweep_idx, inst_idx
+            # sampled_pseudo_boxes: (N_box, 7 + 3 + 1) - 7-box, sweep_idx (:= 10), instance_idx, class_idx, score
 
             # merge
-            points = np.concatenate([points, sampled_pseudo_pts])
-            boxes = np.concatenate([fused_pseudo_disco_boxes, sampled_pseudo_boxes])  # (N_box, 10) - 7-box, sweep_idx, instance_idx, class_idx
+            points = np.concatenate([points, sampled_pseudo_pts[:, 1:]])
+            boxes = np.concatenate([fused_pseudo_disco_boxes, sampled_pseudo_boxes[:, :10]])  # (N_box, 10) - 7-box, sweep_idx, instance_idx, class_idx
 
             # --------------------------------
             # sample discovered dynamic trajectories

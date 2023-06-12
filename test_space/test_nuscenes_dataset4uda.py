@@ -100,5 +100,5 @@ if __name__ == '__main__':
          batch_size=args.batch_size,
          save_batch_dict=args.save_batch_dict == 1,
          load_batch_dict_from_path=args.load_batch_dict_from_path,
-         use_nuscenes_dataset_4self_training=args.use_nuscenes_dataset_4self_training)
+         use_nuscenes_dataset_4self_training=args.use_nuscenes_dataset_4self_training == 1)
 
