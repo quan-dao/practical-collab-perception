@@ -63,6 +63,8 @@ def gen_pseudo_labels(round_idx: int,
 
             kept_pred = pred_labels == keep_class
             pred_boxes, pred_scores, pred_labels = pred_boxes[kept_pred], pred_scores[kept_pred], pred_labels[kept_pred]
+            if pred_boxes.shape[0] == 0:
+                continue
 
             # points-to-boxes correspondant here
             box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_gpu(
@@ -90,7 +92,10 @@ def gen_pseudo_labels(round_idx: int,
                 
                 mask_points_in_box = box_idx_of_points == box_idx
                 points_of_box = points[mask_points_in_box].cpu().numpy()
-                
+                if points_of_box.shape[0] < 5:
+                    # pseudo labels have too few point
+                    continue
+
                 # overwirte box's sweep_idx with the max sweep_idx of its points
                 box[-4] = points_of_box[:, -2].max()
 
