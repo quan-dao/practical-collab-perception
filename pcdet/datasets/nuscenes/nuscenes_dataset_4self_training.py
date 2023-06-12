@@ -235,52 +235,51 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             # merge
             points = np.concatenate([points, sampled_pseudo_pts[:, 1:]])
             boxes = np.concatenate([final_pseudo_boxes, sampled_pseudo_boxes[:, :10]])  # (N_box, 10) - 7-box, sweep_idx, instance_idx, class_idx
-            # boxes = final_pseudo_boxes
 
             # --------------------------------
             # sample discovered dynamic trajectories
             # --------------------------------
-            # num_existing_instances = boxes[:, -2].max() + 1 if boxes.shape[0] > 0 else 0
-            # sampled_disco_pts, sampled_disco_boxes = list(), list()
-            # for cls_name in self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES:
-            #     _pts, _boxes = self.traj_manager.sample_disco_database(cls_name, is_dyn=True, 
-            #                                                            num_existing_instances=num_existing_instances)
-            #     # _boxes: (N_boxes, 10) - box-7, sweep_idx, instance_idx, class_idx
-            #     sampled_disco_pts.append(_pts)
-            #     sampled_disco_boxes.append(_boxes)
-            #     num_existing_instances = _boxes[:, -2].max() + 1
+            num_existing_instances = boxes[:, -2].max() + 1 if boxes.shape[0] > 0 else 0
+            sampled_disco_pts, sampled_disco_boxes = list(), list()
+            for cls_name in self.dataset_cfg.DISCOVERED_DYNAMIC_CLASSES:
+                _pts, _boxes = self.traj_manager.sample_disco_database(cls_name, is_dyn=True, 
+                                                                       num_existing_instances=num_existing_instances)
+                # _boxes: (N_boxes, 10) - box-7, sweep_idx, instance_idx, class_idx
+                sampled_disco_pts.append(_pts)
+                sampled_disco_boxes.append(_boxes)
+                num_existing_instances = _boxes[:, -2].max() + 1
             
-            # sampled_disco_pts = np.concatenate(sampled_disco_pts)  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
-            # sampled_disco_boxes = np.concatenate(sampled_disco_boxes)  # (N_boxes, 10) - box-7, sweep_idx, instance_idx, class_idx
+            sampled_disco_pts = np.concatenate(sampled_disco_pts)  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+            sampled_disco_boxes = np.concatenate(sampled_disco_boxes)  # (N_boxes, 10) - box-7, sweep_idx, instance_idx, class_idx
 
-            # # filter
-            # if boxes.shape[0] > 0:
-            #     sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(
-            #         sampled_disco_pts, sampled_disco_boxes, boxes)
-            # sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_themselves(
-            #     sampled_disco_pts, sampled_disco_boxes
-            # )
-            # # take last disco_box of each sampled disco traj
-            # unique_insta_idx, inv_unique_insta_idx = torch.unique(
-            #     torch.from_numpy(sampled_disco_boxes[:, -2]).long(), return_inverse=True)
-            # per_inst_max_sweepidx, per_inst_idx_of_max_sweepidx = torch_scatter.scatter_max(
-            #     torch.from_numpy(sampled_disco_boxes[:, -3]).long(), 
-            #     inv_unique_insta_idx, 
-            #     dim=0)
-            # sampled_disco_boxes = sampled_disco_boxes[per_inst_idx_of_max_sweepidx.numpy()]  # (N_sampled_boxes, 10)
-            # if self.verbose:
-            #     print(f"sample {info['token'][-5:]} | sampled_disco_boxes: {sampled_disco_boxes.shape}")
+            # filter
+            if boxes.shape[0] > 0:
+                sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_existing(
+                    sampled_disco_pts, sampled_disco_boxes, boxes)
+            sampled_disco_pts, sampled_disco_boxes = self.traj_manager.filter_sampled_boxes_by_iou_with_themselves(
+                sampled_disco_pts, sampled_disco_boxes
+            )
+            # take last disco_box of each sampled disco traj
+            unique_insta_idx, inv_unique_insta_idx = torch.unique(
+                torch.from_numpy(sampled_disco_boxes[:, -2]).long(), return_inverse=True)
+            per_inst_max_sweepidx, per_inst_idx_of_max_sweepidx = torch_scatter.scatter_max(
+                torch.from_numpy(sampled_disco_boxes[:, -3]).long(), 
+                inv_unique_insta_idx, 
+                dim=0)
+            sampled_disco_boxes = sampled_disco_boxes[per_inst_idx_of_max_sweepidx.numpy()]  # (N_sampled_boxes, 10)
+            if self.verbose:
+                print(f"sample {info['token'][-5:]} | sampled_disco_boxes: {sampled_disco_boxes.shape}")
             
             # ---
             # assemble 
-            # points = np.concatenate([points, sampled_disco_pts])
-            # gt_boxes = np.concatenate([boxes, sampled_disco_boxes])[:, :7]
-            # gt_names = self._uda_class_names[np.concatenate([boxes[:, -1], sampled_disco_boxes[:, -1]]).astype(int)]
-            # gt_inst_idx = np.concatenate([boxes[:, -2], sampled_disco_boxes[:, -2]])
+            points = np.concatenate([points, sampled_disco_pts])
+            gt_boxes = np.concatenate([boxes, sampled_disco_boxes])[:, :7]
+            gt_names = self._uda_class_names[np.concatenate([boxes[:, -1], sampled_disco_boxes[:, -1]]).astype(int)]
+            gt_inst_idx = np.concatenate([boxes[:, -2], sampled_disco_boxes[:, -2]])
 
-            gt_boxes = boxes[:, :7]
-            gt_names = self._uda_class_names[boxes[:, -1].astype(int)]
-            gt_inst_idx = boxes[:, -2].astype(int)
+            # gt_boxes = boxes[:, :7]
+            # gt_names = self._uda_class_names[boxes[:, -1].astype(int)]
+            # gt_inst_idx = boxes[:, -2].astype(int)
 
         else:
             # not training
