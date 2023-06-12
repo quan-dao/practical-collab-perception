@@ -155,13 +155,14 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             existing_max_inst_idx += len(sampled_paths)
 
         points = np.concatenate(points)  # (N_pts, 5 + 2) - pt-5, sweep_idx, inst_idx
-        boxes = np.stack(boxes, axis=0)  # (N_box, 7 + 3) - box-7, sweep_idx, inst_idx, cls_idx
+        boxes = np.stack(boxes, axis=0)  # (N_box, 7 + 3) - box-7, sweep_idx, inst_idx, cls_idx, score
 
         # filtering
         if existing_boxes.shape[0] > 0:
-            points, boxes = TrajectoriesManager.filter_sampled_boxes_by_iou_with_existing(points, boxes, 
-                                                                                          existing_boxes)
-        points, boxes = TrajectoriesManager.filter_sampled_boxes_by_iou_with_themselves(points, boxes)
+            points, boxes = TrajectoriesManager.filter_sampled_boxes_by_iou_with_existing(
+                points, boxes, existing_boxes, location_inst_idx_in_sampled_boxes=-3)
+        points, boxes = TrajectoriesManager.filter_sampled_boxes_by_iou_with_themselves(
+            points, boxes, location_inst_idx_in_sampled_boxes=-3)
         return points, boxes
 
     def __getitem__(self, index):
@@ -276,6 +277,10 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
             gt_names = self._uda_class_names[np.concatenate([boxes[:, -1], sampled_disco_boxes[:, -1]]).astype(int)]
             gt_inst_idx = np.concatenate([boxes[:, -2], sampled_disco_boxes[:, -2]])
 
+            # gt_boxes = boxes[:, :7]
+            # gt_names = self._uda_class_names[boxes[:, -1].astype(int)]
+            # gt_inst_idx = boxes[:, -2].astype(int)
+
         else:
             # not training
             gt_boxes = info['gt_boxes']
@@ -291,7 +296,7 @@ class NuScenesDataset4SelfTraining(NuScenesDataset):
         }
         if self.verbose:
             input_dict['metadata']['pseudo_boxes'] = pseudo_boxes
-            input_dict['metadata']['sampled_pseudo_boxes'] = sampled_pseudo_boxes
+            # input_dict['metadata']['sampled_pseudo_boxes'] = sampled_pseudo_boxes
             input_dict['metadata']['gt_inst_idx'] = gt_inst_idx
         
         # data augmentation & other stuff

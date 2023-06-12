@@ -647,7 +647,7 @@ class TrajectoriesManager(object):
         return points, boxes
     
     @staticmethod
-    def filter_sampled_boxes_by_iou_with_existing(sampled_points:np.ndarray, sampled_boxes: np.ndarray, exist_boxes: np.ndarray):
+    def filter_sampled_boxes_by_iou_with_existing(sampled_points:np.ndarray, sampled_boxes: np.ndarray, exist_boxes: np.ndarray, location_inst_idx_in_sampled_boxes: int = -2):
         """
         Args:
             sampled_points: (N_sp_pts, 5 + 2) - point-5, sweep_idx, instance_idx
@@ -659,7 +659,7 @@ class TrajectoriesManager(object):
         """
         iou = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, :7], exist_boxes[:, :7])  # (N_sp_bx, N_e_b)
         mask_invalid = np.logical_not(iou.max(axis=1) < 1e-3)  # (N_sp_bx,)
-        invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
+        invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, location_inst_idx_in_sampled_boxes].astype(int))  # (N_invalid,)
 
         # remove sp_points based on instance_idx
         mask_invalid_sp_pts = sampled_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
@@ -672,7 +672,8 @@ class TrajectoriesManager(object):
         return sampled_points[np.logical_not(mask_invalid_sp_pts)], sampled_boxes[np.logical_not(mask_invalid_sp_box)]
     
     @staticmethod
-    def filter_sampled_boxes_by_iou_with_themselves(sampled_points:np.ndarray, sampled_boxes: np.ndarray):
+    def filter_sampled_boxes_by_iou_with_themselves(sampled_points:np.ndarray, sampled_boxes: np.ndarray,
+                                                    location_inst_idx_in_sampled_boxes: int = -2):
         """
         Non-Max Suppression w/o ranking boxes
         Args:
@@ -706,7 +707,7 @@ class TrajectoriesManager(object):
         mask_invalid = np.zeros(sampled_boxes.shape[0], dtype=bool)
         mask_invalid[suppressed_indices] = True
         
-        invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, -2].astype(int))  # (N_invalid,)
+        invalid_instance_idx = np.unique(sampled_boxes[mask_invalid, location_inst_idx_in_sampled_boxes].astype(int))  # (N_invalid,)
 
         # remove sp_points based on instance_idx
         mask_invalid_sp_pts = sampled_points[:, -1].astype(int).reshape(-1, 1) == invalid_instance_idx.reshape(1, -1)  # (N_sp_pt, N_invalid)
