@@ -20,15 +20,15 @@ def main(test_dataset: bool,
         cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset.yaml'
     else:
         cfg_file = '../tools/cfgs/dataset_configs/nuscenes_dataset_4self_training.yaml'
-    dataset, dataloader = build_dataset_for_testing(
-        cfg_file, class_names, 
-        training=True,
-        batch_size=batch_size,
-        version='v1.0-mini',
-        debug_dataset=True
-    )
-
+    
     if test_dataset:
+        dataset, dataloader = build_dataset_for_testing(
+            cfg_file, class_names, 
+            training=True,
+            batch_size=batch_size,
+            version='v1.0-mini',
+            debug_dataset=True
+        )
         batch_dict = dataset[dataset_sample_idx]
         
         print_dict(batch_dict, 'batch_dict')
@@ -51,6 +51,13 @@ def main(test_dataset: bool,
 
     if test_dataloader:
         if load_batch_dict_from_path == '':
+            dataset, dataloader = build_dataset_for_testing(
+                cfg_file, class_names, 
+                training=True,
+                batch_size=batch_size,
+                version='v1.0-mini',
+                debug_dataset=True
+            )
             iter_dataloader = iter(dataloader)
             for _ in range(3):
                 batch_dict = next(iter_dataloader)

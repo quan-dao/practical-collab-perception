@@ -92,10 +92,10 @@ def gen_pseudo_labels(round_idx: int,
                 points_of_box = points[mask_points_in_box].cpu().numpy()
                 
                 # overwirte box's sweep_idx with the max sweep_idx of its points
-                box[-3] = points_of_box[:, -2].max()
+                box[-4] = points_of_box[:, -2].max()
 
                 info = {
-                    'points_in_lidar': points_of_box,
+                    'points_in_lidar': points_of_box,  # (N_pts, 1 + 5 + 2) - batch_idx, point-5, sweep_idx, inst_idx
                     'box_in_lidar': box,  # (7 + 3 + 1,) - 7-box, sweep_idx, inst_idx, class_idx, score
                 }
 

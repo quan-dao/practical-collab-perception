@@ -41,6 +41,7 @@ TRAJ_INFO_ROOT: ../workspace/artifact/rev1_10sweeps
 PSEUDO_LABELS_BY_ROUND_IDX: 0
 PSEUDO_LABELS_NUM_TO_SAMPLE: 12  # same for all classes
 PSEUDO_DATABASE_CUTOFF_PERCENTAGE: 0.2
+VERBOSE: True
 
 # -----------------------
 
