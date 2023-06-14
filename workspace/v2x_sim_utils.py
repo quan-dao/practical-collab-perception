@@ -119,7 +119,7 @@ def get_points_and_boxes_of_1lidar(nusc: NuScenes,
                                    threshold_boxes_by_points: int = None) -> Dict[str, np.ndarray]:
     """
     Returns:
-        points_in_lidar: (N_pts, 4 + 1) - point-4 (x, y, z, intensity)
+        points_in_lidar: (N_pts, 4) - point-4 (x, y, z, intensity)
         box_idx_of_points: (N_pts,)
         boxes_in_lidar: (N_box, 7)
         boxes_name: (N_box,) - str
@@ -142,7 +142,7 @@ def get_points_and_boxes_of_1lidar(nusc: NuScenes,
         box_idx_of_points = pad_kept_boxes_ids[box_idx_of_points]
 
     output = {
-        'points_in_lidar': points_in_lidar,  # (N_pts, 4 + 1) - point-4 (x, y, z, intensity)
+        'points_in_lidar': points_in_lidar,  # (N_pts, 4) - point-4 (x, y, z, intensity)
         'box_idx_of_points': box_idx_of_points,  # (N_pts,)
         'boxes_in_lidar': boxes_in_lidar,  # (N_box, 7)
         'boxes_name': boxes_name,  # (N_box,) 
@@ -160,7 +160,7 @@ def get_historical_boxes_1instance(nusc: NuScenes,
                                    num_historical_boxes: int = 10) -> np.ndarray:
     """
     Returns:
-        interp_boxes: (num_historical_boxes + 1, 7 + 2) - box-7, sweep_idx, inst_idx
+        interp_boxes: (num_historical_boxes + 1, 7 + 2) - box-7, sweep_idx, inst_idx | in LiDAR
             num_historical_boxes + 1 +1 because this includes current_box too
     """
     def _qua2yaw(q: Quaternion) -> float:
@@ -205,3 +205,125 @@ def get_historical_boxes_1instance(nusc: NuScenes,
                                   axis=1)
 
     return interp_boxes
+
+
+def get_pseudo_sweeps_of_1lidar(nusc: NuScenes, 
+                                sample_data_token: str, 
+                                num_historical_sweeps: int = 10,
+                                classes_of_interest: Set[str] = set(['car', 'pedestrian']),
+                                points_in_boxes_by_gpu: bool = False,
+                                return_nonempty_boxes: bool = True,
+                                threshold_boxes_by_points: int = None) -> Dict[str, np.ndarray]:
+    """
+    Get "merged" point cloud of a LiDAR
+
+    Returns:
+        points: (N_pts, 5 + 2) - point-5 (x, y, z, intensity, time-lag), [sweep_idx, inst_idx] | in LiDAR
+        gt_boxes: (N_box, 7), current & historical boxes | in LiDAR
+        gt_name: (N_box,) - str | in LiDAR
+        instance_tf: ()
+    """
+    # NOTE: num_sweeps = num_historical_sweeps + 1  (+ 1 is for the current sweep)
+    sweep_indices = np.arange(num_historical_sweeps + 1)  # [0, 1, ..., 10]
+    timelag_of_sweep_indices = 1.0 - np.linspace(0., 1., sweep_indices.shape[0])  # the more recent, the least time-lag
+
+    lidar_info = get_points_and_boxes_of_1lidar(nusc, sample_data_token, 
+                                                classes_of_interest, 
+                                                points_in_boxes_by_gpu, 
+                                                return_nonempty_boxes, threshold_boxes_by_points)
+    
+    points = lidar_info['points_in_lidar']  # (N_pts, 4) - x, y, z, intensity
+    box_idx_of_points = lidar_info['box_idx_of_points']  # (N_pts,)
+
+    # process background
+    backgr = points[box_idx_of_points < 0]  # (N_bg, 4) - x, y, z, intensity
+    backgr = np.pad(backgr, pad_width=[(0, 0), (0, 3)], constant_values=0.)  # (N_bg, 7) - point-5, [sweep_idx, inst_idx]
+    backgr[:, 4] = timelag_of_sweep_indices[sweep_indices[-1]]  # NOTE: all background come from the most recent sweep
+    backgr[:, -2] = float(sweep_indices[-1])  # sweep_idx
+    backgr[:, -1] = -1.  # instance_idx
+
+    # assemble gt_boxes & gt_names
+    gt_boxes = lidar_info['boxes_in_lidar']  # (N_box, 7)
+    gt_names = lidar_info['boxes_name']  # (N_box,)
+
+    # simulate historical sweep by pushing points of each box backward
+    sim_points, instances_tf = list(), list()
+    for inst_idx, anno_token in enumerate(lidar_info['anno_tokens']):
+        # extract foreground points of this box
+        pts_of_box = points[box_idx_of_points == inst_idx]  # (N_pts, 4) - x, y, z, intensity | in LiDAR
+
+        # map to box coord
+        lidar_se3_box = np.eye(4)
+        lidar_se3_box[:3, :3] = Quaternion(axis=[0, 0, 1], angle=gt_boxes[inst_idx, 6]).rotation_matrix
+        lidar_se3_box[:3, -1] = gt_boxes[inst_idx, :3]
+        apply_se3_(np.linalg.inv(lidar_se3_box), points_=pts_of_box)  # (N_pts, 4) - x, y, z, intensity | in box frame
+
+        # get box's hitorical poses & compute points's coord accordingly
+        histo_boxes = get_historical_boxes_1instance(nusc, sample_data_token, gt_boxes[inst_idx], anno_token, 
+                                                     inst_idx, num_historical_sweeps)  # (N_sweep, 7 + 2) - box-7, sweep_idx, inst_idx
+        
+        cos, sin = np.cos(histo_boxes[:, 6]), np.sin(histo_boxes[:, 6])
+        zs, os = np.zeros(histo_boxes.shape[0]), np.ones(histo_boxes.shape[0])
+        batch_lidar_se3_histo_boxes = np.stack([
+            cos,    -sin,       zs,     histo_boxes[:, 0],
+            sin,     cos,       zs,     histo_boxes[:, 1],
+            zs,      zs,        os,     histo_boxes[:, 2],
+            zs,      zs,        zs,     os
+        ], axis=1).reshape(-1, 4, 4)  # (N_sweep, 4, 4)
+        
+        batch_pts = np.tile(pts_of_box[np.newaxis], (histo_boxes.shape[0], 1, 1))  # (N_sweep, N_pts, 4) - x, y, z, intensity
+        # rotate
+        batch_pts[:, :, :3] = np.einsum('bpij, bpj -> bpi', 
+                                        batch_lidar_se3_histo_boxes[:, np.newaxis, :3, :3], 
+                                        batch_pts[:, :, :3])
+        # translate
+        batch_pts[:, :, :3] += batch_lidar_se3_histo_boxes[:, np.newaxis, :3, -1]
+
+        # assemble new points
+        batch_timelags = np.tile(timelag_of_sweep_indices.reshape(-1, 1, 1), (1, pts_of_box.shape[0], 1))  # (N_sweep, N_pts, 1)
+        batch_sweep_idx = np.tile(sweep_indices.reshape(-1, 1, 1), (1, pts_of_box.shape[0], 1))  # (N_sweep, N_pts, 1)
+        batch_inst_idx = np.zeros_like(batch_sweep_idx) + inst_idx  # (N_sweep, N_pts, 1)
+        batch_pts = np.concatenate([batch_pts, batch_timelags, batch_sweep_idx, batch_inst_idx], 
+                                   axis=-1)  # (N_sweep, N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+        
+        # instance's correction tf
+        _inst_tf = np.einsum('ij, bjk -> bik', 
+                             batch_lidar_se3_histo_boxes[-1], 
+                             np.linalg.inv(batch_lidar_se3_histo_boxes))  # (N_sweep, 4, 4)
+
+        # store
+        sim_points.append(batch_pts.reshape(-1, 7))
+        instances_tf.append(_inst_tf[np.newaxis])
+
+    # stick sim_points & background
+    sim_points = np.concatenate(sim_points)
+    points = np.concatenate([backgr, sim_points])
+    
+    instances_tf = np.concatenate(instances_tf, axis=0)  # (N_inst, N_sweep, 4, 4)
+
+
+    out = {'points': points,  # (N_pts_tot, 5 + 2) - point-5, sweep_idx, inst_idx
+           'gt_boxes': gt_boxes,  # (N_inst, 7)
+           'gt_names': gt_names,  # (N_inst,)
+           'instances_tf': instances_tf,
+           }
+    return out
+
+
+def correction_numpy(points: np.ndarray, instances_tf: np.ndarray):
+    """
+    Args:
+        points: (N, 5 + 2) - point-5, sweep_idx, instance_idx
+        instances_tf: (N_inst, N_sweep, 3, 4)
+    Returns:
+        points_new_xyz: (N, 3)
+    """
+    # merge sweep_idx & instance_idx
+    n_sweeps = instances_tf.shape[1]
+    points_merge_idx = points[:, -1].astype(int) * n_sweeps + points[:, -2].astype(int)  # (N,)
+    _tf = instances_tf.reshape((-1, 4, 4))
+    _tf = _tf[points_merge_idx]  # (N, 3, 4)
+
+    # apply transformation
+    points_new_xyz = np.matmul(_tf[:, :3, :3], points[:, :3, np.newaxis]) + _tf[:, :3, [-1]]
+    return points_new_xyz.squeeze(axis=-1)
