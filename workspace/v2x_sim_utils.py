@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from nuscenes import NuScenes
+from pyquaternion import Quaternion
 from typing import Set, Tuple, Dict
 
 from pcdet.datasets.nuscenes.nuscenes_utils import map_name_from_general_to_detection
@@ -17,8 +18,9 @@ def get_annos_of_1lidar(nusc: NuScenes,
         boxes_in_lidar: (N, 7) - box-7
         boxes_name: (N,) - str
         inst_tokens: (N,) - array of str, each is an instance token
+        anno_tokens: (N,) - array of str, each is an annotation token
     """
-    boxes_in_glob, boxes_name, inst_tokens = list(), list(), list()
+    boxes_in_glob, boxes_name, inst_tokens, anno_tokens = list(), list(), list(), list()
     boxes = nusc.get_boxes(sample_data_token)
     for box in boxes:
         box_name = map_name_from_general_to_detection[box.name]
@@ -36,21 +38,23 @@ def get_annos_of_1lidar(nusc: NuScenes,
         boxes_in_glob.append(box_in_glob)
         boxes_name.append(box_name)
         inst_tokens.append(anno_record['instance_token'])
+        anno_tokens.append(box.token)
 
     if len(box_in_glob) > 0:
         boxes_in_glob = np.stack(boxes_in_glob, axis=0)
         boxes_name = np.array(boxes_name)
         inst_tokens = np.array(inst_tokens)
+        anno_tokens = np.array(anno_tokens)
     else:
         boxes_in_glob = np.zeros((0, 7))
-        boxes_name, inst_tokens = np.array([], dtype=str), np.array([], dtype=str)
+        boxes_name, inst_tokens, anno_tokens = np.array([], dtype=str), np.array([], dtype=str), np.array([], dtype=str)
     
     glob_se3_lidar = get_nuscenes_sensor_pose_in_global(nusc, sample_data_token)
     boxes_in_lidar = apply_se3_(np.linalg.inv(glob_se3_lidar), 
                                 boxes_=boxes_in_glob, 
                                 return_transformed=True)
     
-    return boxes_in_lidar, boxes_name, inst_tokens
+    return boxes_in_lidar, boxes_name, inst_tokens, anno_tokens
 
 
 def find_nonempty_boxes(points: np.ndarray, boxes: np.ndarray, use_gpu: bool = False) -> np.ndarray:
@@ -123,14 +127,14 @@ def get_points_and_boxes_of_1lidar(nusc: NuScenes,
     """
     points_in_lidar = get_one_pointcloud(nusc, sample_data_token)
 
-    boxes_in_lidar, boxes_name, inst_tokens = get_annos_of_1lidar(nusc, sample_data_token, classes_of_interest)
+    boxes_in_lidar, boxes_name, inst_tokens, anno_tokens = get_annos_of_1lidar(nusc, sample_data_token, classes_of_interest)
 
     mask_nonempty_boxes, num_points_in_boxes, box_idx_of_points = find_nonempty_boxes(points_in_lidar, boxes_in_lidar, points_in_boxes_by_gpu)
 
     if return_nonempty_boxes or threshold_boxes_by_points is not None:
         mask = mask_nonempty_boxes if threshold_boxes_by_points is None else num_points_in_boxes > threshold_boxes_by_points
 
-        boxes_in_lidar, boxes_name, inst_tokens = boxes_in_lidar[mask], boxes_name[mask], inst_tokens[mask]
+        boxes_in_lidar, boxes_name, inst_tokens, anno_tokens = boxes_in_lidar[mask], boxes_name[mask], inst_tokens[mask], anno_tokens[mask]
         num_points_in_boxes = num_points_in_boxes[mask]
 
         pad_kept_boxes_ids = -np.ones(mask.shape[0], dtype=int)  # (N_box_all,)
@@ -143,5 +147,61 @@ def get_points_and_boxes_of_1lidar(nusc: NuScenes,
         'boxes_in_lidar': boxes_in_lidar,  # (N_box, 7)
         'boxes_name': boxes_name,  # (N_box,) 
         'inst_tokens': inst_tokens,  # (N_box,)
+        'anno_tokens': anno_tokens,  # (N_box,)
     }
     return output
+
+
+def get_historical_boxes_1instance(nusc: NuScenes,
+                                   current_sample_data_tk: str, 
+                                   current_box: np.ndarray, 
+                                   current_anno_tk: str, 
+                                   instance_idx: int,
+                                   num_historical_boxes: int = 10) -> np.ndarray:
+    """
+    Returns:
+        interp_boxes: (num_historical_boxes + 1, 7 + 2) - box-7, sweep_idx, inst_idx
+            num_historical_boxes + 1 +1 because this includes current_box too
+    """
+    def _qua2yaw(q: Quaternion) -> float:
+        return np.arctan2(q.rotation_matrix[1, 0], q.rotation_matrix[0, 0])
+    
+    assert current_box.shape == (7,), f"{current_box.shape} is invalid"
+    anno_record = nusc.get('sample_annotation', current_anno_tk)
+
+    num_boxes_total = num_historical_boxes + 1  
+    if anno_record['prev'] == '':
+        # have no prev 
+        return np.tile(current_box.reshape(1, -1), (num_boxes_total, 1))
+    
+    prev_box = nusc.get_box(anno_record['prev'])
+    # map box to lidar frame
+    glob_se3_prev = np.eye(4)
+    glob_se3_prev[:3, :3] = prev_box.orientation.rotation_matrix
+    glob_se3_prev[:3, -1] = prev_box.center
+
+    glob_se3_lidar = get_nuscenes_sensor_pose_in_global(nusc, current_sample_data_tk)
+    lidar_se3_prev = np.linalg.inv(glob_se3_lidar) @ glob_se3_prev
+    
+    # interpolate x, y, z
+    timesteps = np.linspace(0., 1., num_boxes_total)  # include the current
+    centers = np.stack([np.interp(timesteps,
+                                  [timesteps[0], timesteps[-1]],
+                                  [lidar_se3_prev[_i, -1], current_box[_i]]) for _i in range(3)], axis=1)
+    
+    # interpolate heading
+    prev_quaternion = Quaternion(matrix=lidar_se3_prev[:3, :3])
+    current_quaternion = Quaternion(axis=[0, 0, 1], angle=current_box[6])
+    headings = np.array([_qua2yaw(Quaternion.slerp(prev_quaternion, current_quaternion, ts)) 
+                         for ts in timesteps])
+
+    # assemble output
+    dxdydz = np.tile(current_box[3: 6].reshape(1, -1), (num_boxes_total, 1))
+    interp_boxes = np.concatenate([centers, 
+                                  dxdydz, 
+                                  headings.reshape(-1, 1),
+                                  np.arange(num_boxes_total).reshape(-1, 1),  # sweep_idx
+                                  np.zeros((num_boxes_total, 1)) + instance_idx],  # inst_idx
+                                  axis=1)
+
+    return interp_boxes
