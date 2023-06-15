@@ -6,6 +6,7 @@ https://github.com/traveller59/second.pytorch and https://github.com/poodarchu/D
 import operator
 from functools import reduce
 from pathlib import Path
+from typing import List, Dict
 
 import numpy as np
 import tqdm
@@ -380,7 +381,7 @@ def fill_trainval_infos(data_path, nusc, train_scenes, val_scenes, test=False, m
     return train_nusc_infos, val_nusc_infos
 
 
-def boxes_lidar_to_nusenes(det_info):
+def boxes_lidar_to_nusenes(det_info: Dict[str, np.ndarray]) -> List[Box]:
     boxes3d = det_info['boxes_lidar']
     scores = det_info['score']
     labels = det_info['pred_labels']
@@ -398,7 +399,7 @@ def boxes_lidar_to_nusenes(det_info):
     return box_list
 
 
-def lidar_nusc_box_to_global(nusc, boxes, sample_token):
+def lidar_nusc_box_to_global(nusc, boxes: List[Box], sample_token) -> List[Box]:
     s_record = nusc.get('sample', sample_token)
     sample_data_token = s_record['data']['LIDAR_TOP']
 

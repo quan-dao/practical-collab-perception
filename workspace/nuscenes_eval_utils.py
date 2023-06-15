@@ -125,8 +125,7 @@ class MyDetectionEval(DetectionEval):
         # Load data.
         if verbose:
             print('Initializing nuScenes detection evaluation')
-        self.pred_boxes, self.meta = load_prediction(self.result_path, self.cfg.max_boxes_per_sample, DetectionBox,
-                                                     verbose=verbose)
+        self.pred_boxes, self.meta = load_prediction(self.result_path, self.cfg.max_boxes_per_sample, DetectionBox, verbose=verbose)
         self.gt_boxes = load_gt(self.nusc, self.eval_set, DetectionBox, self.all_sample_tokens, verbose=verbose)
 
         assert set(self.pred_boxes.sample_tokens) == set(self.gt_boxes.sample_tokens), \
