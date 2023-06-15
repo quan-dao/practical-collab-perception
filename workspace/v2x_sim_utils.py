@@ -148,6 +148,7 @@ def get_points_and_boxes_of_1lidar(nusc: NuScenes,
         'boxes_name': boxes_name,  # (N_box,) 
         'inst_tokens': inst_tokens,  # (N_box,)
         'anno_tokens': anno_tokens,  # (N_box,)
+        'num_points_in_boxes': num_points_in_boxes,  # (N_box,)
     }
     return output
 
