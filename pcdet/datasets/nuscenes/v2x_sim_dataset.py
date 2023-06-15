@@ -6,17 +6,22 @@ import pickle
 from tqdm import tqdm
 import json
 import copy
+import argparse
+from easydict import EasyDict
+import yaml
 
 from nuscenes.eval.detection.config import config_factory
 
 from ..dataset import DatasetTemplate
 from pcdet.datasets.nuscenes import nuscenes_utils
+from pcdet.utils import common_utils
 from workspace.v2x_sim_utils import get_points_and_boxes_of_1lidar, get_nuscenes_sensor_pose_in_global, get_pseudo_sweeps_of_1lidar
 from workspace.v2x_sim_eval_utils import transform_det_annos_to_nusc_annos, V2XSimDetectionEval
 
 
 class V2XSimDataset_RSU(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
+        root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
         self.infos: List[Dict] = list()        
 
@@ -27,7 +32,8 @@ class V2XSimDataset_RSU(DatasetTemplate):
         self.num_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10) + 1
         self.num_historical_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10)
 
-        path_train_infos = self.root_path / Path(f"{self._prefix}_v2x_sim_infos_{self.num_historical_sweeps}sweeps_train.pkl")
+        path_train_infos = self.root_path / f"{self._prefix}_v2x_sim_infos_{self.num_historical_sweeps}sweeps_train.pkl"
+        print('path_train_infos: ', path_train_infos)
         if not path_train_infos.exists():
             self.logger.warn('dataset infos do not exist, call build_v2x_sim_info')
         else:
@@ -37,6 +43,11 @@ class V2XSimDataset_RSU(DatasetTemplate):
                 self.infos = self.infos[::self.dataset_cfg.MINI_TRAINVAL_STRIDE]  # use 1/4th of the trainval data
             
         self.all_sample_data_tokens = [_info['lidar_token'] for _info in self.infos]  # for evaluation 
+
+    def __len__(self):
+        if self._merge_all_iters_to_one_epoch:
+            return len(self.infos) * self.total_epochs
+        return len(self.infos)
 
     def include_v2x_sim_data(self, mode):
         self.logger.info('Loading V2X-Sim dataset')
@@ -122,19 +133,23 @@ class V2XSimDataset_RSU(DatasetTemplate):
             
             info['lidar_path'] = self.nusc.get_sample_data_path(info['lidar_token'])  # legacy from nuscenes_dataset
 
+            # get timestamp
+            sample_data_record = self.nusc.get('sample_data', sample['data'][lidar_name])
+            info['timestamp'] = sample_data_record['timestamp']
+
             if sample['scene_token'] in trainval_split['train']:
                 train_infos.append(info)
             else:
                 val_infos.append(info)
 
         if len(train_infos) > 0:
-            path_train_infos = self.root_path / Path(f"{self._prefix}_v2x_sim_infos_{self.num_sweeps}_train.pkl")
+            path_train_infos = self.root_path / f"{self._prefix}_v2x_sim_infos_{self.num_historical_sweeps}sweeps_train.pkl"
             with open(path_train_infos, 'wb') as f:
                 pickle.dump(train_infos, f)
             self.logger.info(f"v2x-sim {self.dataset_cfg.VERSION} | num samples for training: {len(train_infos)}")
 
         if len(val_infos) > 0:
-            path_val_infos = self.root_path / Path(f"{self._prefix}_v2x_sim_infos_{self.num_sweeps}_val.pkl")
+            path_val_infos = self.root_path / f"{self._prefix}_v2x_sim_infos_{self.num_historical_sweeps}sweeps_val.pkl"
             with open(path_val_infos, 'wb') as f:
                 pickle.dump(val_infos, f)
             self.logger.info(f"v2x-sim {self.dataset_cfg.VERSION} | num samples for val: {len(val_infos)}")
@@ -229,6 +244,7 @@ class V2XSimDataset_RSU(DatasetTemplate):
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {
                 'lidar_token': info['lidar_token'],
+                'num_sweeps_target': self.num_sweeps,
             }
         }
 
@@ -237,3 +253,32 @@ class V2XSimDataset_RSU(DatasetTemplate):
 
         return data_dict
     
+
+if __name__ == '__main__':
+    cfg_file = './tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml'  # NOTE: launch this from OpenPCDet directory
+    dataset_cfg = EasyDict(yaml.safe_load(open(cfg_file)))
+    
+    parser = argparse.ArgumentParser(description='arg parser')
+    parser.add_argument('--create_v2x_sim_rsu_infos', action='store_true')
+    parser.add_argument('--no-create_v2x_sim_rsu_infos', dest='create_v2x_sim_rsu_infos', action='store_false')
+    parser.set_defaults(create_v2x_sim_rsu_infos=False)
+    
+    parser.add_argument('--training', action='store_true')
+    parser.add_argument('--no-training', dest='training', action='store_false')
+    parser.set_defaults(training=True)
+
+    parser.add_argument('--version', type=str, default='v2.0-trainval', help='')
+
+    args = parser.parse_args()
+
+    ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
+    dataset_cfg.VERSION = args.version
+
+    if args.create_v2x_sim_rsu_infos:
+        v2x_dataset = V2XSimDataset_RSU(dataset_cfg, 
+                                        class_names=dataset_cfg.CLASSES_OF_INTEREST, 
+                                        training=args.training,
+                                        root_path=ROOT_DIR / 'data' / 'v2x-sim',
+                                        logger=common_utils.create_logger())
+        v2x_dataset.build_v2x_sim_info()
+        # python -m pcdet.datasets.nuscenes.v2x_sim_dataset --create_v2x_sim_rsu_infos --training --version v2.0-mini

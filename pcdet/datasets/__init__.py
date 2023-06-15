@@ -13,7 +13,7 @@ from .waymo.waymo_dataset import WaymoDataset
 from .pandaset.pandaset_dataset import PandasetDataset
 from .lyft.lyft_dataset import LyftDataset
 from .custom.custom_dataset import CustomDataset
-from .argoverse_2.av2_dataset import AV2Dataset
+from .nuscenes.v2x_sim_dataset import V2XSimDataset_RSU
 
 __all__ = {
     'DatasetTemplate': DatasetTemplate,
@@ -24,7 +24,7 @@ __all__ = {
     'PandasetDataset': PandasetDataset,
     'LyftDataset': LyftDataset,
     'CustomDataset': CustomDataset,
-    'AV2Dataset': AV2Dataset
+    'V2XSimDataset_RSU': V2XSimDataset_RSU
 }
 
 
