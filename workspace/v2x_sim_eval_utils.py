@@ -22,7 +22,7 @@ def transform_det_annos_to_nusc_annos(det_annos: List[Dict], nusc_annos_: Dict) 
             {   
                 'metadata': {
                     'token': sample token
-                    'sample_data_token'
+                    'lidar_token'
                 }
                 'boxes_lidar': (N, 7) - x, y, z, dx, dy, dz, heading | in LiDAR
                 'score': (N,)
@@ -91,7 +91,7 @@ def load_gt(nusc: NuScenes, eval_split: str, box_cls, dataset_infos: List[Dict],
 
         gt_boxes = info['gt_boxes']  # (N_gt, 7)
         gt_names = info['gt_names']  # (N_gt,)
-        gt_num_points = info['num_points_in_boxes']  # (N_gt,)
+        gt_num_points = info['num_points_in_boxes'].astype(int)  # (N_gt,)
         
         boxes = list()
         for b_idx in range(gt_boxes.shape[0]):
@@ -102,7 +102,7 @@ def load_gt(nusc: NuScenes, eval_split: str, box_cls, dataset_infos: List[Dict],
                     size=gt_boxes[b_idx, 3: 6],
                     rotation=Quaternion(axis=[0, 0, 1], angle=gt_boxes[b_idx, 6]).elements.tolist(),
                     velocity=[0., 0.],
-                    num_pts=gt_num_points[b_idx],
+                    num_pts=int(gt_num_points[b_idx]),
                     detection_name=gt_names[b_idx],
                     detection_score=-1.0,  # GT samples do not have a score.
                     attribute_name=attribute_name
@@ -169,11 +169,3 @@ class V2XSimDetectionEval(DetectionEval):
         # Add center distances.
         self.pred_boxes = add_dist_to_lidar(self.pred_boxes)
         self.gt_boxes = add_dist_to_lidar(self.gt_boxes)
-
-        # Filter boxes (distance, points per box, etc.).
-        if verbose:
-            print('Filtering predictions')
-        self.pred_boxes = filter_eval_boxes(nusc, self.pred_boxes, self.cfg.class_range, verbose=verbose)
-        if verbose:
-            print('Filtering ground truth annotations')
-        self.gt_boxes = filter_eval_boxes(nusc, self.gt_boxes, self.cfg.class_range, verbose=verbose)

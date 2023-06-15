@@ -169,7 +169,7 @@ class V2XSimDataset_RSU(DatasetTemplate):
                 {   
                     'metadata': {
                         'token': sample token
-                        'sample_data_token'
+                        'lidar_token'
                     }
                     'boxes_lidar': (N, 7) - x, y, z, dx, dy, dz, heading | in LiDAR
                     'score': (N,)
@@ -184,10 +184,10 @@ class V2XSimDataset_RSU(DatasetTemplate):
         }
         for info in self.infos:
             nusc_annos['results'].update(
-                {info['lidar_token']: list()}  # NOTE: workaround to eval w.r.t sample_data_token
+                {info['lidar_token']: list()}  # NOTE: workaround to eval w.r.t lidar_token
             ) 
 
-        transform_det_annos_to_nusc_annos(self.nusc, det_annos, nusc_annos)
+        transform_det_annos_to_nusc_annos(det_annos, nusc_annos)
         
         output_path = Path(kwargs['output_path'])
         output_path.mkdir(exist_ok=True, parents=True)
