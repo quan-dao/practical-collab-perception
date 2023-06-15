@@ -5,12 +5,13 @@ from pathlib import Path
 import pickle
 from tqdm import tqdm
 import json
+import copy
 
 from nuscenes.eval.detection.config import config_factory
 
 from ..dataset import DatasetTemplate
 from pcdet.datasets.nuscenes import nuscenes_utils
-from workspace.v2x_sim_utils import get_points_and_boxes_of_1lidar, get_nuscenes_sensor_pose_in_global
+from workspace.v2x_sim_utils import get_points_and_boxes_of_1lidar, get_nuscenes_sensor_pose_in_global, get_pseudo_sweeps_of_1lidar
 from workspace.v2x_sim_eval_utils import transform_det_annos_to_nusc_annos, V2XSimDetectionEval
 
 
@@ -24,8 +25,9 @@ class V2XSimDataset_RSU(DatasetTemplate):
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
         self.classes_of_interest = set(dataset_cfg.get('CLASSES_OF_INTEREST', ['car', 'pedestrian']))
         self.num_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10) + 1
+        self.num_historical_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10)
 
-        path_train_infos = self.root_path / Path(f"{self._prefix}_v2x_sim_infos_{self.num_sweeps}_train.pkl")
+        path_train_infos = self.root_path / Path(f"{self._prefix}_v2x_sim_infos_{self.num_historical_sweeps}sweeps_train.pkl")
         if not path_train_infos.exists():
             self.logger.warn('dataset infos do not exist, call build_v2x_sim_info')
         else:
@@ -137,6 +139,14 @@ class V2XSimDataset_RSU(DatasetTemplate):
                 pickle.dump(val_infos, f)
             self.logger.info(f"v2x-sim {self.dataset_cfg.VERSION} | num samples for val: {len(val_infos)}")
 
+    def evaluation(self, det_annos, class_names, **kwargs):
+        if kwargs['eval_metric'] == 'kitti':
+            raise NotImplementedError
+        elif kwargs['eval_metric'] == 'nuscenes':
+            return self.nuscenes_eval(det_annos, class_names, **kwargs)
+        else:
+            raise NotImplementedError
+
     def nusc_eval(self, det_annos: List[Dict], class_names, **kwargs):
         """
         Args:
@@ -192,3 +202,38 @@ class V2XSimDataset_RSU(DatasetTemplate):
 
         result_str, result_dict = nuscenes_utils.format_nuscene_results(metrics, self.class_names, version=eval_version)
         return result_str, result_dict
+
+    def __getitem__(self, index):
+        if self._merge_all_iters_to_one_epoch:
+            index = index % len(self.infos)
+        
+        info = copy.deepcopy(self.infos[index])
+
+        stuff = get_pseudo_sweeps_of_1lidar(self.nusc, 
+                                            info['lidar_token'], 
+                                            self.num_historical_sweeps, 
+                                            self.classes_of_interest,
+                                            points_in_boxes_by_gpu=self.dataset_cfg.get('POINTS_IN_BOXES_GPU', False),
+                                            threshold_boxes_by_points=self.dataset_cfg.get('THRESHOLD_BOXES_BY_POINTS', 5))
+        
+        points = stuff['points']  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+        gt_boxes = stuff['gt_boxes']  # (N_inst, 7)
+        gt_names = stuff['gt_names']  # (N_inst,)
+        instances_tf = stuff['instances_tf']  # (N_inst, N_sweep, 4, 4)
+
+        input_dict = {
+            'points': points,  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
+            'gt_boxes': gt_boxes,  # (N_inst, 7)
+            'gt_names': gt_names,  # (N_inst,)
+            'instances_tf': instances_tf,
+            'frame_id': Path(info['lidar_path']).stem,
+            'metadata': {
+                'lidar_token': info['lidar_token'],
+            }
+        }
+
+        # data augmentation & other stuff
+        data_dict = self.prepare_data(data_dict=input_dict)
+
+        return data_dict
+    
