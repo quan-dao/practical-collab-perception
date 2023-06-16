@@ -32,15 +32,12 @@ class V2XSimDataset_RSU(DatasetTemplate):
         self.num_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10) + 1
         self.num_historical_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10)
 
-        path_train_infos = self.root_path / f"{self._prefix}_v2x_sim_infos_{self.num_historical_sweeps}sweeps_train.pkl"
+        path_train_infos = self.root_path / f"{self._prefix}_{self.dataset_cfg.INFO_PATH['train'][0]}"
         print('path_train_infos: ', path_train_infos)
         if not path_train_infos.exists():
             self.logger.warn('dataset infos do not exist, call build_v2x_sim_info')
         else:
             self.include_v2x_sim_data(self.mode)
-            self.infos.sort(key=lambda e: e['timestamp'])
-            if self.training and self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) > 1:
-                self.infos = self.infos[::self.dataset_cfg.MINI_TRAINVAL_STRIDE]  # use 1/4th of the trainval data
             
         self.all_sample_data_tokens = [_info['lidar_token'] for _info in self.infos]  # for evaluation 
 
@@ -63,6 +60,11 @@ class V2XSimDataset_RSU(DatasetTemplate):
                 v2x_infos.extend(infos)
 
         self.infos.extend(v2x_infos)
+
+        self.infos.sort(key=lambda e: e['timestamp'])
+        if self.training and self.dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) > 1:
+            self.infos = self.infos[::self.dataset_cfg.MINI_TRAINVAL_STRIDE]  # use 1/4th of the trainval data
+
         self.logger.info('Total samples for V2X-Sim dataset: %d' % (len(v2x_infos)))
 
     def _build_train_val_split(self):
@@ -236,6 +238,9 @@ class V2XSimDataset_RSU(DatasetTemplate):
         gt_names = stuff['gt_names']  # (N_inst,)
         instances_tf = stuff['instances_tf']  # (N_inst, N_sweep, 4, 4)
 
+        # get lidar_id
+        lidar_id = self.nusc.get('sample_data', info['lidar_token'])['channel'].split('_')[-1]
+
         input_dict = {
             'points': points,  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx
             'gt_boxes': gt_boxes,  # (N_inst, 7)
@@ -246,7 +251,7 @@ class V2XSimDataset_RSU(DatasetTemplate):
                 'lidar_token': info['lidar_token'],
                 'num_sweeps_target': self.num_sweeps,
                 'sample_token': info['token'],
-                'lidar_id': 0,
+                'lidar_id': lidar_id,
             }
         }
 

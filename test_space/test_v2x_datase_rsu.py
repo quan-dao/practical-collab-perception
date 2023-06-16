@@ -71,9 +71,13 @@ def main(test_dataset: bool = False,
          test_dataloader: bool = False,
          target_batch_idx: int = 3,
          chosen_batch_idx: int = 1,
-         debug_dataset: bool = False):
+         debug_dataset: bool = False,
+         test_car: bool = False):
     np.random.seed(666)
-    cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml'
+    if not test_car:
+        cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml'
+    else:
+        cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml'
     dataset, dataloader = build_dataset_for_testing(
         cfg_file, ['car', 'pedestrian'], debug_dataset=debug_dataset, version='v2.0-mini', batch_size=2, training=True)
     if test_dataset:
@@ -91,10 +95,12 @@ if __name__ == '__main__':
     parser.add_argument('--target_batch_idx', type=int, default=3)
     parser.add_argument('--chosen_batch_idx', type=int, default=1)
     parser.add_argument('--debug_dataset', type=int, default=0)
+    parser.add_argument('--test_car', type=int, default=0)
     args = parser.parse_args()
     main(args.test_dataset==1,
          args.dataset_sample_idx,
          args.test_dataloader==1,
          args.target_batch_idx,
          args.chosen_batch_idx,
-         args.debug_dataset)
+         args.debug_dataset,
+         args.test_car == 1)

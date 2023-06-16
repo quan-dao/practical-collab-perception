@@ -3,7 +3,7 @@ from nuscenes import NuScenes
 from pprint import pprint
 import matplotlib.cm
 
-from workspace.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, correction_numpy
+# from workspace.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, correction_numpy
 from workspace.o3d_visualization import PointsPainter
 
 
@@ -17,6 +17,9 @@ def main(num_sweeps, classes_of_interest: set):
         sample_tk = sample['next']
     
     sample = nusc.get('sample', sample_tk)
+    sample_data = nusc.get('sample_data', sample['data']['LIDAR_TOP_id_1'])
+    pprint(sample_data)
+    return
     
     out = get_pseudo_sweeps_of_1lidar(nusc, sample['data']['LIDAR_TOP_id_0'], num_sweeps, 
                                       classes_of_interest, 

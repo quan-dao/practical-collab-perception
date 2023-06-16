@@ -5,9 +5,12 @@ import argparse
 from test_space.tools import build_dataset_for_testing
 
 
-def main(version: str):
+def main(version: str, test_car: bool):
     np.random.seed(666)
-    cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml'
+    if not test_car:
+        cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml'
+    else:
+        cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml'
     dataset, dataloader = build_dataset_for_testing(
         cfg_file, ['car', 'pedestrian'], debug_dataset=False, version=version, batch_size=2, training=False)
     
@@ -24,7 +27,7 @@ def main(version: str):
 
         det_annos.append(anno)
 
-    result_str, result_dict = dataset.nusc_eval(det_annos, '', output_path='./artifact/')
+    result_str, result_dict = dataset.nuscenes_eval(det_annos, '', output_path='./artifact/')
     pprint(result_str)
     print('---')
     pprint(result_dict)
@@ -33,6 +36,6 @@ def main(version: str):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='blah')
     parser.add_argument('--version', type=str, default='v2.0-mini')
+    parser.add_argument('--test_car', type=int, default=0)
     args = parser.parse_args()
-    main(args.version)
-    # TODO: test this on v2.0-trainval
+    main(args.version, args.test_car)
