@@ -162,7 +162,7 @@ class V2XSimDataset_RSU(DatasetTemplate):
         else:
             raise NotImplementedError
 
-    def nusc_eval(self, det_annos: List[Dict], class_names, **kwargs):
+    def nuscenes_eval(self, det_annos: List[Dict], class_names, **kwargs):
         """
         Args:
             det_annos: each dict is
