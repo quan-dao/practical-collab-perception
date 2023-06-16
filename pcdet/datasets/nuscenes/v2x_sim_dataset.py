@@ -192,8 +192,8 @@ class V2XSimDataset_RSU(DatasetTemplate):
         output_path = Path(kwargs['output_path'])
         output_path.mkdir(exist_ok=True, parents=True)
         res_path = str(output_path / 'results_nusc.json')
-        with open(res_path, 'w') as f:
-            json.dump(nusc_annos, f)
+        with open(res_path, 'wb') as f:
+            pickle.dump(nusc_annos, f)
         self.logger.info(f'The predictions of NuScenes have been saved to {res_path}')
 
         try:

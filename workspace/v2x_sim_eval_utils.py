@@ -1,10 +1,11 @@
 import numpy as np
 from nuscenes import NuScenes
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import operator
 from pyquaternion import Quaternion
 import os
 from tqdm import tqdm
+import pickle
 
 from nuscenes.eval.detection.evaluate import DetectionEval
 from nuscenes.eval.detection.data_classes import DetectionConfig, DetectionBox
@@ -131,6 +132,38 @@ def add_dist_to_lidar(eval_boxes: EvalBoxes):
         for box in eval_boxes[sample_token]:
             box.ego_translation = box.translation
     return eval_boxes
+
+
+def load_prediction(result_path: str, max_boxes_per_sample: int, box_cls, verbose: bool = False) \
+        -> Tuple[EvalBoxes, Dict]:
+    """
+    Loads object predictions from file.
+    :param result_path: Path to the .json result file provided by the user.
+    :param max_boxes_per_sample: Maximim number of boxes allowed per sample.
+    :param box_cls: Type of box to load, e.g. DetectionBox or TrackingBox.
+    :param verbose: Whether to print messages to stdout.
+    :return: The deserialized results and meta data.
+    """
+
+    # Load from file and check that the format is correct.
+    with open(result_path, 'rb') as f:
+        data = pickle.load(f)
+    assert 'results' in data, 'Error: No field `results` in result file. Please note that the result format changed.' \
+                              'See https://www.nuscenes.org/object-detection for more information.'
+
+    # Deserialize results and get meta data.
+    all_results = EvalBoxes.deserialize(data['results'], box_cls)
+    meta = data['meta']
+    if verbose:
+        print("Loaded results from {}. Found detections for {} samples."
+              .format(result_path, len(all_results.sample_tokens)))
+
+    # Check that each sample has no more than x predicted boxes.
+    for sample_token in all_results.sample_tokens:
+        assert len(all_results.boxes[sample_token]) <= max_boxes_per_sample, \
+            "Error: Only <= %d boxes per sample allowed!" % max_boxes_per_sample
+
+    return all_results, meta
 
 
 class V2XSimDetectionEval(DetectionEval):
