@@ -1,4 +1,4 @@
-CLASS_NAMES: ['car', 'pedestrian']
+CLASS_NAMES: ['car']
 
 
 DATA_CONFIG:
@@ -21,7 +21,7 @@ MODEL:
         NAME: PointPillarScatter
         NUM_BEV_FEATURES: 64
 
-     BACKBONE_2D:
+    BACKBONE_2D:
         NAME: BaseBEVBackbone
         LAYER_NUMS: [3, 5, 5]
         LAYER_STRIDES: [2, 2, 2]
@@ -43,8 +43,7 @@ MODEL:
         CLASS_AGNOSTIC: False
 
         CLASS_NAMES_EACH_HEAD: [
-            ['car'],
-            ['pedestrian']
+            ['car']
         ]
 
         SHARED_CONV_CHANNEL: 64

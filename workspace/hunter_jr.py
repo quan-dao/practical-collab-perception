@@ -284,7 +284,7 @@ class HunterJr(nn.Module):
         """
         Args:
             batch_dict: {
-                points: (N, 1 + 10 + 2) - batch_idx | x, y, z, intensity, time | map_feat (5) | sweep_idx, instance_idx
+                points: (N, 1 + 5 + 2) - batch_idx, point-5, sweep_idx, instance_idx
                 spatial_features_2d: (B, num_bev_feat, H, W)
             }
         """
@@ -300,9 +300,9 @@ class HunterJr(nn.Module):
         # invoke Point Head
         pts_local_feat, points_cls_logit, points_flow3d, points_inst_embed = self.point_head(points_feat)
         prediction_dict = {
-            'points_cls_logit': points_cls_logit,
-            'points_flow3d': points_flow3d,
-            'points_embedding': points_inst_embed
+            'points_cls_logit': points_cls_logit,  # (N, 3) - bg | static fg | dynamic fg
+            'points_flow3d': points_flow3d,  # (N, 3)
+            'points_embedding': points_inst_embed  # (N, 2) - offset to center of instance's gt box
         }
 
         if self.training:
@@ -344,7 +344,7 @@ class HunterJr(nn.Module):
         fused_bev_img = self.correct_bev_image(points, points_feat, points_bev_coord, points_cls_logit, points_flow3d, bev_img)
 
         # distill BEV image here
-        if self.training:
+        if self.training and 'teacher_spatial_features_2d' in batch_dict:
             _B, _C, _H, _W = fused_bev_img.shape
 
             teacher_bev_img = batch_dict['teacher_spatial_features_2d']  # (B, C, H, W)
@@ -367,6 +367,24 @@ class HunterJr(nn.Module):
         # remove gt_boxes outside range
         if self.training:
             batch_dict = remove_gt_boxes_outside_range(batch_dict, self.point_cloud_range)
+        
+        if not self.training and self.model_cfg.get('GENERATING_EXCHANGE_DATA', False):
+            # make points to be sent away
+            points_cls_prob = torch.sigmoid(points_cls_logit)  # (N, 3)
+            mask_send = points_cls_prob[:, 0] < 0.3  # prob background is sufficiently small
+            if torch.any(mask_send):
+                points_to_send = torch.cat([points[mask_send, 1:],  # exclude batch_idx | point-5, sweep_idx, inst_idx
+                                            points_cls_prob[mask_send]], 
+                                            dim=1)  # (N_pts_send, 1 + 5 + 3) - batch_idx, point-5, cls_prob-3
+                
+                points_to_send_batch_idx = points[mask_send, 0].long()
+                for b_idx, metadata in enumerate(batch_dict['metadata']):
+                    sample_token = metadata['sample_token']
+                    lidar_id = metadata['lidar_id']
+                    sample_points = points_to_send[points_to_send_batch_idx == b_idx]
+                    if sample_points.shape[0] > 0:
+                        save_path = f"{self.model_cfg.DATABASE_EXCHANGE_DATA}/{sample_token}_id{lidar_id}_foreground.pth"
+                        torch.save(sample_points, save_path)
 
         return batch_dict
 
@@ -458,11 +476,10 @@ class HunterJr(nn.Module):
         })
 
         tb_dict['l_dtl_locals_feat'] = self.forward_return_dict['loss_dtl_locals_feat'].item()
-        tb_dict['l_dtl_bev_img'] = self.forward_return_dict['loss_dtl_bev_img'].item()
 
         loss = l_points_cls + l_points_embed + l_fg_offset + \
                 l_locals_transl + l_locals_rot + l_recon + \
-                self.forward_return_dict['loss_dtl_locals_feat'] + self.forward_return_dict['loss_dtl_bev_img']
+                self.forward_return_dict['loss_dtl_locals_feat']
         
         return loss, tb_dict
 

@@ -17,7 +17,7 @@ DATA_SPLIT: {
 
 INFO_PATH: {
     'train': [v2x_sim_infos_10sweeps_train.pkl],
-    'test': [v2x_sim_infos_10sweeps_train.pkl],
+    'test': [v2x_sim_infos_10sweeps_val.pkl],
 }
 
 POINT_FEATURE_ENCODING: {
@@ -50,6 +50,6 @@ DATA_PROCESSOR:
         'test': True
       }
 
-   - NAME: transform_points_to_voxels_placeholder
-     VOXEL_SIZE: [0.2, 0.2, 8.0]
+    - NAME: transform_points_to_voxels_placeholder
+      VOXEL_SIZE: [0.2, 0.2, 8.0]
      

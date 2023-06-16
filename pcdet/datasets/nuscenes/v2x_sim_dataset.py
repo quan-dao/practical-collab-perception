@@ -245,6 +245,8 @@ class V2XSimDataset_RSU(DatasetTemplate):
             'metadata': {
                 'lidar_token': info['lidar_token'],
                 'num_sweeps_target': self.num_sweeps,
+                'sample_token': info['token'],
+                'lidar_id': 0,
             }
         }
 
