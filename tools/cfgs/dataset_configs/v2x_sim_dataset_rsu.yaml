@@ -34,7 +34,7 @@ DATA_AUGMENTOR:
           ALONG_AXIS_LIST: ['x', 'y']
 
         - NAME: random_world_rotation
-          WORLD_ROT_ANGLE: [-0.3925, 0.3925]
+          WORLD_ROT_ANGLE: [-0.7854, 0.7854]
 
         - NAME: random_world_scaling
           WORLD_SCALE_RANGE: [0.95, 1.05]
@@ -50,10 +50,6 @@ DATA_PROCESSOR:
         'test': True
       }
 
-#    - NAME: transform_points_to_voxels
-#      VOXEL_SIZE: [0.1, 0.1, 0.2]
-#      MAX_POINTS_PER_VOXEL: 10
-#      MAX_NUMBER_OF_VOXELS: {
-#        'train': 60000,
-#        'test': 60000
-#      }
+   - NAME: transform_points_to_voxels_placeholder
+     VOXEL_SIZE: [0.2, 0.2, 8.0]
+     
