@@ -37,6 +37,9 @@ MODEL:
         POINT_HEAD_HIDDEN_CHANNELS: [64]
         OBJ_HEAD_HIDDEN_CHANNELS: [64]
         THRESHOLD_POINT_CLS_PROB: 0.3
+        # v2x stuff
+        GENERATING_EXCHANGE_DATA: True
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_rsu
 
     DENSE_HEAD:
         NAME: CenterHead
@@ -82,6 +85,10 @@ MODEL:
                 NMS_THRESH: 0.2
                 NMS_PRE_MAXSIZE: 1000
                 NMS_POST_MAXSIZE: 83
+        
+        # v2x stuff
+        GENERATING_EXCHANGE_DATA: True
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_rsu
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
