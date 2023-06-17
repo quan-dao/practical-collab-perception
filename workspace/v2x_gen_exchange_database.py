@@ -21,9 +21,9 @@ def gen_exchange_database(model_type: str,
     cfg_file = f'../tools/cfgs/nuscenes_models/v2x_pointpillar_basic_{model_type}.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     # shutdown data augmentation
-    cfg.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
-                                           'random_world_rotation', 'random_world_scaling']
-
+    cfg.DATA_CONFIG.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
+                                                       'random_world_rotation', 'random_world_scaling']
+    cfg.DATA_CONFIG.MINI_TRAINVAL_STRIDE = 1
     logger = common_utils.create_logger(f'log_v2x_gen_exchange_database_{model_type}.txt')
 
     dataset, dataloader, _ = build_dataloader(

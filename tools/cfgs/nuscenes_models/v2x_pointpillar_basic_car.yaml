@@ -3,7 +3,7 @@ CLASS_NAMES: ['car']
 
 DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
-    MINI_TRAINVAL_STRIDE: 4
+    DATASET_DOWNSAMPLING_RATIO: 16
     POINTS_IN_BOXES_GPU: True
     
 MODEL:
@@ -25,7 +25,7 @@ MODEL:
         NAME: BaseBEVBackbone
         LAYER_NUMS: [3, 5, 5]
         LAYER_STRIDES: [2, 2, 2]
-        NUM_FILTERS: [64, 128, 256]
+        NUM_FILTERS: [64, 128, 128]
         UPSAMPLE_STRIDES: [0.5, 1, 2]
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
@@ -33,9 +33,9 @@ MODEL:
         NAME: HunterJr
         NUM_SWEEPS: 11  # = NUM_HISTORICAL_SWEEPS + 1
         BEV_IMAGE_STRIDE: 4
-        CONV_INPUT_CHANNELS: 128
-        POINT_HEAD_HIDDEN_CHANNELS: [64]
-        OBJ_HEAD_HIDDEN_CHANNELS: [64]
+        CONV_INPUT_CHANNELS: 64
+        POINT_HEAD_HIDDEN_CHANNELS: [32]
+        OBJ_HEAD_HIDDEN_CHANNELS: [32]
         THRESHOLD_POINT_CLS_PROB: 0.3
 
     DENSE_HEAD:
@@ -92,7 +92,7 @@ OPTIMIZATION:
     NUM_EPOCHS: 20
 
     OPTIMIZER: adam_onecycle
-    LR: 0.001
+    LR: 0.00051
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 
