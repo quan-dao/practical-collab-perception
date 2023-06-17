@@ -84,7 +84,7 @@ class V2XSimDataset_CAR(V2XSimDataset_RSU):
                                                        sensor_token, 
                                                        self.classes_of_interest, 
                                                        self.dataset_cfg.get('POINTS_IN_BOXES_GPU', False), 
-                                                       self.dataset_cfg.get('THRESHOLD_BOXES_BY_POINTS', 5))
+                                                       self.dataset_cfg.get('THRESHOLD_BOXES_BY_POINTS', 1))
 
                 gt_boxes = stuff['boxes_in_lidar']  # (N_gt, 7)
                 gt_names = stuff['boxes_name']  # (N_gt,)
