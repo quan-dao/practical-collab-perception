@@ -297,10 +297,16 @@ def get_pseudo_sweeps_of_1lidar(nusc: NuScenes,
         instances_tf.append(_inst_tf[np.newaxis])
 
     # stick sim_points & background
-    sim_points = np.concatenate(sim_points)
-    points = np.concatenate([backgr, sim_points])
+    if len(sim_points) > 0:
+        sim_points = np.concatenate(sim_points)
+        points = np.concatenate([backgr, sim_points])
+    else:
+        points = backgr
     
-    instances_tf = np.concatenate(instances_tf, axis=0)  # (N_inst, N_sweep, 4, 4)
+    if len(instances_tf) > 0: 
+        instances_tf = np.concatenate(instances_tf, axis=0)  # (N_inst, N_sweep, 4, 4)
+    else:
+        instances_tf = np.zeros((0, 11, 4, 4))
 
 
     out = {'points': points,  # (N_pts_tot, 5 + 2) - point-5, sweep_idx, inst_idx
