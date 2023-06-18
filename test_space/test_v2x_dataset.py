@@ -84,12 +84,13 @@ def main(test_dataset: bool = False,
          chosen_batch_idx: int = 1,
          debug_dataset: bool = False,
          dataset_type: str = 'rsu',
-         save_batch_dict: bool = True):
+         save_batch_dict: bool = True,
+         version: str ='v2.0-mini'):
     np.random.seed(666)
     assert dataset_type in ('rsu', 'car', 'ego')
     cfg_file = f'../tools/cfgs/dataset_configs/v2x_sim_dataset_{dataset_type}.yaml'
     dataset, dataloader = build_dataset_for_testing(
-        cfg_file, ['car', 'pedestrian'], debug_dataset=debug_dataset, version='v2.0-mini', batch_size=2, training=True)
+        cfg_file, ['car', 'pedestrian'], debug_dataset=debug_dataset, version=version, batch_size=2, training=True)
     if test_dataset:
         _dataset(dataset, dataset_sample_idx)
 
@@ -107,6 +108,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug_dataset', type=int, default=0)
     parser.add_argument('--dataset_type', type=str, default='rsu')
     parser.add_argument('--save_batch_dict', type=int, default=0)
+    parser.add_argument('--version', type=str, default='v2.0-mini')
     args = parser.parse_args()
     main(args.test_dataset==1,
          args.dataset_sample_idx,
@@ -115,4 +117,7 @@ if __name__ == '__main__':
          args.chosen_batch_idx,
          args.debug_dataset,
          args.dataset_type,
-         args.save_batch_dict==1)
+         args.save_batch_dict==1,
+         args.version)
+
+    # python test_v2x_dataset.py --test_dataloader 1 --debug_dataset 1 --dataset_type ego --save_batch_dict 1 --version v2.0-trainval
