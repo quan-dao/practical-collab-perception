@@ -1,6 +1,7 @@
 import numpy as np
 import argparse
 import matplotlib.cm
+import pickle
 
 from test_space.tools import build_dataset_for_testing
 from workspace.o3d_visualization import PointsPainter, print_dict
@@ -36,11 +37,21 @@ def _dataset(dataset, sample_idx: int):
     painter.show(points_color, boxes_color)
 
 
-def _dataloader(dataloader, target_batch_idx: int, chosen_batch_idx: int):
-    iter_dataloader = iter(dataloader)
-    batch_dict = None
-    for _ in range(target_batch_idx + 1):
-        batch_dict = next(iter_dataloader)
+def _dataloader(dataloader, target_batch_idx: int, chosen_batch_idx: int, save_batch_dict: bool, dataset_type: str):
+    if save_batch_dict:
+        iter_dataloader = iter(dataloader)
+        batch_dict = None
+        for _ in range(target_batch_idx + 1):
+            batch_dict = next(iter_dataloader)
+        
+        with open(f'artifact/v2x_sim_batch_dict_{dataset_type}.pkl', 'wb') as f:
+            pickle.dump(batch_dict, f)
+        
+        print(f'batch dict saved in artifact/v2x_sim_batch_dict_{dataset_type}.pkl')
+        return
+    else:
+        with open(f'artifact/v2x_sim_batch_dict_{dataset_type}.pkl', 'rb') as f:
+            batch_dict = pickle.load(f)
     
     print_dict(batch_dict, 'batch_dict')
 
@@ -72,19 +83,18 @@ def main(test_dataset: bool = False,
          target_batch_idx: int = 3,
          chosen_batch_idx: int = 1,
          debug_dataset: bool = False,
-         test_car: bool = False):
+         dataset_type: str = 'rsu',
+         save_batch_dict: bool = True):
     np.random.seed(666)
-    if not test_car:
-        cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml'
-    else:
-        cfg_file = '../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml'
+    assert dataset_type in ('rsu', 'car', 'ego')
+    cfg_file = f'../tools/cfgs/dataset_configs/v2x_sim_dataset_{dataset_type}.yaml'
     dataset, dataloader = build_dataset_for_testing(
         cfg_file, ['car', 'pedestrian'], debug_dataset=debug_dataset, version='v2.0-mini', batch_size=2, training=True)
     if test_dataset:
         _dataset(dataset, dataset_sample_idx)
 
     if test_dataloader:
-        _dataloader(dataloader, target_batch_idx, chosen_batch_idx)
+        _dataloader(dataloader, target_batch_idx, chosen_batch_idx, save_batch_dict, dataset_type)
     
 
 if __name__ == '__main__':
@@ -95,7 +105,8 @@ if __name__ == '__main__':
     parser.add_argument('--target_batch_idx', type=int, default=3)
     parser.add_argument('--chosen_batch_idx', type=int, default=1)
     parser.add_argument('--debug_dataset', type=int, default=0)
-    parser.add_argument('--test_car', type=int, default=0)
+    parser.add_argument('--dataset_type', type=str, default='rsu')
+    parser.add_argument('--save_batch_dict', type=int, default=0)
     args = parser.parse_args()
     main(args.test_dataset==1,
          args.dataset_sample_idx,
@@ -103,4 +114,5 @@ if __name__ == '__main__':
          args.target_batch_idx,
          args.chosen_batch_idx,
          args.debug_dataset,
-         args.test_car == 1)
+         args.dataset_type,
+         args.save_batch_dict==1)
