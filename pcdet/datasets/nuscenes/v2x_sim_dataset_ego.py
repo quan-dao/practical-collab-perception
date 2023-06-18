@@ -11,8 +11,13 @@ from workspace.v2x_sim_utils import get_pseudo_sweeps_of_1lidar
 class V2XSimDataset_EGO(V2XSimDataset_CAR):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
-        self.exchange_database = Path(dataset_cfg.DATABASE_EXCHANGE_DATA)
-        assert self.exchange_database.exists(), f"{self.exchange_database} does not exist"
+        
+        self.exchange_database_rsu = self.root_path / 'exchange_database_rsu'
+        assert self.exchange_database_rsu.exists(), f"{self.exchange_database_rsu} does not exist"
+
+        self.exchange_database_car = self.root_path / 'exchange_database_car'
+        if not self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False):
+            assert self.exchange_database_car.exists(), f"{self.exchange_database_car} does not exist"
 
     def include_v2x_sim_data(self, mode):
         self.logger.info('Loading V2X-Sim dataset')
@@ -63,7 +68,9 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         max_sweep_idx = points[:, -2].max()
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
-        for lidar_name, lidar_token in sample['data']:
+        exchange_metadata = dict([(lidar_id, [0, 0]) for lidar_id in range(6) and lidar_id != 1])
+
+        for lidar_name in sample['data'].keys():
             if 'LIDAR_TOP_id_' not in lidar_name:
                 continue
             
@@ -74,9 +81,9 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
             if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id != 0:
                 continue
             
+            exchange_database = self.exchange_database_rsu if lidar_id == 0 else self.exchange_database_car
             exchanged_points = list()
-
-            path_foregr = self.exchange_database / f"{sample_token}_id{lidar_id}_foreground.pth"
+            path_foregr = exchange_database / f"{sample_token}_id{lidar_id}_foreground.pth"
             if path_foregr.exists():
                 foregr = torch.load(path_foregr, map_location=torch.device('cpu'))  
                 # (N_fore, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3
@@ -88,8 +95,10 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 foregr_[:, :8] = foregr[:, :8]
                 foregr_[:, -2:] = foregr[:, -2:]
                 exchanged_points.append(foregr_)
+                # log metadata
+                exchange_metadata[lidar_id][0] = foregr_.shape[0]
             
-            path_modar = self.exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
+            path_modar = exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
             if path_modar.exists():
                 modar = torch.load(path_modar, map_location=torch.device('cpu'))
                 # (N_modar, 7 + 2) - box-7, score, label
@@ -99,6 +108,8 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 modar_[:, -2] = max_sweep_idx
                 modar_[:, -1] = -1  # dummy instance_idx
                 exchanged_points.append(modar_)
+                # log metadata
+                exchange_metadata[lidar_id][0] = modar_.shape[0]
             
             if len(exchanged_points) > 0:
                 exchanged_points = np.concatenate(exchanged_points)
@@ -115,7 +126,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 'num_sweeps_target': self.num_sweeps,
                 'sample_token': info['token'],
                 'lidar_id': 1,
-                # TODO: number of RSU foreground & modar
+                'exchange': exchange_metadata
             }
         }
 

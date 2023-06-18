@@ -15,6 +15,7 @@ from .lyft.lyft_dataset import LyftDataset
 from .custom.custom_dataset import CustomDataset
 from .nuscenes.v2x_sim_dataset import V2XSimDataset_RSU
 from .nuscenes.v2x_sim_dataset_car import V2XSimDataset_CAR
+from .nuscenes.v2x_sim_dataset_ego import V2XSimDataset_EGO
 
 __all__ = {
     'DatasetTemplate': DatasetTemplate,
@@ -27,6 +28,7 @@ __all__ = {
     'CustomDataset': CustomDataset,
     'V2XSimDataset_RSU': V2XSimDataset_RSU,
     'V2XSimDataset_CAR': V2XSimDataset_CAR,
+    'V2XSimDataset_EGO': V2XSimDataset_EGO,
 }
 
 
