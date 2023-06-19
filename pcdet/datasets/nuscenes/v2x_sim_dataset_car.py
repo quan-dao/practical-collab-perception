@@ -56,6 +56,19 @@ class V2XSimDataset_CAR(V2XSimDataset_RSU):
         for lidar_id, lidar_infos in self.infos.items():
             if len(lidar_infos) > 0:
                 merge_infos.extend(lidar_infos)
+
+        if not self.training:
+            # filter out SEMLIDAR_TOP_id_
+            self.logger.info('clearing out SEMLIDAR_TOP_id_')
+            invalid_indices = list()
+            for _idx, info in merge_infos:
+                lidar_rec = self.nusc.get('sample_data', info['lidar_token'])
+                if 'SEM' in lidar_rec['channel']:
+                    invalid_indices.append(_idx)
+            self.logger.info(f'num SEMLIDAR_TOP_id_ get removed: {len(invalid_indices)}')
+
+            for idx in reversed(invalid_indices):
+                del merge_infos[idx]
         
         self.infos = merge_infos
         self.logger.info('Total samples for V2X-Sim dataset: %d' % (len(self.infos)))
