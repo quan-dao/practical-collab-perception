@@ -3,7 +3,7 @@ CLASS_NAMES: ['car']
 
 DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
-    DATASET_DOWNSAMPLING_RATIO: 16
+    DATASET_DOWNSAMPLING_RATIO: 16  # remember to comment this out when generating exchange database
     POINTS_IN_BOXES_GPU: True
     
 MODEL:
