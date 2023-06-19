@@ -30,7 +30,11 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
 
             with open(info_path, 'rb') as f:
                 infos = pickle.load(f)
-                self.infos.extend(infos[1])  # ego vehicle's lidar: LIDAR_TOP_id_1
+            
+            for _info in infos[1]:  # ego vehicle's lidar: LIDAR_TOP_id_1
+                lidar_rec = self.nusc.get('sample_data', _info['lidar_token'])
+                if 'SEM' not in lidar_rec['channel']:
+                    self.infos.appen(_info)  
             
         if self.training and self.dataset_cfg.get('DATASET_DOWNSAMPLING_RATIO', 1) > 1:
             self.infos.sort(key=lambda e: e['timestamp'])
