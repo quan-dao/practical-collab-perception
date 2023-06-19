@@ -12,12 +12,8 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
         
-        self.exchange_database_rsu = self.root_path / 'exchange_database_rsu'
-        assert self.exchange_database_rsu.exists(), f"{self.exchange_database_rsu} does not exist"
-
-        self.exchange_database_car = self.root_path / 'exchange_database_car'
-        if not self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False):
-            assert self.exchange_database_car.exists(), f"{self.exchange_database_car} does not exist"
+        self.exchange_database = self.root_path / 'exchange_database_rsu'
+        assert self.exchange_database.exists(), f"{self.exchange_database} does not exist"
 
         self._lidars_name = set([f'LIDAR_TOP_id_{lidar_id}' for lidar_id in range(6)])  # watchout for SEMLIDAR_TOP_id_
 
@@ -91,7 +87,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
             glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
             target_se3_lidar = target_se3_glob @ glob_se3_lidar
 
-            exchange_database = self.exchange_database_rsu if lidar_id == 0 else self.exchange_database_car
+            exchange_database = self.exchange_database
             exchanged_points = list()
             path_foregr = exchange_database / f"{sample_token}_id{lidar_id}_foreground.pth"
             if path_foregr.exists():

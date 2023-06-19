@@ -39,7 +39,7 @@ MODEL:
         THRESHOLD_POINT_CLS_PROB: 0.3
         # v2x stuff
         GENERATING_EXCHANGE_DATA: True
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_car
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_rsu
 
     DENSE_HEAD:
         NAME: CenterHead
