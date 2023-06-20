@@ -24,6 +24,8 @@ def gen_exchange_database(model_type: str,
     cfg.DATA_CONFIG.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
                                                        'random_world_rotation', 'random_world_scaling']
     cfg.DATA_CONFIG.MINI_TRAINVAL_STRIDE = 1
+    if cfg.DATA_CONFIG.get('DATASET_DOWNSAMPLING_RATIO', 1) > 1:
+        cfg.DATA_CONFIG.DATASET_DOWNSAMPLING_RATIO = 1
     logger = common_utils.create_logger(f'log_v2x_gen_exchange_database_{model_type}.txt')
 
     dataset, dataloader, _ = build_dataloader(
