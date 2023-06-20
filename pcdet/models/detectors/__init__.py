@@ -14,6 +14,7 @@ from .mppnet_e2e import MPPNetE2E
 from .pillarnet import PillarNet
 from .alginer import Aligner
 from .obj_discoverer import ObjectDiscoverer
+from .v2x_late_fusion import V2XLateFusion
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -31,7 +32,8 @@ __all__ = {
     'MPPNetE2E': MPPNetE2E,
     'PillarNet': PillarNet,
     'Aligner': Aligner,
-    'ObjectDiscoverer': ObjectDiscoverer
+    'ObjectDiscoverer': ObjectDiscoverer,
+    'V2XLateFusion': V2XLateFusion
 }
 
 
