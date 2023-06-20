@@ -17,6 +17,7 @@ from .nuscenes.v2x_sim_dataset import V2XSimDataset_RSU
 from .nuscenes.v2x_sim_dataset_car import V2XSimDataset_CAR
 from .nuscenes.v2x_sim_dataset_ego import V2XSimDataset_EGO
 from .nuscenes.v2x_sim_dataset_ego_early import V2XSimDataset_EGO_EARLY
+from .nuscenes.v2x_sim_dataset_ego_late import V2XSimDataset_EGO_LATE
 
 __all__ = {
     'DatasetTemplate': DatasetTemplate,
@@ -30,7 +31,8 @@ __all__ = {
     'V2XSimDataset_RSU': V2XSimDataset_RSU,
     'V2XSimDataset_CAR': V2XSimDataset_CAR,
     'V2XSimDataset_EGO': V2XSimDataset_EGO,
-    'V2XSimDataset_EGO_EARLY': V2XSimDataset_EGO_EARLY
+    'V2XSimDataset_EGO_EARLY': V2XSimDataset_EGO_EARLY,
+    'V2XSimDataset_EGO_LATE': V2XSimDataset_EGO_LATE,
 }
 
 
