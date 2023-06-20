@@ -1,13 +1,11 @@
 import numpy as np
-from nuscenes import NuScenes
 import pickle
+import argparse
 
 from workspace.o3d_visualization import print_dict, PointsPainter
-from workspace.nuscenes_temporal_utils import apply_se3_, get_nuscenes_sensor_pose_in_global, get_one_pointcloud
-# from workspace.v2x_sim_utils import get_one_pointcloud
 
 
-def main(chosen_batch_idx: int):
+def test_ego(chosen_batch_idx: int):
     with open('artifact/v2x_sim_batch_dict_ego.pkl', 'rb') as f:
         batch_dict = pickle.load(f)
     
@@ -36,8 +34,40 @@ def main(chosen_batch_idx: int):
     points_color[mask_modar, 2] = 1
     painter.show(points_color)
 
+
+def test_ego_early(chosen_batch_idx: int):
+    with open('artifact/v2x_sim_batch_dict_ego_early.pkl', 'rb') as f:
+        batch_dict = pickle.load(f)
     
+    points = batch_dict['points']
+    gt_boxes = batch_dict['gt_boxes']
+    metadata = batch_dict['metadata']
+
+    # -----------
+    points = points[points[:, 0].astype(int) == chosen_batch_idx, 1:]
+    print('points: ', points.shape)
+    print('num original: ', metadata[chosen_batch_idx]['num_original'])
+    print_dict(metadata[chosen_batch_idx]['exchange'], 'exchange')
+
+    gt_boxes = gt_boxes[chosen_batch_idx, :, :7]
+    metadata = metadata[chosen_batch_idx]
+
+    painter = PointsPainter(points[:, :3], gt_boxes[:, :7])
+    painter.show()
+
+
+def main(dataset_type: str, chosen_batch_idx):
+    assert dataset_type in ('ego', 'ego_early')
+    if dataset_type == 'ego':
+        test_ego(chosen_batch_idx)
+    else:
+        test_ego_early(chosen_batch_idx)
+
 
 
 if __name__ == '__main__':
-    main(chosen_batch_idx=1)
+    parser = argparse.ArgumentParser(description='arg parser')
+    parser.add_argument('--dataset_type', type=str)
+    parser.add_argument('--chosen_batch_idx', type=int, default=0)
+    args = parser.parse_args()
+    main(args.dataset_type, args.chosen_batch_idx)

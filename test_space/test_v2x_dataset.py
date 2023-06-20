@@ -54,26 +54,28 @@ def _dataloader(dataloader, target_batch_idx: int, chosen_batch_idx: int, save_b
             batch_dict = pickle.load(f)
     
     print_dict(batch_dict, 'batch_dict')
+    if dataset_type in ('rsu', 'car'):
+        points = batch_dict['points']  # (N_pts, 1 + 5 + 2) - batch_idx, point-5, sweep_idx, inst_idx
+        gt_boxes = batch_dict['gt_boxes']  # (B, N_gt_max, 7 + 1) - box-7, class_idx
+        instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
 
-    points = batch_dict['points']  # (N_pts, 1 + 5 + 2) - batch_idx, point-5, sweep_idx, inst_idx
-    gt_boxes = batch_dict['gt_boxes']  # (B, N_gt_max, 7 + 1) - box-7, class_idx
-    instances_tf = batch_dict['instances_tf']  # (B, N_inst_max, N_sweep, 3, 4)
+        points = points[points[:, 0].astype(int) == chosen_batch_idx]
+        gt_boxes = gt_boxes[chosen_batch_idx]
+        instances_tf = instances_tf[chosen_batch_idx]
 
-    points = points[points[:, 0].astype(int) == chosen_batch_idx]
-    gt_boxes = gt_boxes[chosen_batch_idx]
-    instances_tf = instances_tf[chosen_batch_idx]
+        print('showing original')
+        painter = PointsPainter(points[:, 1: 4], gt_boxes[:, :7])
+        boxes_color = classes_color[gt_boxes[:, -1].astype(int) - 1]
+        instances_color = matplotlib.cm.rainbow(np.linspace(0, 1, instances_tf.shape[0]))[:, :3]
+        points_color = instances_color[points[:, -1].astype(int)] * (points[:, -1] > -1).astype(float).reshape(-1, 1)
+        painter.show(points_color, boxes_color)
 
-    print('showing original')
-    painter = PointsPainter(points[:, 1: 4], gt_boxes[:, :7])
-    boxes_color = classes_color[gt_boxes[:, -1].astype(int) - 1]
-    instances_color = matplotlib.cm.rainbow(np.linspace(0, 1, instances_tf.shape[0]))[:, :3]
-    points_color = instances_color[points[:, -1].astype(int)] * (points[:, -1] > -1).astype(float).reshape(-1, 1)
-    painter.show(points_color, boxes_color)
-
-    print('showing correction')
-    corrected_xyz = correction_numpy(points[:, 1:], instances_tf)
-    painter = PointsPainter(corrected_xyz, gt_boxes[:, :7])
-    painter.show(points_color, boxes_color)
+        print('showing correction')
+        corrected_xyz = correction_numpy(points[:, 1:], instances_tf)
+        painter = PointsPainter(corrected_xyz, gt_boxes[:, :7])
+        painter.show(points_color, boxes_color)
+    else:
+        print('to visualize ego or ego_early, use test_v2x_exchange for visualizing batch_dict')
 
 
 
@@ -87,7 +89,7 @@ def main(test_dataset: bool = False,
          save_batch_dict: bool = True,
          version: str ='v2.0-mini'):
     np.random.seed(666)
-    assert dataset_type in ('rsu', 'car', 'ego')
+    assert dataset_type in ('rsu', 'car', 'ego', 'ego_early')
     cfg_file = f'../tools/cfgs/dataset_configs/v2x_sim_dataset_{dataset_type}.yaml'
     dataset, dataloader = build_dataset_for_testing(
         cfg_file, ['car', 'pedestrian'], debug_dataset=debug_dataset, version=version, batch_size=2, training=True)
