@@ -1,8 +1,9 @@
 CLASS_NAMES: ['car']
 
 DATA_CONFIG:
-    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego.yaml
     POINTS_IN_BOXES_GPU: True
+    DATASET_DOWNSAMPLING_RATIO: 2
     
 MODEL:
     NAME: CenterPoint
@@ -81,7 +82,7 @@ OPTIMIZATION:
     NUM_EPOCHS: 20
 
     OPTIMIZER: adam_onecycle
-    LR: 0.001
+    LR: 0.00051
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 
