@@ -4,6 +4,7 @@ CLASS_NAMES: ['car']
 DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego_late.yaml
     POINTS_IN_BOXES_GPU: True
+    BOX_FUSION_EGO_WEIGHT: 2.0
     
 MODEL:
     NAME: V2XLateFusion

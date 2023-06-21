@@ -40,7 +40,7 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
         exchange_metadata = dict([(i, 0.) for i in range(6) if i != 1])
-        exchange_boxes = list()
+        exchange_boxes = dict([(i, np.zeros((0, 9))) for i in range(6) if i != 1])
         for lidar_name, lidar_token in sample['data'].items():
             if lidar_name not in self._lidars_name:
                 continue
@@ -60,16 +60,12 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
 
                 # map modar (center & heading) to target frame
                 modar[:, :7] = apply_se3_(target_se3_lidar, boxes_=modar[:, :7], return_transformed=True)
-            
+
+                exchange_boxes[lidar_id] = modar
+
             # store
             exchange_metadata[lidar_id] = modar.shape[0]
-            exchange_boxes.append(modar)
 
-        if len(exchange_boxes) > 0:
-            exchange_boxes = np.concatenate(exchange_boxes, axis=0)
-        else:
-            exchange_boxes = np.zeros((0, 9))
-        
         # assemble datadict
         input_dict = {
             'points': points,  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx

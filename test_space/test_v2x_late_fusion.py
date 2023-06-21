@@ -34,6 +34,7 @@ def make_batch_dict(batch_size: int = 2, target_batch_idx: int = 3):
         workers=0)
     
     model = build_detector(cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=dataset)
+    model.eval()
 
     nusc = dataset.nusc
     _lidars_name = [f'LIDAR_TOP_id_{i}' for i in range(6)]
@@ -53,10 +54,11 @@ def make_batch_dict(batch_size: int = 2, target_batch_idx: int = 3):
         batch_exchange_points = list()
         for data_idx in range(len(pred_dicts)):
             # load exchange points for visualization purpose
-            sample_token = metadata[data_idx]['lidar_token']
-            sample = nusc.get('sample', sample_token)
+            ego_lidar_token = metadata[data_idx]['lidar_token']
+            ego_lidar_rec = nusc.get('sample_data', ego_lidar_token)
+            sample = nusc.get('sample', ego_lidar_rec['sample_token'])
             
-            target_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(nusc, sample_token))
+            target_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(nusc, ego_lidar_token))
 
             for lidar_name, lidar_token in sample['data'].items():
                 if lidar_name not in _lidars_name:
@@ -87,7 +89,7 @@ def make_batch_dict(batch_size: int = 2, target_batch_idx: int = 3):
             'metadata': metadata,
             'pred_dicts': pred_dicts
         }
-        torch.save(out, './artifact/v2x_late_fusion_pred_dict.pth')
+        torch.save(out, './artifact/v2x_late_fusion_pred_dict_kde.pth')
         break
 
 
