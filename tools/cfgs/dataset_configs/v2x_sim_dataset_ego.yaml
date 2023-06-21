@@ -11,7 +11,8 @@ POINT_CLOUD_RANGE: [-51.2, -51.2, -8.0, 51.2, 51.2, 0.0]
 
 # V2X Stuff
 EXCHANGE_WITH_RSU_ONLY: False
-
+EXCHANGE_FOREGROUND: True
+EXCHANGE_MODAR: True
 
 DATA_SPLIT: {
     'train': train,

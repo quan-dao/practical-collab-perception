@@ -90,7 +90,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
             exchange_database = self.exchange_database
             exchanged_points = list()
             path_foregr = exchange_database / f"{sample_token}_id{lidar_id}_foreground.pth"
-            if path_foregr.exists():
+            if path_foregr.exists() and self.dataset_cfg.EXCHANGE_FOREGROUND:
                 foregr = torch.load(path_foregr, map_location=torch.device('cpu'))  
                 # (N_fore, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3
                 foregr = torch.cat([foregr[:, :5],  # point-5  
@@ -109,7 +109,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 exchange_metadata[lidar_id][0] = foregr_.shape[0]
             
             path_modar = exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
-            if path_modar.exists():
+            if path_modar.exists() and self.dataset_cfg.EXCHANGE_MODAR:
                 modar = torch.load(path_modar, map_location=torch.device('cpu')).numpy()
                 # (N_modar, 7 + 2) - box-7, score, label
 
