@@ -331,9 +331,12 @@ def label_fusion(boxes_lidar, fusion_name, discard, radius, weights=None):
     combined_frame_boxes, raw_boxes = [], []    
     for m_box_inds in matched_inds_list:
 
-        matched_boxes = boxes_lidar[list(m_box_inds)]
+        matched_boxes = boxes_lidar[list(m_box_inds)]  # (N_matched, 9)
         unique = np.unique(matched_boxes[:,:3].round(decimals=4), axis=0)
         if len(unique) < discard:
+            # keep box that has the highest score
+            _box = matched_boxes[np.argmax(matched_boxes[:, -1])]
+            combined_frame_boxes.append(_box)
             continue
         fusion_func = globals()[fusion_name]
         src_weights = matched_boxes[:,8] if weights is None else weights[list(m_box_inds)]

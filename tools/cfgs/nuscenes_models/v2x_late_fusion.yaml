@@ -8,6 +8,8 @@ DATA_CONFIG:
 MODEL:
     NAME: V2XLateFusion
 
+    BOX_FUSION_METHOD: kde
+
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
         SCORE_THRESH: 0.1
