@@ -39,7 +39,7 @@ MODEL:
         THRESHOLD_POINT_CLS_PROB: 0.3
         # v2x stuff
         GENERATING_EXCHANGE_DATA: True
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_rsu
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow
 
     DENSE_HEAD:
         NAME: CenterHead
@@ -88,7 +88,7 @@ MODEL:
         
         # v2x stuff
         GENERATING_EXCHANGE_DATA: True
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_rsu
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]

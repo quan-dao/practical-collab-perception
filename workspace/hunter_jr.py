@@ -374,8 +374,9 @@ class HunterJr(nn.Module):
             mask_send = points_cls_prob[:, 0] < 0.3  # prob background is sufficiently small
             if torch.any(mask_send):
                 points_to_send = torch.cat([points[mask_send, 1:],  # exclude batch_idx | point-5, sweep_idx, inst_idx
-                                            points_cls_prob[mask_send]], 
-                                            dim=1)  # (N_pts_send, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3
+                                            points_cls_prob[mask_send],
+                                            points_flow3d[mask_send]], 
+                                            dim=1)  # (N_pts_send, 5 + 3 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3, flow-3
                 
                 points_to_send_batch_idx = points[mask_send, 0].long()
                 for b_idx, metadata in enumerate(batch_dict['metadata']):
