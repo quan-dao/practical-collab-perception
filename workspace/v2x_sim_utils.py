@@ -71,8 +71,8 @@ def find_nonempty_boxes(points: np.ndarray, boxes: np.ndarray, use_gpu: bool = F
     """
     if use_gpu:
         box_idx_of_points = roiaware_pool3d_utils.points_in_boxes_gpu(
-            torch.from_numpy(points[:, :3]).float().unsqueeze(0).float().cuda(),
-            torch.from_numpy(boxes[:, :7]).float().unsqueeze(0).float().cuda(),
+            torch.from_numpy(points[:, :3]).unsqueeze(0).float().cuda(),
+            torch.from_numpy(boxes[:, :7]).unsqueeze(0).float().cuda(),
         ).long().squeeze(0).cpu().numpy()  # (N_pts,) to index into (N_b)
         # box_idx_of_points == -1 means background points
 
