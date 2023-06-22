@@ -69,65 +69,72 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         # exchange stuff
         # ---------------------------
         max_sweep_idx = points[:, -2].max()
+        max_time_lag = points[:, 4].max()
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
-        exchange_metadata = dict([(i, [0., 0.]) for i in range(6) if i != 1])
+        if sample['prev'] != '':
+            prev_sample_token = sample['prev']
+            prev_sample = self.nusc.get('sample', prev_sample_token)
 
-        for lidar_name, lidar_token in sample['data'].items():
-            if lidar_name not in self._lidars_name:
-                continue
-            
-            lidar_id = int(lidar_name.split('_')[-1])
-            if lidar_id == 1:
-                continue
+            exchange_metadata = dict([(i, [0., 0.]) for i in range(6) if i != 1])
 
-            if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id != 0:
-                continue
-            
-            glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
-            target_se3_lidar = target_se3_glob @ glob_se3_lidar
+            for lidar_name, lidar_token in prev_sample['data'].items():
+                if lidar_name not in self._lidars_name:
+                    continue
+                
+                lidar_id = int(lidar_name.split('_')[-1])
+                if lidar_id == 1:
+                    continue
 
-            exchange_database = self.exchange_database
-            exchanged_points = list()
-            path_foregr = exchange_database / f"{sample_token}_id{lidar_id}_foreground.pth"
-            if path_foregr.exists() and self.dataset_cfg.EXCHANGE_FOREGROUND:
-                foregr = torch.load(path_foregr, map_location=torch.device('cpu'))  
-                # (N_fore, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3
-                foregr = torch.cat([foregr[:, :5],  # point-5  
-                                    foregr[:, -3:],  # 3-class prob (backgr, stat_foregr, dyn_foregr)
-                                    foregr[:, [5, 6]]  # sweep_idx, inst_idx
-                                    ], dim=1).contiguous().numpy()
-                foregr_ = np.zeros((foregr.shape[0], points_.shape[1]))
-                foregr_[:, :8] = foregr[:, :8]
-                foregr_[:, -2:] = foregr[:, -2:]
+                if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id != 0:
+                    continue
+                
+                glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
+                target_se3_lidar = target_se3_glob @ glob_se3_lidar
 
-                # map foregr_ to target frame
-                foregr_[:, :3] = apply_se3_(target_se3_lidar, points_=foregr_[:, :3], return_transformed=True)
+                exchange_database = self.exchange_database
+                exchanged_points = list()
+                path_foregr = exchange_database / f"{prev_sample_token}_id{lidar_id}_foreground.pth"
+                if path_foregr.exists() and self.dataset_cfg.EXCHANGE_FOREGROUND:
+                    foregr = torch.load(path_foregr, map_location=torch.device('cpu'))  
+                    # (N_fore, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3
+                    foregr[:, 4] = 0.  # zero time-lag as foregr were corrected
+                    foregr = torch.cat([foregr[:, :5],  # point-5  
+                                        foregr[:, -3:],  # 3-class prob (backgr, stat_foregr, dyn_foregr)
+                                        foregr[:, [5, 6]]  # sweep_idx, inst_idx
+                                        ], dim=1).contiguous().numpy()
+                    foregr_ = np.zeros((foregr.shape[0], points_.shape[1]))
+                    foregr_[:, :8] = foregr[:, :8]
+                    foregr_[:, -2:] = foregr[:, -2:]
 
-                exchanged_points.append(foregr_)
-                # log metadata
-                exchange_metadata[lidar_id][0] = foregr_.shape[0]
-            
-            path_modar = exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
-            if path_modar.exists() and self.dataset_cfg.EXCHANGE_MODAR:
-                modar = torch.load(path_modar, map_location=torch.device('cpu')).numpy()
-                # (N_modar, 7 + 2) - box-7, score, label
+                    # map foregr_ to target frame
+                    foregr_[:, :3] = apply_se3_(target_se3_lidar, points_=foregr_[:, :3], return_transformed=True)
 
-                # map modar (center & heading) to target frame
-                modar[:, :7] = apply_se3_(target_se3_lidar, boxes_=modar[:, :7], return_transformed=True)
+                    exchanged_points.append(foregr_)
+                    # log metadata
+                    exchange_metadata[lidar_id][0] = foregr_.shape[0]
+                
+                path_modar = exchange_database / f"{prev_sample_token}_id{lidar_id}_modar.pth"
+                if path_modar.exists() and self.dataset_cfg.EXCHANGE_MODAR:
+                    modar = torch.load(path_modar, map_location=torch.device('cpu')).numpy()
+                    # (N_modar, 7 + 2) - box-7, score, label
 
-                modar_ = np.zeros((modar.shape[0], points_.shape[1]))
-                modar_[:, :3] = modar[:, :3]
-                modar_[:, 8: -2] = modar[:, 3:]
-                modar_[:, -2] = max_sweep_idx
-                modar_[:, -1] = -1  # dummy instance_idx
-                exchanged_points.append(modar_)
-                # log metadata
-                exchange_metadata[lidar_id][1] = modar_.shape[0]
-            
-            if len(exchanged_points) > 0:
-                exchanged_points = np.concatenate(exchanged_points)
-                points_ = np.concatenate((points_, exchanged_points))
+                    # map modar (center & heading) to target frame
+                    modar[:, :7] = apply_se3_(target_se3_lidar, boxes_=modar[:, :7], return_transformed=True)
+
+                    modar_ = np.zeros((modar.shape[0], points_.shape[1]))
+                    modar_[:, :3] = modar[:, :3]
+                    modar_[:, 4] = max_time_lag
+                    modar_[:, 8: -2] = modar[:, 3:]
+                    modar_[:, -2] = max_sweep_idx
+                    modar_[:, -1] = -1  # dummy instance_idx
+                    exchanged_points.append(modar_)
+                    # log metadata
+                    exchange_metadata[lidar_id][1] = modar_.shape[0]
+                
+                if len(exchanged_points) > 0:
+                    exchanged_points = np.concatenate(exchanged_points)
+                    points_ = np.concatenate((points_, exchanged_points))
         
         # assemble datadict
         input_dict = {
