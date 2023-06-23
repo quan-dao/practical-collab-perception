@@ -41,7 +41,7 @@ def gen_exchange_database(model_type: str,
     model.cuda()
     model.eval()
 
-    exchange_root = dataset.root_path / f"exchange_database_{model_type}"
+    exchange_root = dataset.root_path / "exchange_database_flow"
     if not exchange_root.exists():
         exchange_root.mkdir(parents=True, exist_ok=True)
 
