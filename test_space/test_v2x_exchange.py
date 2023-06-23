@@ -17,22 +17,31 @@ def test_ego(chosen_batch_idx: int):
     points = points[points[:, 0].astype(int) == chosen_batch_idx, 1:]
     gt_boxes = gt_boxes[chosen_batch_idx, :, :7]
     metadata = metadata[chosen_batch_idx]
+    print(metadata['exchange'])
     
     # find foreground points & modar_points
     mask_foreground = (points[:, 5: 8] > 0.1).any(axis=1)
     mask_modar = points[:, -3] > 0
     mask_original = np.logical_not(np.logical_or(mask_foreground, mask_modar))
 
+    frames = metadata['exchange_coord'][0].reshape(-1, 3)
+
     print('showing original')
     painter = PointsPainter(points[mask_original, :3], gt_boxes)
     painter.show()
 
     print('showing original + exchange')
-    painter = PointsPainter(points[:, :3], gt_boxes)
+    
     points_color = np.zeros((points.shape[0], 3))
     points_color[mask_foreground, 0] = 1
     points_color[mask_modar, 2] = 1
-    painter.show(points_color)
+
+    frames_color = np.zeros_like(frames)
+    frames_color[:, 0] = 0.5
+    frames_color[:, 2] = 0.5
+
+    painter = PointsPainter(np.concatenate([points[:, :3], frames]), gt_boxes)
+    painter.show(np.concatenate([points_color, frames_color]))
 
 
 def test_ego_early(chosen_batch_idx: int):
