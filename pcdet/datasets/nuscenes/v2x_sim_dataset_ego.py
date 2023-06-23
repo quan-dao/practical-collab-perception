@@ -74,6 +74,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
         exchange_metadata = dict([(i, [0., 0.]) for i in range(6) if i != 1])
+        exchange_coord = dict([(i, np.zeros(3)) for i in range(6) if i != 1])
         if sample['prev'] != '':
             prev_sample_token = sample['prev']
             prev_sample = self.nusc.get('sample', prev_sample_token)
@@ -125,17 +126,17 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                             # pool
                             box_idx_of_foregr = roiaware_pool3d_utils.points_in_boxes_gpu(
                                 foregr[:, :3].unsqueeze(0), modar[:, :7].unsqueeze(0)
-                            ).long()  # (N_foregr,) | == -1 mean not belong to any boxes
+                            ).squeeze(0).long()  # (N_foregr,) | == -1 mean not belong to any boxes
                             mask_valid_foregr = box_idx_of_foregr > -1
                             foregr = foregr[mask_valid_foregr]
+                            box_idx_of_foregr = box_idx_of_foregr[mask_valid_foregr]
+                            
+                            unq_box_idx, inv_unq_box_idx = torch.unique(box_idx_of_foregr, return_inverse=True)
 
                             # weighted sum of foregrounds' offset; weights = foreground's prob dynamic
-                            boxes_offset = scatter(foregr[:, -3:] * foregr[:, [-4]], box_idx_of_foregr, dim=0, reduce='sum')  # (N_modar, 3)
-                            scale = scatter(foregr[:, -4], box_idx_of_foregr, dim=0, reduce='sum')  # (N_modar,)
-                            boxes_offset /= torch.clamp(scale, min=1e-3).unsqueeze(1)
-
+                            boxes_offset = scatter(foregr[:, -3:], inv_unq_box_idx, dim=0, reduce='mean') * 2.  # (N_modar, 3)
                             # offset modar; here, assume objects maintain the same speed
-                            modar[:, :3] += boxes_offset    
+                            modar[unq_box_idx, :3] += boxes_offset    
 
                     modar = modar.cpu().numpy()
                     # map modar (center & heading) to target frame
@@ -143,13 +144,14 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
 
                     modar_ = np.zeros((modar.shape[0], points_.shape[1]))
                     modar_[:, :3] = modar[:, :3]
-                    modar_[:, 4] = max_time_lag
+                    modar_[:, 4] = max_time_lag  # TODO: after offset, should this be zero?
                     modar_[:, 8: -2] = modar[:, 3:]
                     modar_[:, -2] = max_sweep_idx
                     modar_[:, -1] = -1  # dummy instance_idx
                     exchanged_points.append(modar_)
                     # log metadata
                     exchange_metadata[lidar_id][1] = modar_.shape[0]
+                    exchange_coord[lidar_id] = target_se3_lidar[:3, -1]
                 
                 if len(exchanged_points) > 0:
                     exchanged_points = np.concatenate(exchanged_points)
@@ -167,7 +169,8 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 'sample_token': info['token'],
                 'lidar_id': 1,
                 'num_original': num_original,
-                'exchange': exchange_metadata
+                'exchange': exchange_metadata,
+                'exchange_coord': exchange_coord
             }
         }
 
