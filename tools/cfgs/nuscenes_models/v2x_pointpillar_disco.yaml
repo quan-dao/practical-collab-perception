@@ -2,12 +2,78 @@ CLASS_NAMES: ['car']
 
 
 DATA_CONFIG:
-    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml
-    MINI_TRAINVAL_STRIDE: 4
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
+    DATASET_DOWNSAMPLING_RATIO: 16  # remember to comment this out when generating exchange database
     POINTS_IN_BOXES_GPU: True
     
 MODEL:
     NAME: CenterPoint
+
+    BEV_MAKER_RSU:
+        CKPT: ./pretrained_models/v2x_pointpillar_basic_rsu_ep20.pth
+        MAKER_TYPE: 'rsu'
+        VFE:
+            NAME: DynPillarVFE
+            NUM_RAW_POINT_FEATURES: 5
+            WITH_DISTANCE: False
+            USE_ABSLOTE_XYZ: True
+            USE_NORM: True
+            NUM_FILTERS: [64, 64]
+        MAP_TO_BEV:
+            NAME: PointPillarScatter
+            NUM_BEV_FEATURES: 64
+        BACKBONE_2D:
+            BACKBONE_2D:
+            NAME: BaseBEVBackbone
+            LAYER_NUMS: [3, 5, 5]
+            LAYER_STRIDES: [2, 2, 2]
+            NUM_FILTERS: [64, 128, 256]
+            UPSAMPLE_STRIDES: [0.5, 1, 2]
+            NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+
+    BEV_MAKER_CAR:
+        CKPT: ./pretrained_models/v2x_pointpillar_basic_car_ep20.pth
+        MAKER_TYPE: 'car'
+        VFE:
+            NAME: DynPillarVFE
+            NUM_RAW_POINT_FEATURES: 5
+            WITH_DISTANCE: False
+            USE_ABSLOTE_XYZ: True
+            USE_NORM: True
+            NUM_FILTERS: [64, 64]
+        MAP_TO_BEV:
+            NAME: PointPillarScatter
+            NUM_BEV_FEATURES: 64
+        BACKBONE_2D:
+            BACKBONE_2D:
+            NAME: BaseBEVBackbone
+            LAYER_NUMS: [3, 5, 5]
+            LAYER_STRIDES: [2, 2, 2]
+            NUM_FILTERS: [64, 128, 256]
+            UPSAMPLE_STRIDES: [0.5, 1, 2]
+            NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+
+    BEV_MAKER_EARLY:
+        CKPT: ./pretrained_models/v2x_pointpillar_basic_early_ep20.pth
+        MAKER_TYPE: 'early'
+        VFE:
+            NAME: DynPillarVFE
+            NUM_RAW_POINT_FEATURES: 5
+            WITH_DISTANCE: False
+            USE_ABSLOTE_XYZ: True
+            USE_NORM: True
+            NUM_FILTERS: [64, 64]
+        MAP_TO_BEV:
+            NAME: PointPillarScatter
+            NUM_BEV_FEATURES: 64
+        BACKBONE_2D:
+            BACKBONE_2D:
+            NAME: BaseBEVBackbone
+            LAYER_NUMS: [3, 5, 5]
+            LAYER_STRIDES: [2, 2, 2]
+            NUM_FILTERS: [64, 128, 256]
+            UPSAMPLE_STRIDES: [0.5, 1, 2]
+            NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     VFE:
         NAME: DynPillarVFE
@@ -25,7 +91,7 @@ MODEL:
         NAME: BaseBEVBackbone
         LAYER_NUMS: [3, 5, 5]
         LAYER_STRIDES: [2, 2, 2]
-        NUM_FILTERS: [64, 128, 256]
+        NUM_FILTERS: [64, 128, 128]
         UPSAMPLE_STRIDES: [0.5, 1, 2]
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
@@ -33,13 +99,10 @@ MODEL:
         NAME: HunterJr
         NUM_SWEEPS: 11  # = NUM_HISTORICAL_SWEEPS + 1
         BEV_IMAGE_STRIDE: 4
-        CONV_INPUT_CHANNELS: 128
-        POINT_HEAD_HIDDEN_CHANNELS: [64]
-        OBJ_HEAD_HIDDEN_CHANNELS: [64]
+        CONV_INPUT_CHANNELS: 64
+        POINT_HEAD_HIDDEN_CHANNELS: [32]
+        OBJ_HEAD_HIDDEN_CHANNELS: [32]
         THRESHOLD_POINT_CLS_PROB: 0.3
-        # v2x stuff
-        GENERATING_EXCHANGE_DATA: False
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow_
 
     DENSE_HEAD:
         NAME: CenterHead
@@ -85,10 +148,6 @@ MODEL:
                 NMS_THRESH: 0.2
                 NMS_PRE_MAXSIZE: 1000
                 NMS_POST_MAXSIZE: 83
-        
-        # v2x stuff
-        GENERATING_EXCHANGE_DATA: False
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow_
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
@@ -99,7 +158,7 @@ OPTIMIZATION:
     NUM_EPOCHS: 20
 
     OPTIMIZER: adam_onecycle
-    LR: 0.001
+    LR: 0.00051
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 

@@ -200,11 +200,4 @@ class BaseBEVBackboneV1(nn.Module):
         x = self.blocks[0](x)
 
         data_dict['spatial_features_2d'] = x  # (B, num_bev_feat, H, W)
-        if not self.training and self.model_cfg.get('GENERATING_EXCHANGE_DATA', False):
-            for b_idx, metadata in enumerate(data_dict['metadata']):
-                sample_token = metadata['sample_token']
-                lidar_id = metadata['lidar_id']
-                save_path = f"{self.model_cfg.DATABASE_EXCHANGE_DATA}/{sample_token}_id{lidar_id}_bevimg.pth"
-                torch.save(x[b_idx], save_path)
-
         return data_dict

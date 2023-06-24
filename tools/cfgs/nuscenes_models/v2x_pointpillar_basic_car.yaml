@@ -28,8 +28,6 @@ MODEL:
         NUM_FILTERS: [64, 128, 128]
         UPSAMPLE_STRIDES: [0.5, 1, 2]
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
-        GENERATING_EXCHANGE_DATA: True
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_bevimg
 
     CORRECTOR:
         NAME: HunterJr
