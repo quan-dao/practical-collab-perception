@@ -27,8 +27,8 @@ INFO_PATH: {
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
-    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'prob_back', 'prob_stat', 'prob_dyn', 'dx', 'dy', 'dz', 'heading', 'box_score', 'box_label', 'sweep_idx', 'instance_idx'],
-    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'prob_back', 'prob_stat', 'prob_dyn', 'dx', 'dy', 'dz', 'heading', 'box_score', 'box_label', 'sweep_idx', 'instance_idx'],
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'dx', 'dy', 'dz', 'heading', 'box_score', 'box_label', 'sweep_idx', 'instance_idx'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'dx', 'dy', 'dz', 'heading', 'box_score', 'box_label', 'sweep_idx', 'instance_idx'],
 }
 
 

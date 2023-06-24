@@ -59,8 +59,8 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         gt_names = ego_stuff['gt_names']  # (N_inst,)
         
 
-        # final features: x, y, z, instensity, time-lag | 3-class prob | dx, dy, dz, heading, box-score, box-label | sweep_idx, inst_idx
-        points_ = np.zeros((points.shape[0], 5 + 3 + 6 + 2))
+        # final features: x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | sweep_idx, inst_idx
+        points_ = np.zeros((points.shape[0], 5 + 6 + 2))
         points_[:, :5] = points[:, :5]
         points_[:, -2:] = points[:, -2:]
         num_original = points_.shape[0]
@@ -145,7 +145,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                     modar_ = np.zeros((modar.shape[0], points_.shape[1]))
                     modar_[:, :3] = modar[:, :3]
                     modar_[:, 4] = max_time_lag  # TODO: after offset, should this be zero?
-                    modar_[:, 8: -2] = modar[:, 3:]
+                    modar_[:, 5: -2] = modar[:, 3:]
                     modar_[:, -2] = max_sweep_idx
                     modar_[:, -1] = -1  # dummy instance_idx
                     exchanged_points.append(modar_)
