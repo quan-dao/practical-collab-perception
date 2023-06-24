@@ -28,6 +28,8 @@ MODEL:
         NUM_FILTERS: [64, 128, 128]
         UPSAMPLE_STRIDES: [0.5, 1, 2]
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+        GENERATING_EXCHANGE_DATA: True
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_bevimg
 
     CORRECTOR:
         NAME: HunterJr
@@ -38,8 +40,8 @@ MODEL:
         OBJ_HEAD_HIDDEN_CHANNELS: [32]
         THRESHOLD_POINT_CLS_PROB: 0.3
         # v2x stuff
-        GENERATING_EXCHANGE_DATA: True
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow
+        GENERATING_EXCHANGE_DATA: False
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow_
 
     DENSE_HEAD:
         NAME: CenterHead
@@ -87,8 +89,8 @@ MODEL:
                 NMS_POST_MAXSIZE: 83
         
         # v2x stuff
-        GENERATING_EXCHANGE_DATA: True
-        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow
+        GENERATING_EXCHANGE_DATA: False
+        DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_flow_
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
