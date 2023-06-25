@@ -174,7 +174,7 @@ class BEVMaker(nn.Module):
             for b_idx, metadata in enumerate(batch_dict['metadata']):
                 agent_se3_ego = torch.from_numpy(metadata['se3_from_ego'][agent_idx]).float().cuda()
                 mask = agent_points_batch_idx == b_idx
-                agent_points[mask, 1: 4] = agent_se3_ego[:3, :3] @ agent_points[mask, 1: 4] + agent_se3_ego[:3, -1]
+                agent_points[mask, 1: 4] = agent_points[mask, 1: 4] @ agent_se3_ego[:3, :3].t() + agent_se3_ego[:3, -1]
 
             if self.model_cfg.get('DEBUG', False):
                 # make bev img of points

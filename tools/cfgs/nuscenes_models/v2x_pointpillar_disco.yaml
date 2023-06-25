@@ -6,7 +6,8 @@ DATA_CONFIG:
     DATASET: 'V2XSimDataset_EGO_DISCO'
     DATASET_DOWNSAMPLING_RATIO: 2
     POINTS_IN_BOXES_GPU: True
-    
+    EXCHANGE_DATABASE_DIRECTORY: exchange_database_flow
+
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,
         used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'agent_idx'],
@@ -27,7 +28,8 @@ MODEL:
     NAME: CenterPoint
 
     BEV_MAKER_RSU:
-        CKPT: ./pretrained_models/v2x_pointpillar_basic_rsu_ep20.pth
+        DEBUG: True
+        CKPT: ../tools/pretrained_models/v2x_pointpillar_basic_rsu_ep20.pth
         MAKER_TYPE: 'rsu'
         VFE:
             NAME: DynPillarVFE
@@ -49,7 +51,8 @@ MODEL:
             NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     BEV_MAKER_CAR:
-        CKPT: ./pretrained_models/v2x_pointpillar_basic_car_ep19.pth
+        DEBUG: True
+        CKPT: ../tools/pretrained_models/v2x_pointpillar_basic_car_ep19.pth
         MAKER_TYPE: 'car'
         VFE:
             NAME: DynPillarVFE
@@ -66,7 +69,7 @@ MODEL:
             NAME: BaseBEVBackbone
             LAYER_NUMS: [3, 5, 5]
             LAYER_STRIDES: [2, 2, 2]
-            NUM_FILTERS: [64, 128, 256]
+            NUM_FILTERS: [64, 128, 128]
             UPSAMPLE_STRIDES: [0.5, 1, 2]
             NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
@@ -113,6 +116,7 @@ MODEL:
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     V2X_MID_FUSION:
+        DEBUG: True
         NAME: DISCO
         COMPRESSED_CHANNELS: 128
         

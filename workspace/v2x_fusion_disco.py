@@ -83,11 +83,13 @@ class V2XMidFusionDisco(nn.Module):
             for b_idx, meta in enumerate(batch_dict['metadata']):
                 ego_se3_agent = torch.from_numpy(np.linalg.inv(meta['se3_from_ego'][agent_idx])).float().cuda()
                 bev_img[b_idx] = transform_bev_img(ego_se3_agent, bev_img[b_idx], self.pc_min, self.pix_size)
-                
+
                 if self.model_cfg.get('DEBUG', False) and b_idx == 0:
-                    batch_dict['warped_bev_img'] = transform_bev_img(ego_se3_agent, 
-                                                                     batch_dict['debug_bev_img'][agent_idx], 
-                                                                     self.pc_min, self.pix_size)
+                    print(f"bev_img[b_idx]: ", bev_img[b_idx].shape)
+                    print(f"batch_dict['debug_bev_img'][agent_idx]: ", batch_dict['debug_bev_img'][agent_idx].shape)
+                    batch_dict['warped_bev_img'][agent_idx] = transform_bev_img(ego_se3_agent, 
+                                                                     batch_dict['debug_bev_img'][agent_idx].unsqueeze(0), 
+                                                                     self.pc_min, 0.2)
 
             weight = self.pixel_weightor(torch.cat([ego_bev, bev_img], dim=1))  # (B, 1, H, W)
 
@@ -100,7 +102,7 @@ class V2XMidFusionDisco(nn.Module):
         # weighted sum
         all_bev = torch.stack(all_bev, dim=0)  # (n_agents, B, C, H, W)
         all_weights = rearrange(all_weights, 'B num_agents H W -> num_agents B 1 H W')
-        fused_bev = torch.sum(all_bev * all_weights, dim=1)
+        fused_bev = torch.sum(all_bev * all_weights, dim=0)
 
         fused_bev = self.decompressor(fused_bev)
         batch_dict['spatial_features_2d'] = fused_bev

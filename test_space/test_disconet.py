@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import argparse
 from nuscenes import NuScenes
+import matplotlib.pyplot as plt
 
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
@@ -10,6 +11,7 @@ from pcdet.models.detectors import build_detector
 
 from test_space.tools import to_tensor
 from workspace.o3d_visualization import PointsPainter, print_dict
+import lovely_tensors as lt
 
 
 def make_batch_dict(batch_size: int = 1, target_batch_idx: int = 3):
@@ -43,11 +45,15 @@ def make_batch_dict(batch_size: int = 1, target_batch_idx: int = 3):
             continue
 
         to_tensor(batch_dict, move_to_gpu=True)
-
-        for cur_module in model.module_list:
-            batch_dict = cur_module(batch_dict)
+        
+        with torch.no_grad():
+            for cur_module in model.module_list:
+                batch_dict = cur_module(batch_dict)
         
         print_dict(batch_dict, 'batch_dict')
+        
+        for k in ['points', 'gt_boxes', 'voxel_features', 'pillar_features', 'voxel_coords', 'spatial_features']:
+            batch_dict.pop(k)
         torch.save(batch_dict, './artifact/v2x_disco_batch_dict.pth')
         # ---
         break
@@ -55,13 +61,26 @@ def make_batch_dict(batch_size: int = 1, target_batch_idx: int = 3):
 
 def show_batch_dict():
     batch_dict = torch.load('./artifact/v2x_disco_batch_dict.pth', map_location=torch.device('cpu'))
-    # TODO
+    print_dict(batch_dict, batch_dict)
+
+    metadata = batch_dict['metadata'][0]
+    for k, v in metadata['se3_from_ego'].items():
+        agent_in_ego = np.linalg.inv(v)
+        print(f'agent {k} pix coord: ', (agent_in_ego[:2, -1] + 51.2) / 0.2)
+
+
+    warped_bev_img = [v[0]for k, v in batch_dict['warped_bev_img'].items()]
+    fig, ax = plt.subplots(1, len(warped_bev_img))
+    for idx, img in enumerate(warped_bev_img):
+        ax[idx].imshow(img, origin='lower')
+    plt.show()
 
 
 if __name__ == '__main__':
+    lt.monkey_patch()
     parser = argparse.ArgumentParser('blah')
-    parser.add_argument('--make_batch_dict', type=int)
-    parser.add_argument('--show_batch_dict', type=int)
+    parser.add_argument('--make_batch_dict', type=int, default=0)
+    parser.add_argument('--show_batch_dict', type=int, default=0)
     args = parser.parse_args()
     if args.make_batch_dict == 1:
         make_batch_dict()
