@@ -2,9 +2,26 @@ CLASS_NAMES: ['car']
 
 
 DATA_CONFIG:
-    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
-    DATASET_DOWNSAMPLING_RATIO: 16  # remember to comment this out when generating exchange database
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego_early.yaml
+    DATASET: 'V2XSimDataset_EGO_DISCO'
+    DATASET_DOWNSAMPLING_RATIO: 2
     POINTS_IN_BOXES_GPU: True
+    
+    POINT_FEATURE_ENCODING: {
+        encoding_type: absolute_coordinates_encoding,
+        used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'agent_idx'],
+        src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp', 'agent_idx'],
+    }
+
+    DATA_PROCESSOR:
+    - NAME: shuffle_points
+      SHUFFLE_ENABLED: {
+        'train': True,
+        'test': True
+      }
+
+    - NAME: transform_points_to_voxels_placeholder
+      VOXEL_SIZE: [0.2, 0.2, 8.0]
     
 MODEL:
     NAME: CenterPoint
@@ -32,7 +49,7 @@ MODEL:
             NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     BEV_MAKER_CAR:
-        CKPT: ./pretrained_models/v2x_pointpillar_basic_car_ep20.pth
+        CKPT: ./pretrained_models/v2x_pointpillar_basic_car_ep19.pth
         MAKER_TYPE: 'car'
         VFE:
             NAME: DynPillarVFE
@@ -53,27 +70,27 @@ MODEL:
             UPSAMPLE_STRIDES: [0.5, 1, 2]
             NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
-    BEV_MAKER_EARLY:
-        CKPT: ./pretrained_models/v2x_pointpillar_basic_early_ep20.pth
-        MAKER_TYPE: 'early'
-        VFE:
-            NAME: DynPillarVFE
-            NUM_RAW_POINT_FEATURES: 5
-            WITH_DISTANCE: False
-            USE_ABSLOTE_XYZ: True
-            USE_NORM: True
-            NUM_FILTERS: [64, 64]
-        MAP_TO_BEV:
-            NAME: PointPillarScatter
-            NUM_BEV_FEATURES: 64
-        BACKBONE_2D:
-            BACKBONE_2D:
-            NAME: BaseBEVBackbone
-            LAYER_NUMS: [3, 5, 5]
-            LAYER_STRIDES: [2, 2, 2]
-            NUM_FILTERS: [64, 128, 256]
-            UPSAMPLE_STRIDES: [0.5, 1, 2]
-            NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+    # BEV_MAKER_EARLY:
+    #     CKPT: ./pretrained_models/v2x_pointpillar_basic_early_ep20.pth
+    #     MAKER_TYPE: 'early'
+    #     VFE:
+    #         NAME: DynPillarVFE
+    #         NUM_RAW_POINT_FEATURES: 5
+    #         WITH_DISTANCE: False
+    #         USE_ABSLOTE_XYZ: True
+    #         USE_NORM: True
+    #         NUM_FILTERS: [64, 64]
+    #     MAP_TO_BEV:
+    #         NAME: PointPillarScatter
+    #         NUM_BEV_FEATURES: 64
+    #     BACKBONE_2D:
+    #         BACKBONE_2D:
+    #         NAME: BaseBEVBackbone
+    #         LAYER_NUMS: [3, 5, 5]
+    #         LAYER_STRIDES: [2, 2, 2]
+    #         NUM_FILTERS: [64, 128, 256]
+    #         UPSAMPLE_STRIDES: [0.5, 1, 2]
+    #         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     VFE:
         NAME: DynPillarVFE
@@ -95,15 +112,10 @@ MODEL:
         UPSAMPLE_STRIDES: [0.5, 1, 2]
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
-    CORRECTOR:
-        NAME: HunterJr
-        NUM_SWEEPS: 11  # = NUM_HISTORICAL_SWEEPS + 1
-        BEV_IMAGE_STRIDE: 4
-        CONV_INPUT_CHANNELS: 64
-        POINT_HEAD_HIDDEN_CHANNELS: [32]
-        OBJ_HEAD_HIDDEN_CHANNELS: [32]
-        THRESHOLD_POINT_CLS_PROB: 0.3
-
+    V2X_MID_FUSION:
+        NAME: DISCO
+        COMPRESSED_CHANNELS: 128
+        
     DENSE_HEAD:
         NAME: CenterHead
         CLASS_AGNOSTIC: False

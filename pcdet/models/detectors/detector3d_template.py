@@ -12,6 +12,7 @@ from ..model_utils import model_nms_utils
 from _dev_space.pc_corrector import PointCloudCorrector
 from workspace.hunter_jr import HunterJr
 from workspace.bev_maker import BEVMaker
+from workspace.v2x_fusion_disco import V2XMidFusionDisco
 
 
 class Detector3DTemplate(nn.Module):
@@ -25,7 +26,7 @@ class Detector3DTemplate(nn.Module):
 
         self.module_topology = [
             'bev_maker_rsu', 'bev_maker_car', 'bev_maker_early', 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
-            'backbone_2d', 'corrector', 'dense_head', 'point_head', 'roi_head'
+            'backbone_2d', 'corrector', 'v2x_mid_fusion', 'dense_head', 'point_head', 'roi_head'
         ]
 
     @property
@@ -52,6 +53,15 @@ class Detector3DTemplate(nn.Module):
             self.add_module(module_name, module)
         return model_info_dict['module_list']
     
+    def build_v2x_mid_fusion(self, model_info_dict):
+        if self.model_cfg.get('V2X_MID_FUSION', None) is None:
+            return None, model_info_dict
+        
+        v2x_mid_fusion = V2XMidFusionDisco(self.model_cfg.V2X_MID_FUSION)
+
+        model_info_dict['module_list'].append(v2x_mid_fusion)
+        return v2x_mid_fusion, model_info_dict
+
     def build_bev_maker_rsu(self, model_info_dict):
         if self.model_cfg.get('BEV_MAKER_RSU', None) is None:
             return None, model_info_dict

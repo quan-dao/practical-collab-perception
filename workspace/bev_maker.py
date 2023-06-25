@@ -18,7 +18,7 @@ class BEVMaker(nn.Module):
         self.num_class = num_class
         self.dataset = dataset
         self.class_names = dataset.class_names
-
+        self.pc_range = torch.tensor([[-51.2, -51.2, -8.0, 51.2, 51.2, 0.0]]).float().cuda()
         self.module_topology = ['vfe', 'map_to_bev_module', 'backbone_2d']
 
         self.module_list = self.build_networks()
@@ -150,7 +150,7 @@ class BEVMaker(nn.Module):
     def forward_rsu_car(self, batch_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         self.eval()
         
-        points = batch_dict['points']  # (N, 1 + 5 + 1) - batch_idx, point-5, agent-idex  # TODO: organize dataset accordingly
+        points = batch_dict['points']  # (N, 1 + 5 + 1) - batch_idx, point-5, agent-idex
         points_agent_idx = points[:, -1].long()
         
         unq_anget_idx = torch.unique(points_agent_idx).cpu().numpy()
@@ -163,8 +163,16 @@ class BEVMaker(nn.Module):
             
             if self.maker_type == 'rsu' and agent_idx != 0:
                 continue
+            
+            # extract points of this agent
+            agent_points = torch.clone(points[points_agent_idx == agent_idx])
 
-            agent_points = points[points_agent_idx == agent_idx]
+            # map agent_points from ego -> agent frame
+            agent_points_batch_idx = agent_points[:, 0].long()
+            for b_idx, metadata in enumerate(batch_dict['metadata']):
+                agent_se3_ego = torch.from_numpy(metadata['se3_from_ego'][agent_idx]).float().cuda()
+                mask = agent_points_batch_idx == b_idx
+                agent_points[mask, 1: 4] = agent_se3_ego[:3, :3] @ agent_points[mask, 1: 4] + agent_se3_ego[:3, -1]
 
             agent_batch_dict = {'points': agent_points}
             for cur_module in self.module_list:
@@ -185,9 +193,21 @@ class BEVMaker(nn.Module):
     def forward_early(self, batch_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         self.eval()
         
-        points = batch_dict['points']  # (N, 1 + 5 + 1) - batch_idx, point-5, agent-idex  # TODO: organize dataset accordingly
-        points_agent_idx = points[:, -1].long()    
-        # TODO
+        points = torch.clone(batch_dict['points'])  # (N, 1 + 5 + 1) - batch_idx, point-5, agent-idex
+        
+        early_batch_dict = {'points': points}
+
+        for cur_module in self.module_list:
+            early_batch_dict = cur_module(early_batch_dict)
+
+        # clean up
+        keys = list(early_batch_dict.keys())
+        for k in keys:
+            if k not in ('spatial_features_2d',):
+                early_batch_dict.pop(k)
+
+        # save agent_spatial_features_2d for distillation
+        batch_dict['bev_img_early'] = early_batch_dict['spatial_features_2d']
         return batch_dict
     
     def forward(self, batch_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
