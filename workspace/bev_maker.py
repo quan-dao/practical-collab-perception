@@ -155,6 +155,8 @@ class BEVMaker(nn.Module):
         
         unq_anget_idx = torch.unique(points_agent_idx).cpu().numpy()
         batch_dict['bev_img'] = dict()
+        if self.model_cfg.get('DEBUG', False):
+            batch_dict['debug_bev_img'] = dict()
 
         for agent_idx in unq_anget_idx:
             if agent_idx == 1:  
@@ -174,6 +176,21 @@ class BEVMaker(nn.Module):
                 mask = agent_points_batch_idx == b_idx
                 agent_points[mask, 1: 4] = agent_se3_ego[:3, :3] @ agent_points[mask, 1: 4] + agent_se3_ego[:3, -1]
 
+            if self.model_cfg.get('DEBUG', False):
+                # make bev img of points
+                chosen_batch_idx = 0
+                _points = agent_points[agent_points[:, 0].long() == chosen_batch_idx]
+                _mask_in_range = torch.logical_and(_points[:, 1: 3] > -51.2, _points[:, 1: 3] < 51.2 - 1e-3).all(dim=1)
+                _points = _points[_mask_in_range]
+                _pixel_xy = torch.floor((_points[:, 1: 3] + 51.2) / 0.2).long()
+                _merge_pixel_xy = _pixel_xy[:, 1] * 512 + _pixel_xy[:, 0]
+                _unq_merge_pixel_xyz = torch.unique(_merge_pixel_xy)
+                _unq_y, _unq_x = _unq_merge_pixel_xyz // 512, _unq_merge_pixel_xyz % 512
+                bev_img = _points.new_zeros(512, 512)
+                bev_img[_unq_y, _unq_x] = 1.0
+                batch_dict['debug_bev_img'][agent_idx] = bev_img
+
+            # invoke forward
             agent_batch_dict = {'points': agent_points}
             for cur_module in self.module_list:
                 agent_batch_dict = cur_module(agent_batch_dict)

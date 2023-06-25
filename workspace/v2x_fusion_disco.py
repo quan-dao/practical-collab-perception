@@ -63,6 +63,7 @@ class V2XMidFusionDisco(nn.Module):
 
         self.pc_min = model_cfg.get("PC_RANGE_MIN", -51.2)
         self.pix_size = model_cfg.get("FINAL_BEV_PIXEL_SIZE", 0.2 * 4)
+        self.model_cfg = model_cfg
 
     def forward(self, batch_dict: dict):
         ego_bev = self.compressor(batch_dict['spatial_features_2d'])
@@ -71,6 +72,9 @@ class V2XMidFusionDisco(nn.Module):
         all_bev.append(ego_bev)
         all_weights.append(self.pixel_weightor(torch.cat([ego_bev, ego_bev], dim=1)))
         
+        if self.model_cfg.get('DEBUG', False):
+            batch_dict['warped_bev_img'] = dict()
+
         for agent_idx, bev_img in batch_dict['bev_img'].items():
             # bev_img;: (B, C_in, H, W)
             bev_img = self.compressor(bev_img)
@@ -79,6 +83,11 @@ class V2XMidFusionDisco(nn.Module):
             for b_idx, meta in enumerate(batch_dict['metadata']):
                 ego_se3_agent = torch.from_numpy(np.linalg.inv(meta['se3_from_ego'][agent_idx])).float().cuda()
                 bev_img[b_idx] = transform_bev_img(ego_se3_agent, bev_img[b_idx], self.pc_min, self.pix_size)
+                
+                if self.model_cfg.get('DEBUG', False) and b_idx == 0:
+                    batch_dict['warped_bev_img'] = transform_bev_img(ego_se3_agent, 
+                                                                     batch_dict['debug_bev_img'][agent_idx], 
+                                                                     self.pc_min, self.pix_size)
 
             weight = self.pixel_weightor(torch.cat([ego_bev, bev_img], dim=1))  # (B, 1, H, W)
 
