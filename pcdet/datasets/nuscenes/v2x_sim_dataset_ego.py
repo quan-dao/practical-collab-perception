@@ -4,9 +4,11 @@ import pickle
 from pathlib import Path
 import copy
 from torch_scatter import scatter
+from easydict import EasyDict
 
+from pcdet.models.model_utils import model_nms_utils
 from pcdet.datasets.nuscenes.v2x_sim_dataset_car import V2XSimDataset_CAR
-from workspace.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_, roiaware_pool3d_utils
+from workspace.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_, roiaware_pool3d_utils, get_points_and_boxes_of_1lidar
 
 
 class V2XSimDataset_EGO(V2XSimDataset_CAR):
@@ -17,6 +19,12 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         assert self.exchange_database.exists(), f"{self.exchange_database} does not exist"
 
         self._lidars_name = set([f'LIDAR_TOP_id_{lidar_id}' for lidar_id in range(6)])  # watchout for SEMLIDAR_TOP_id_
+        self._nms_config = EasyDict({
+            'NMS_TYPE': 'nms_gpu',
+            'NMS_THRESH': 0.2,
+            'NMS_PRE_MAXSIZE': 10000,
+            'NMS_POST_MAXSIZE': 10000,
+        })
 
     def include_v2x_sim_data(self, mode):
         self.logger.info('Loading V2X-Sim dataset')
@@ -38,6 +46,55 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
             self.infos = self.infos[::self.dataset_cfg.DATASET_DOWNSAMPLING_RATIO]
         self.logger.info('Total samples for V2X-Sim dataset: %d' % (len(self.infos)))
 
+    def get_all_ground_truth(self, ego_lidar_token: str) -> np.ndarray:
+        """
+        Returns:
+            gt_boxes: (N_tot, 7) - gt boxes from every agent present in the v2x network
+        """
+        ego_lidar_record = self.nusc.get('sample_data', ego_lidar_token)
+        sample_record = self.nusc.get('sample', ego_lidar_record['sample_token'])
+
+        ego_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(self.nusc, ego_lidar_token))
+
+        gt_boxes, gt_names = list(), list()
+        for lidar_name, lidar_token in sample_record['data'].items():
+            if lidar_name not in self._lidars_name:
+                continue
+            _info = get_points_and_boxes_of_1lidar(self.nusc, lidar_token, 
+                                                   self.classes_of_interest, 
+                                                   points_in_boxes_by_gpu=True, 
+                                                   threshold_boxes_by_points=1)
+            
+            boxes = _info['boxes_in_lidar']  # (N_box, 7)
+            boxes_name = _info['boxes_name']  # (N_box,)
+            
+            if boxes.shape[0] > 0:
+                # map boxes to ego frame
+                glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
+                ego_se3_lidar = ego_se3_glob @ glob_se3_lidar
+                apply_se3_(ego_se3_lidar, boxes_=boxes)
+
+                # store
+                gt_boxes.append(boxes)
+                gt_names.append(boxes_name)
+        
+        # merge by removing duplicate using NMS
+        gt_boxes = np.concatenate(gt_boxes)  # (N, 7)
+        gt_names = np.concatenate(gt_names)
+
+        gt_boxes = torch.from_numpy(gt_boxes).float().cuda()
+        selected, _ = model_nms_utils.class_agnostic_nms(
+            box_scores=gt_boxes.new_ones(gt_boxes.shape[0]), 
+            box_preds=gt_boxes,
+            nms_config=self._nms_config
+        )
+
+        # format output
+        selected = selected.long().cpu().numpy()
+        gt_boxes = gt_boxes.cpu().numpy()[selected]  # (N_tot, 7)
+        gt_names = gt_names[selected]  # (N_tot,)
+        return gt_boxes, gt_names
+
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
             index = index % len(self.infos)
@@ -55,10 +112,11 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                                             threshold_boxes_by_points=self.dataset_cfg.get('THRESHOLD_BOXES_BY_POINTS', 5))
         
         points = ego_stuff['points']  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx (for debugging purpose only)
-        gt_boxes = ego_stuff['gt_boxes']  # (N_inst, 7)
-        gt_names = ego_stuff['gt_names']  # (N_inst,)
         
-
+        gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+        # gt_boxes: (N_tot, 7)
+        # gt_names: (N_tot,)
+        
         # final features: x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | sweep_idx, inst_idx
         points_ = np.zeros((points.shape[0], 5 + 6 + 2))
         points_[:, :5] = points[:, :5]
