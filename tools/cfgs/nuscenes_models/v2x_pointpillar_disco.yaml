@@ -28,7 +28,7 @@ MODEL:
     NAME: CenterPoint
 
     BEV_MAKER_RSU:
-        DEBUG: True
+        DEBUG: False
         CKPT: ../tools/pretrained_models/v2x_pointpillar_basic_rsu_ep20.pth
         MAKER_TYPE: 'rsu'
         VFE:
@@ -51,7 +51,7 @@ MODEL:
             NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     BEV_MAKER_CAR:
-        DEBUG: True
+        DEBUG: False
         CKPT: ../tools/pretrained_models/v2x_pointpillar_basic_car_ep19.pth
         MAKER_TYPE: 'car'
         VFE:
@@ -116,7 +116,7 @@ MODEL:
         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     V2X_MID_FUSION:
-        DEBUG: True
+        DEBUG: False
         NAME: DISCO
         COMPRESSED_CHANNELS: 128
         
