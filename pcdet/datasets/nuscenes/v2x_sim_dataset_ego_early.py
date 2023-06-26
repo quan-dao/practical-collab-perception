@@ -28,7 +28,7 @@ class V2XSimDataset_EGO_EARLY(V2XSimDataset_EGO):
         
         points = ego_stuff['points']  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx (for debugging purpose only)
         
-        gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+        gt_boxes, gt_names = info['gt_boxes'], info['gt_names']
         # gt_boxes: (N_tot, 7)
         # gt_names: (N_tot,)
 

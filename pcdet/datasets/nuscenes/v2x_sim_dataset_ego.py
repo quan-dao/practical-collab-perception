@@ -5,6 +5,7 @@ from pathlib import Path
 import copy
 from torch_scatter import scatter
 from easydict import EasyDict
+from tqdm import tqdm
 
 from pcdet.models.model_utils import model_nms_utils
 from pcdet.datasets.nuscenes.v2x_sim_dataset_car import V2XSimDataset_CAR
@@ -25,6 +26,12 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
             'NMS_PRE_MAXSIZE': 10000,
             'NMS_POST_MAXSIZE': 10000,
         })
+
+        self.logger.info('get gt_boxes from every agent')
+        for idx, info in tqdm(enumerate(self.infos), total=len(self.infos), desc='update gt_boxes'):
+            gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+            self.infos[idx]['gt_boxes'] = gt_boxes
+            self.infos[idx]['gt_names'] = gt_names
 
     def include_v2x_sim_data(self, mode):
         self.logger.info('Loading V2X-Sim dataset')
@@ -113,7 +120,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         
         points = ego_stuff['points']  # (N_pts, 5 + 2) - point-5, sweep_idx, inst_idx (for debugging purpose only)
         
-        gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+        gt_boxes, gt_names = info['gt_boxes'], info['gt_names']
         # gt_boxes: (N_tot, 7)
         # gt_names: (N_tot,)
         

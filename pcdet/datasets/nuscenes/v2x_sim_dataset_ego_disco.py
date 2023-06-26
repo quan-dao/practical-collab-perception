@@ -31,7 +31,7 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
         points = np.concatenate([points[:, :5],  # point-5 
                                  np.ones((points.shape[0], 1))  # agent-idx, 1 for ego vehicle
                                  ], axis=1)
-        gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+        gt_boxes, gt_names = info['gt_boxes'], info['gt_names']
         # gt_boxes: (N_tot, 7)
         # gt_names: (N_tot,)
         num_original = points.shape[0]
