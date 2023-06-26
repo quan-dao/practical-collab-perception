@@ -19,8 +19,9 @@ def make_batch_dict(batch_size: int = 1, target_batch_idx: int = 3):
     cfg_file = "../tools/cfgs/nuscenes_models/v2x_pointpillar_disco.yaml"
     cfg_from_yaml_file(cfg_file, cfg)
     # shutdown data augmentation
-    cfg.DATA_CONFIG.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
-                                                       'random_world_rotation', 'random_world_scaling']
+    cfg.DATA_CONFIG.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling'], 
+                                                    #    'random_world_flip', 
+                                                    #    'random_world_rotation', 'random_world_scaling']
     cfg.DATA_CONFIG.MINI_TRAINVAL_STRIDE = 1
     if cfg.DATA_CONFIG.get('DATASET_DOWNSAMPLING_RATIO', 1) > 1:
         cfg.DATA_CONFIG.DATASET_DOWNSAMPLING_RATIO = 1
@@ -30,7 +31,7 @@ def make_batch_dict(batch_size: int = 1, target_batch_idx: int = 3):
         dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, 
         batch_size=batch_size,
         dist=False, logger=logger, 
-        training=False,
+        training=True,
         total_epochs=1, seed=666,
         workers=0)
     

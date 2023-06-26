@@ -36,6 +36,14 @@ def random_flip_along_x(data_dict_, enable=None):
             data_dict_['instances_tf'] = np.matmul(tf[np.newaxis, np.newaxis], data_dict_['instances_tf'])
             data_dict_['instances_tf'] = np.matmul(data_dict_['instances_tf'], inv_tf[np.newaxis, np.newaxis])
 
+        if 'se3_from_ego' in data_dict_['metadata']:
+            tf = np.eye(4)
+            tf[1, 1] = -1.
+            for k, tf_from_ego in data_dict_['metadata']['se3_from_ego'].items():
+                inv_tf_from_ego = LA.inv(tf_from_ego)
+                inv_tf_from_ego = tf @ inv_tf_from_ego
+                data_dict_['metadata']['se3_from_ego'][k] = LA.inv(inv_tf_from_ego)
+
         if 'img_map' in data_dict_:
             data_dict_['img_map'] = data_dict_['img_map'][:, ::-1]  # (5, H, W)
 
@@ -48,7 +56,7 @@ def random_flip_along_x(data_dict_, enable=None):
                 f"expect points has 12 dim: 5 original raw, 5 map, sweep_idx, inst_idx; get {data_dict_['points'].shape[1]}"
             data_dict_['points'][:, 9] *= -1  # flipping points' lane direction
 
-        if data_dict_['points'].shape == 16:
+        if data_dict_['points'].shape == 16:  # TODO: imple this for #point_feats == 1
             # apply transformation on modar_points' heading
             data_dict_['points'][:, 11] *= -1
 
@@ -83,6 +91,14 @@ def random_flip_along_y(data_dict_, enable=None):
             data_dict_['instances_tf'] = np.matmul(tf[np.newaxis, np.newaxis], data_dict_['instances_tf'])
             data_dict_['instances_tf'] = np.matmul(data_dict_['instances_tf'], inv_tf[np.newaxis, np.newaxis])
 
+        if 'se3_from_ego' in data_dict_['metadata']:
+            tf = np.eye(4)
+            tf[0, 0] = -1.
+            for k, tf_from_ego in data_dict_['metadata']['se3_from_ego'].items():
+                inv_tf_from_ego = LA.inv(tf_from_ego)
+                inv_tf_from_ego = tf @ inv_tf_from_ego
+                data_dict_['metadata']['se3_from_ego'][k] = LA.inv(inv_tf_from_ego)
+
         if 'img_map' in data_dict_:
             data_dict_['img_map'] = data_dict_['img_map'][:, :, ::-1]  # (5, H, W)
 
@@ -97,7 +113,7 @@ def random_flip_along_y(data_dict_, enable=None):
             # put lane_dir in range [-pi, pi]
             data_dict_['points'][:, 9] = np.arctan2(np.sin(data_dict_['points'][:, 9]), np.cos(data_dict_['points'][:, 9]))
 
-        if data_dict_['points'].shape == 16:
+        if data_dict_['points'].shape == 16:  # TODO: imple this for #point_feats == 1
             # apply transformation on modar_points' heading
             data_dict_['points'][:, 11] = -(data_dict_['points'][:, 11] + np.pi)
             # put in range [-pi, pi)
@@ -167,6 +183,19 @@ def global_rotation(data_dict_, rot_range, noise_rotation=None):
         data_dict_['instances_waypoints'][:, :2] = waypts_xyz[:, :2]
         data_dict_['instances_waypoints'][:, 2] += noise_rotation
 
+    if 'se3_from_ego' in data_dict_['metadata']:
+        cos, sin = np.cos(noise_rotation), np.sin(noise_rotation)
+        tf = np.array([
+            [cos, -sin, 0, 0],
+            [sin, cos, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        for k, tf_from_ego in data_dict_['metadata']['se3_from_ego'].items():
+            inv_tf_from_ego = LA.inv(tf_from_ego)
+            inv_tf_from_ego = tf @ inv_tf_from_ego
+            data_dict_['metadata']['se3_from_ego'][k] = LA.inv(inv_tf_from_ego)
+
     if 'use_hd_map' in data_dict_['metadata'] and data_dict_['metadata']['use_hd_map']:
             assert data_dict_['points'].shape[1] == 12,\
                 f"expect points has 12 dim: 5 original raw, 5 map, sweep_idx, inst_idx; get {data_dict_['points'].shape[1]}"
@@ -174,7 +203,7 @@ def global_rotation(data_dict_, rot_range, noise_rotation=None):
             # put lane_dir in range [-pi, pi]
             data_dict_['points'][:, 9] = np.arctan2(np.sin(data_dict_['points'][:, 9]), np.cos(data_dict_['points'][:, 9]))
 
-    if data_dict_['points'].shape == 16:
+    if data_dict_['points'].shape == 16:  # TODO: imple this for #point_feats == 1
         # apply transformation on modar_points' heading
         data_dict_['points'][:, 11] += noise_rotation
 

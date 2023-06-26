@@ -26,6 +26,7 @@ class PixelWeightedFusionSoftmax(nn.Module):
         return x_1
 
 
+@torch.no_grad()
 def transform_bev_img(dst_se3_src: torch.Tensor, bev_in_src:torch.Tensor, pc_range_min: float, pix_size: float) -> torch.Tensor:
     assert len(bev_in_src.shape) == 3, "expect shape of bev_in_src == (C, H, W) "
     rot = dst_se3_src[:2, :2]
@@ -81,6 +82,8 @@ class V2XMidFusionDisco(nn.Module):
 
             # warp sample in bev_img
             for b_idx, meta in enumerate(batch_dict['metadata']):
+                if agent_idx not in meta['se3_from_ego']:
+                    continue
                 ego_se3_agent = torch.from_numpy(np.linalg.inv(meta['se3_from_ego'][agent_idx])).float().cuda()
                 bev_img[b_idx] = transform_bev_img(ego_se3_agent, bev_img[b_idx], self.pc_min, self.pix_size)
 
