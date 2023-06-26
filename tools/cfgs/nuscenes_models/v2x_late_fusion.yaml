@@ -5,11 +5,12 @@ DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego_late.yaml
     POINTS_IN_BOXES_GPU: True
     BOX_FUSION_EGO_WEIGHT: 2.0
+    EXCHANGE_DATABASE_DIRECTORY: exchange_database_flow
     
 MODEL:
     NAME: V2XLateFusion
 
-    BOX_FUSION_METHOD: kde
+    BOX_FUSION_METHOD: nms
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
@@ -18,7 +19,7 @@ MODEL:
         NMS_CONFIG:
             MULTI_CLASSES_NMS: False
             NMS_TYPE: nms_gpu
-            NMS_THRESH: 0.01
+            NMS_THRESH: 0.3
             NMS_PRE_MAXSIZE: 4096
             NMS_POST_MAXSIZE: 500
 

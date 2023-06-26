@@ -2,8 +2,10 @@ import numpy as np
 import torch
 import copy
 from pathlib import Path
+from torch_scatter import scatter
 
 from pcdet.datasets.nuscenes.v2x_sim_dataset_ego import V2XSimDataset_EGO, get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_
+from workspace.v2x_sim_utils import roiaware_pool3d_utils
 
 
 class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
@@ -41,30 +43,73 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
         sample = self.nusc.get('sample', sample_token)
         exchange_metadata = dict([(i, 0.) for i in range(6) if i != 1])
         exchange_boxes = dict([(i, np.zeros((0, 9))) for i in range(6) if i != 1])
-        for lidar_name, lidar_token in sample['data'].items():
-            if lidar_name not in self._lidars_name:
-                continue
-            
-            lidar_id = int(lidar_name.split('_')[-1])
-            
-            if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id not in (0, 1):
-                continue
+        if sample['prev'] != '':
+            prev_sample_token = sample['prev']
+            prev_sample = self.nusc.get('sample', prev_sample_token)
+            for lidar_name, lidar_token in prev_sample['data'].items():
+                if lidar_name not in self._lidars_name:
+                    continue
+                
+                lidar_id = int(lidar_name.split('_')[-1])
+                
+                if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id not in (0, 1):
+                    continue
 
-            glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
-            target_se3_lidar = target_se3_glob @ glob_se3_lidar
+                glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
+                target_se3_lidar = target_se3_glob @ glob_se3_lidar
 
-            path_modar = self.exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
+                if lidar_id == 1:
+                    path_modar = self.exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
+                    if path_modar.exists():
+                        modar = torch.load(path_modar, map_location=torch.device('cpu')).numpy()
+                        # (N_modar, 7 + 2) - box-7, score, label
+
+                        # map modar (center & heading) to target frame
+                        modar[:, :7] = apply_se3_(target_se3_lidar, boxes_=modar[:, :7], return_transformed=True)
+                    else:
+                        modar = np.zeros((1, 9))
+                else:
+                    path_modar = self.exchange_database / f"{prev_sample_token}_id{lidar_id}_modar.pth"
+                    if path_modar.exists():
+                        modar = torch.load(path_modar)  # on gpu, (N_modar, 7 + 2) - box-7, score, label
+                        # move MoDAR at the previous time step according to foregrounds' offset
+                        with torch.no_grad():
+                            path_foregr = self.exchange_database / f"{prev_sample_token}_id{lidar_id}_foreground.pth"
+                            if path_foregr.exists():
+                                foregr = torch.load(path_foregr)  # on gpu, (N_fore, 5 + 2 + 3 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3, flow-3
+                                
+                                # pool
+                                box_idx_of_foregr = roiaware_pool3d_utils.points_in_boxes_gpu(
+                                    foregr[:, :3].unsqueeze(0), modar[:, :7].unsqueeze(0)
+                                ).squeeze(0).long()  # (N_foregr,) | == -1 mean not belong to any boxes
+                                mask_valid_foregr = box_idx_of_foregr > -1
+                                foregr = foregr[mask_valid_foregr]
+                                box_idx_of_foregr = box_idx_of_foregr[mask_valid_foregr]
+                                
+                                unq_box_idx, inv_unq_box_idx = torch.unique(box_idx_of_foregr, return_inverse=True)
+
+                                # weighted sum of foregrounds' offset; weights = foreground's prob dynamic
+                                boxes_offset = scatter(foregr[:, -3:], inv_unq_box_idx, dim=0, reduce='mean') * 2.  # (N_modar, 3)
+                                # offset modar; here, assume objects maintain the same speed
+                                modar[unq_box_idx, :3] += boxes_offset    
+
+                        modar = modar.cpu().numpy()
+                        # map modar (center & heading) to target frame
+                        modar[:, :7] = apply_se3_(target_se3_lidar, boxes_=modar[:, :7], return_transformed=True)
+
+                # store
+                exchange_boxes[lidar_id] = modar
+                exchange_metadata[lidar_id] = modar.shape[0]
+        else:
+            path_modar = self.exchange_database / f"{sample_token}_id1_modar.pth"
             if path_modar.exists():
                 modar = torch.load(path_modar, map_location=torch.device('cpu')).numpy()
                 # (N_modar, 7 + 2) - box-7, score, label
-
-                # map modar (center & heading) to target frame
-                modar[:, :7] = apply_se3_(target_se3_lidar, boxes_=modar[:, :7], return_transformed=True)
-
-                exchange_boxes[lidar_id] = modar
-
+            else:
+                modar = np.zeros((1, 9))
+            exchange_boxes[1] = modar
             # store
-            exchange_metadata[lidar_id] = modar.shape[0]
+            exchange_metadata[1] = modar.shape[0]
 
         # assemble datadict
         input_dict = {
