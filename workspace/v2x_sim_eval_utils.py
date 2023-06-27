@@ -92,7 +92,7 @@ def load_gt(nusc: NuScenes, eval_split: str, box_cls, dataset_infos: List[Dict],
 
         gt_boxes = info['gt_boxes']  # (N_gt, 7)
         gt_names = info['gt_names']  # (N_gt,)
-        gt_num_points = info['num_points_in_boxes'].astype(int)  # (N_gt,)
+        # gt_num_points = info['num_points_in_boxes'].astype(int)  # (N_gt,)
         
         boxes = list()
         for b_idx in range(gt_boxes.shape[0]):
@@ -103,7 +103,7 @@ def load_gt(nusc: NuScenes, eval_split: str, box_cls, dataset_infos: List[Dict],
                     size=gt_boxes[b_idx, 3: 6],
                     rotation=Quaternion(axis=[0, 0, 1], angle=gt_boxes[b_idx, 6]).elements.tolist(),
                     velocity=[0., 0.],
-                    num_pts=int(gt_num_points[b_idx]),
+                    num_pts=10,  # dummy value
                     detection_name=gt_names[b_idx],
                     detection_score=-1.0,  # GT samples do not have a score.
                     attribute_name=attribute_name

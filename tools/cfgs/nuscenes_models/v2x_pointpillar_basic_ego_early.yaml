@@ -4,6 +4,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego_early.yaml
     POINTS_IN_BOXES_GPU: True
     DATASET_DOWNSAMPLING_RATIO: 2
+    EXCHANGE_DATABASE_DIRECTORY: exchange_database_flow
     
 MODEL:
     NAME: CenterPoint
