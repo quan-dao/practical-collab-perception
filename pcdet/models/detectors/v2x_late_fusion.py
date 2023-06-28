@@ -60,9 +60,6 @@ class V2XLateFusion(Detector3DTemplate):
                 }
             else:
                 raise NotImplementedError(f"BOX_FUSION_METHOD: {self.model_cfg.BOX_FUSION_METHOD} is not implemented")
-
-            
-
             
             final_box_dicts.append(this_pred_dict)
 

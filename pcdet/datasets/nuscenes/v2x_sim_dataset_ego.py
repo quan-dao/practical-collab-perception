@@ -27,11 +27,14 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
             'NMS_POST_MAXSIZE': 10000,
         })
 
-        self.logger.info('get gt_boxes from every agent')
-        for idx, info in tqdm(enumerate(self.infos), total=len(self.infos), desc='update gt_boxes'):
-            gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
-            self.infos[idx]['gt_boxes'] = gt_boxes
-            self.infos[idx]['gt_names'] = gt_names
+        if self.dataset_cfg.get('USE_GT_FROM_EVERY_AGENT', True):
+            self.logger.info('get gt_boxes from every agent')
+            for idx, info in tqdm(enumerate(self.infos), total=len(self.infos), desc='update gt_boxes'):
+                gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+                self.infos[idx]['gt_boxes'] = gt_boxes
+                self.infos[idx]['gt_names'] = gt_names
+        else:
+            self.logger.info('use gt_boxes the ego vehicle only')
 
     def include_v2x_sim_data(self, mode):
         self.logger.info('Loading V2X-Sim dataset')
