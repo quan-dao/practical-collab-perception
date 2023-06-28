@@ -20,10 +20,11 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
         return modar
     
     @torch.no_grad()
-    def _get_prediction_agent(self, lidar_id: int, lidar_token: str, sample_token: str) -> Tuple[np.ndarray]:
+    def _get_prediction_agent(self, lidar_id: int, lidar_token: str, sample_token: str, exchange_setting: str) -> Tuple[np.ndarray]:
         """
         Predictions are in agent's frame
         """
+        assert exchange_setting in ('now', 'prev')
         glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)  # (4, 4)
 
         path_modar = self.exchange_database / f"{sample_token}_id{lidar_id}_modar.pth"
@@ -32,7 +33,7 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
             # ---
             # propagate modar forward
             path_foregr = self.exchange_database / f"{sample_token}_id{lidar_id}_foreground.pth"
-            if path_foregr.exists():
+            if path_foregr.exists() and exchange_setting == 'prev':
                 foregr = torch.load(path_foregr)  # on gpu, (N_fore, 5 + 2 + 3 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3, flow-3
                 
                 # pool
@@ -96,7 +97,7 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
             dict_lidar_id_to_token = self._get_lidar_token_of_present_agents(sample['prev'])
             _token_of_sample_of_interest = sample['prev']
         else:
-            raise NotImplementedError(f"EXCHANGE_SETTING := {self.dataset_cfg.EXCHANGE_SETTING } is unknown")
+            raise NotImplementedError(f"EXCHANGE_SETTING := {self.dataset_cfg.EXCHANGE_SETTING} is unknown")
 
         if len(dict_lidar_id_to_token) > 0:
             for lidar_id, lidar_token in dict_lidar_id_to_token.items():
@@ -104,7 +105,7 @@ class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):
                     # ego vehicle is already handled above
                     continue
                 
-                modar, glob_se3_lidar = self._get_prediction_agent(lidar_id, lidar_token, _token_of_sample_of_interest)
+                modar, glob_se3_lidar = self._get_prediction_agent(lidar_id, lidar_token, _token_of_sample_of_interest, self.dataset_cfg.EXCHANGE_SETTING)
 
                 # transform modar to ego frame
                 ego_se3_lidar = ego_se3_glob @ glob_se3_lidar
