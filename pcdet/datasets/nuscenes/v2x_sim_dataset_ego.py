@@ -127,8 +127,8 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         # gt_boxes: (N_tot, 7)
         # gt_names: (N_tot,)
         
-        # final features: x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | sweep_idx, inst_idx
-        points_ = np.zeros((points.shape[0], 5 + 6 + 2))
+        # final features: x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | pr-bg, pr-stat, pr-dyn | sweep_idx, inst_idx
+        points_ = np.zeros((points.shape[0], 5 + 6 + 3 + 2))
         points_[:, :5] = points[:, :5]
         points_[:, -2:] = points[:, -2:]
         num_original = points_.shape[0]
@@ -165,16 +165,19 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 exchanged_points = list()
                 path_foregr = exchange_database / f"{prev_sample_token}_id{lidar_id}_foreground.pth"
                 if path_foregr.exists() and self.dataset_cfg.EXCHANGE_FOREGROUND:
-                    foregr = torch.load(path_foregr, map_location=torch.device('cpu'))  
-                    # (N_fore, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3
+                    foregr = torch.load(path_foregr, map_location=torch.device('cpu')).numpy()
+                    # (N_fore, 5 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3, flow-3
+
+                    # offset foreground by their scene flow
+                    foregr[:, :3] = foregr[:, :3] + foregr[:, -3:] * 2.
+
                     foregr[:, 4] = 0.  # zero time-lag as foregr were corrected
-                    foregr = torch.cat([foregr[:, :5],  # point-5  
-                                        foregr[:, -3:],  # 3-class prob (backgr, stat_foregr, dyn_foregr)
-                                        foregr[:, [5, 6]]  # sweep_idx, inst_idx
-                                        ], dim=1).contiguous().numpy()
+                    
+                    # assembly
                     foregr_ = np.zeros((foregr.shape[0], points_.shape[1]))
-                    foregr_[:, :8] = foregr[:, :8]
-                    foregr_[:, -2:] = foregr[:, -2:]
+                    foregr_[:, :5] = foregr[:, :5]  # point-5
+                    foregr_[:, 11: 14] = foregr[:, -6: -3]  # cls_prob-3
+                    foregr_[:, -2:] = foregr[:, -2:]  # sweep_idx, instance_idx
 
                     # map foregr_ to target frame
                     foregr_[:, :3] = apply_se3_(target_se3_lidar, points_=foregr_[:, :3], return_transformed=True)
@@ -212,8 +215,8 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
 
                     modar_ = np.zeros((modar.shape[0], points_.shape[1]))
                     modar_[:, :3] = modar[:, :3]
-                    modar_[:, 4] = max_time_lag  # TODO: after offset, should this be zero?
-                    modar_[:, 5: -2] = modar[:, 3:]
+                    modar_[:, 4] = 0.  # after offset, trying set it to zero
+                    modar_[:, 5: 11] = modar[:, 3:]
                     modar_[:, -2] = max_sweep_idx
                     modar_[:, -1] = -1  # dummy instance_idx
                     exchanged_points.append(modar_)
