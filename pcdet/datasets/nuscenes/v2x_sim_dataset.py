@@ -57,7 +57,11 @@ class V2XSimDataset_RSU(DatasetTemplate):
                 continue
             with open(info_path, 'rb') as f:
                 infos = pickle.load(f)
-                v2x_infos.extend(infos)
+            
+            for _info in infos:
+                lidar_rec = self.nusc.get('sample_data', _info['lidar_token'])
+                if 'SEM' not in lidar_rec['channel']:
+                    v2x_infos.append(_info)
 
         self.infos.extend(v2x_infos)
 
