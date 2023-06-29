@@ -56,7 +56,7 @@ def random_flip_along_x(data_dict_, enable=None):
                 f"expect points has 12 dim: 5 original raw, 5 map, sweep_idx, inst_idx; get {data_dict_['points'].shape[1]}"
             data_dict_['points'][:, 9] *= -1  # flipping points' lane direction
 
-        if data_dict_['points'].shape >= 13:
+        if data_dict_['points'].shape[1] >= 13:
             mask_modar = data_dict_['points'][:, -3] > 0
             # apply transformation on modar_points' heading
             data_dict_['points'][mask_modar, 8] *= -1
@@ -114,7 +114,7 @@ def random_flip_along_y(data_dict_, enable=None):
             # put lane_dir in range [-pi, pi]
             data_dict_['points'][:, 9] = np.arctan2(np.sin(data_dict_['points'][:, 9]), np.cos(data_dict_['points'][:, 9]))
 
-        if data_dict_['points'].shape >= 13:
+        if data_dict_['points'].shape[1] >= 13:
             mask_modar = data_dict_['points'][:, -3] > 0
             # apply transformation on modar_points' heading
             data_dict_['points'][mask_modar, 8] = -(data_dict_['points'][mask_modar, 8] + np.pi)
@@ -204,7 +204,7 @@ def global_rotation(data_dict_, rot_range, noise_rotation=None):
             # put lane_dir in range [-pi, pi]
             data_dict_['points'][:, 9] = np.arctan2(np.sin(data_dict_['points'][:, 9]), np.cos(data_dict_['points'][:, 9]))
 
-    if data_dict_['points'].shape >= 13:
+    if data_dict_['points'].shape[1] >= 13:
         mask_modar = data_dict_['points'][:, -3] > 0
         # apply transformation on modar_points' heading
         data_dict_['points'][mask_modar, 8] += noise_rotation
