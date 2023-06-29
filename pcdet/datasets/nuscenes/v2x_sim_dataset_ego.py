@@ -29,8 +29,20 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
 
         if self.dataset_cfg.get('USE_GT_FROM_EVERY_AGENT', True):
             self.logger.info('get gt_boxes from every agent')
+            if self.dataset_cfg.get('EVAL_FILTER_GT_BEYOND_RANGE', -1) > 0:
+                self.logger.info(f'keep only gt_boxes in range {self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE}')
+                
             for idx, info in tqdm(enumerate(self.infos), total=len(self.infos), desc='update gt_boxes'):
                 gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+                if self.dataset_cfg.get('EVAL_FILTER_GT_BEYOND_RANGE', -1) > 0:
+                    mask_kept = np.linalg.norm(gt_boxes[:, :2], axis=1) < self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE
+                    if np.any(mask_kept):
+                        gt_boxes = gt_boxes[mask_kept]
+                        gt_names = gt_names[mask_kept]
+                    else:
+                        gt_boxes = np.zeros((1, gt_boxes.shape[1]))
+                        gt_names = gt_names[[0]]
+
                 self.infos[idx]['gt_boxes'] = gt_boxes
                 self.infos[idx]['gt_names'] = gt_names
         else:
@@ -207,7 +219,9 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                             # weighted sum of foregrounds' offset; weights = foreground's prob dynamic
                             boxes_offset = scatter(foregr[:, -3:], inv_unq_box_idx, dim=0, reduce='mean') * 2.  # (N_modar, 3)
                             # offset modar; here, assume objects maintain the same speed
-                            modar[unq_box_idx, :3] += boxes_offset    
+                            modar[unq_box_idx, :3] += boxes_offset
+
+                            # TODO: if transmit foreground, don't transmit foreground that are not in any boxes
 
                     modar = modar.cpu().numpy()
                     # map modar (center & heading) to target frame

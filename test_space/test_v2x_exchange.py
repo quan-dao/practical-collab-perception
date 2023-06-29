@@ -18,10 +18,14 @@ def test_ego(chosen_batch_idx: int):
     gt_boxes = gt_boxes[chosen_batch_idx, :, :7]
     metadata = metadata[chosen_batch_idx]
     print(metadata['exchange'])
-    
+
+    # filter gt_boxes by range
+    mask_display = np.linalg.norm(gt_boxes[:, :2], axis=1) > 51.2
+    gt_boxes = gt_boxes[mask_display]
+
     # find foreground points & modar_points
-    mask_foreground = (points[:, 5: 8] > 0.1).any(axis=1)
-    mask_modar = points[:, -3] > 0
+    mask_foreground = (points[:, 11: 14] > 0.1).any(axis=1)
+    mask_modar = points[:, 10] > 0
     mask_original = np.logical_not(np.logical_or(mask_foreground, mask_modar))
 
     frames = metadata['exchange_coord'][0].reshape(-1, 3)
