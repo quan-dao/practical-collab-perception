@@ -12,7 +12,7 @@ POINT_CLOUD_RANGE: [-51.2, -51.2, -8.0, 51.2, 51.2, 0.0]
 # V2X Stuff
 EXCHANGE_WITH_RSU_ONLY: False
 EXCHANGE_CURRENT_ONLY: False
-
+EXCHANGE_DATABASE_DIRECTORY: exchange_database_flow
 
 DATA_SPLIT: {
     'train': train,

@@ -58,6 +58,14 @@ class V2XLateFusion(Detector3DTemplate):
                     'pred_scores': fused_boxes[:, -1],
                     'pred_labels': fused_boxes[:, -2].long()
                 }
+            elif self.model_cfg.BOX_FUSION_METHOD == 'ego_only':
+                # hack for eval trained ego+modar
+                boxes = torch.from_numpy(dict_exchange_boxes[1]).float().cuda()  # (N, 7 + 2) - box-7, score, label
+                this_pred_dict = {
+                    'pred_boxes': boxes[:, :7],
+                    'pred_scores': boxes[:, -2],
+                    'pred_labels': boxes[:, -1].long()
+                }
             else:
                 raise NotImplementedError(f"BOX_FUSION_METHOD: {self.model_cfg.BOX_FUSION_METHOD} is not implemented")
             
