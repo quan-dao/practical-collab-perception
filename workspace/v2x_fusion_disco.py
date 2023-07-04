@@ -66,6 +66,8 @@ class V2XMidFusionDisco(nn.Module):
         self.pix_size = model_cfg.get("FINAL_BEV_PIXEL_SIZE", 0.2 * 4)
         self.model_cfg = model_cfg
 
+        self.loss_dict = {'loss_distill': 0.0}
+
     def forward(self, batch_dict: dict):
         ego_bev = self.compressor(batch_dict['spatial_features_2d'])
         batch_size = ego_bev.shape[0]
@@ -112,6 +114,18 @@ class V2XMidFusionDisco(nn.Module):
         all_weights = rearrange(all_weights, 'B num_agents H W -> num_agents B 1 H W')
         fused_bev = torch.sum(all_bev * all_weights, dim=0)
 
-        fused_bev = self.decompressor(fused_bev)
+        fused_bev = self.decompressor(fused_bev)  # (B, C_in, H, W)
+
+        if self.training and 'bev_img_early' in batch_dict:
+            smax_fused_bev = F.softmax(fused_bev, dim=1)
+            log_smax_fused_bev = F.log_softmax(fused_bev, dim=1)
+
+            smax_bev_early = F.softmax(batch_dict['bev_img_early'], dim=1)
+            log_smax_bev_early = F.log_softmax(batch_dict['bev_img_early'], dim=1)
+            
+            loss_kd = F.kl_div(smax_fused_bev, log_smax_bev_early, log_target=True) + F.kl_div(smax_bev_early, log_smax_fused_bev, log_target=True)
+            loss_kd = loss_kd * 1e5
+            self.loss_dict['loss_distill'] = loss_kd
+
         batch_dict['spatial_features_2d'] = fused_bev
         return batch_dict

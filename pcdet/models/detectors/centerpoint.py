@@ -45,6 +45,15 @@ class CenterPoint(Detector3DTemplate):
             loss = loss_rpn + loss_corrector
         else:
             loss = loss_rpn
+
+        if self.v2x_mid_fusion is not None:
+            loss = loss + self.v2x_mid_fusion.loss_dict['loss_distill']
+            try:
+                tb_dict['loss_mid_fusion_distill'] = self.v2x_mid_fusion.loss_dict['loss_distill'].item()
+            except:
+                # in case there is no loss_mid_fusion_distill because this option is not used
+                tb_dict['loss_mid_fusion_distill'] = 0.
+
         tb_dict['loss_total'] = loss.item()
 
         return loss, tb_dict, disp_dict

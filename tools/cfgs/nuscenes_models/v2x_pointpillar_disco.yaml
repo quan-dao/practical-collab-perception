@@ -73,27 +73,27 @@ MODEL:
             UPSAMPLE_STRIDES: [0.5, 1, 2]
             NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
-    # BEV_MAKER_EARLY:
-    #     CKPT: ./pretrained_models/v2x_pointpillar_basic_early_ep20.pth
-    #     MAKER_TYPE: 'early'
-    #     VFE:
-    #         NAME: DynPillarVFE
-    #         NUM_RAW_POINT_FEATURES: 5
-    #         WITH_DISTANCE: False
-    #         USE_ABSLOTE_XYZ: True
-    #         USE_NORM: True
-    #         NUM_FILTERS: [64, 64]
-    #     MAP_TO_BEV:
-    #         NAME: PointPillarScatter
-    #         NUM_BEV_FEATURES: 64
-    #     BACKBONE_2D:
-    #         BACKBONE_2D:
-    #         NAME: BaseBEVBackbone
-    #         LAYER_NUMS: [3, 5, 5]
-    #         LAYER_STRIDES: [2, 2, 2]
-    #         NUM_FILTERS: [64, 128, 256]
-    #         UPSAMPLE_STRIDES: [0.5, 1, 2]
-    #         NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+    BEV_MAKER_EARLY:
+        CKPT: ./pretrained_models/v2x_pointpillar_basic_early_ep20_fullgt.pth
+        MAKER_TYPE: 'early'
+        VFE:
+            NAME: DynPillarVFE
+            NUM_RAW_POINT_FEATURES: 5
+            WITH_DISTANCE: False
+            USE_ABSLOTE_XYZ: True
+            USE_NORM: True
+            NUM_FILTERS: [64, 64]
+        MAP_TO_BEV:
+            NAME: PointPillarScatter
+            NUM_BEV_FEATURES: 64
+        BACKBONE_2D:
+            BACKBONE_2D:
+            NAME: BaseBEVBackbone
+            LAYER_NUMS: [3, 5, 5]
+            LAYER_STRIDES: [2, 2, 2]
+            NUM_FILTERS: [64, 128, 256]
+            UPSAMPLE_STRIDES: [0.5, 1, 2]
+            NUM_UPSAMPLE_FILTERS: [128, 128, 128]
 
     VFE:
         NAME: DynPillarVFE
