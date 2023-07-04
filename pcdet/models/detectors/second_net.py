@@ -23,8 +23,9 @@ class SECONDNet(Detector3DTemplate):
 
     def get_training_loss(self):
         disp_dict = {}
+        tb_dict = {}
 
-        loss_corrector, tb_dict = self.corrector.get_training_loss()
+        loss_corrector, tb_dict = self.corrector.get_training_loss(tb_dict)
         tb_dict['loss_corrector'] = loss_corrector.item()
         loss = loss_corrector
 

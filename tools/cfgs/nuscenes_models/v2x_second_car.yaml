@@ -1,8 +1,8 @@
 CLASS_NAMES: ['car']
 
 DATA_CONFIG:
-    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_rsu.yaml
-    MINI_TRAINVAL_STRIDE: 2
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
+    MINI_TRAINVAL_STRIDE: 8
     POINTS_IN_BOXES_GPU: True
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
@@ -44,8 +44,8 @@ MODEL:
         NUM_SWEEPS: 11  # = NUM_HISTORICAL_SWEEPS + 1
         BEV_IMAGE_STRIDE: 8
         CONV_INPUT_CHANNELS: 64
-        POINT_HEAD_HIDDEN_CHANNELS: [64]
-        OBJ_HEAD_HIDDEN_CHANNELS: [64]
+        POINT_HEAD_HIDDEN_CHANNELS: [32]
+        OBJ_HEAD_HIDDEN_CHANNELS: [32]
         THRESHOLD_POINT_CLS_PROB: 0.3
         # v2x stuff
         GENERATING_EXCHANGE_DATA: False
