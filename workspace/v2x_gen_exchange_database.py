@@ -18,7 +18,7 @@ def gen_exchange_database(model_type: str,
                           batch_size: int = 4):
     np.random.seed(666)
     assert model_type in ['car', 'rsu'], f"{model_type} is invalid"
-    cfg_file = f'../tools/cfgs/nuscenes_models/v2x_pointpillar_basic_{model_type}.yaml'
+    cfg_file = f'../tools/cfgs/nuscenes_models/v2x_second_{model_type}.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     # shutdown data augmentation
     cfg.DATA_CONFIG.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
@@ -41,7 +41,7 @@ def gen_exchange_database(model_type: str,
     model.cuda()
     model.eval()
 
-    exchange_root = dataset.root_path / "exchange_database_bevimg"
+    exchange_root = dataset.root_path / "exchange_database_second"
     if not exchange_root.exists():
         exchange_root.mkdir(parents=True, exist_ok=True)
 
@@ -66,4 +66,4 @@ if __name__ == '__main__':
         args.batch_size
     )
     print('Remember to generate exchange database for both train & val split')
-    # python v2x_gen_exchange_database.py --model_type rsu --ckpt_path ../tools/pretrained_models/v2x_pointpillar_basic_rsu_ep20.pth --training 1
+    # python v2x_gen_exchange_database.py --model_type car --ckpt_path ../tools/pretrained_models/v2x_second_car_ep20.pth --training 1

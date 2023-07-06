@@ -3,7 +3,7 @@ CLASS_NAMES: ['car']
 DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
     MINI_TRAINVAL_STRIDE: 1
-    DATASET_DOWNSAMPLING_RATIO: 16
+    # DATASET_DOWNSAMPLING_RATIO: 16
     POINTS_IN_BOXES_GPU: True
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
@@ -49,7 +49,7 @@ MODEL:
         OBJ_HEAD_HIDDEN_CHANNELS: [32]
         THRESHOLD_POINT_CLS_PROB: 0.3
         # v2x stuff
-        GENERATING_EXCHANGE_DATA: False
+        GENERATING_EXCHANGE_DATA: True
         DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_second
 
     DENSE_HEAD:
@@ -98,7 +98,7 @@ MODEL:
                 NMS_POST_MAXSIZE: 83
         
         # v2x stuff
-        GENERATING_EXCHANGE_DATA: False
+        GENERATING_EXCHANGE_DATA: True
         DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_second
 
     POST_PROCESSING:
