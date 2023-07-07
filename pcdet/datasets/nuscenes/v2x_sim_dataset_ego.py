@@ -39,7 +39,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
 
         if self.dataset_cfg.get('USE_GT_FROM_EVERY_AGENT', True):
             self.logger.info(f'keep only gt_boxes in range {self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE}')
-            _path_gt_from_all = self.root_path / "gt_from_all_range60.pkl"
+            _path_gt_from_all = self.root_path / f"{self.mode}_gt_from_all_range60.pkl"
             if _path_gt_from_all.exists():
                 self.logger.info('load gt_boxes from every agent')
                 with open(_path_gt_from_all, 'rb') as f:
