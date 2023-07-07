@@ -72,7 +72,9 @@ def main():
         dist_train = False
         total_gpus = 1
     else:
-        total_gpus, cfg.LOCAL_RANK = getattr(common_utils, 'init_dist_%s' % args.launcher)()
+        total_gpus, cfg.LOCAL_RANK = getattr(common_utils, 'init_dist_%s' % args.launcher)(
+            args.tcp_port, args.local_rank, backend='nccl'
+        )
         dist_train = True
 
     if args.batch_size is None:
@@ -155,7 +157,9 @@ def main():
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if dist_train:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[idr_torch.local_rank], find_unused_parameters=True)
+        # model = nn.parallel.DistributedDataParallel(model, device_ids=[idr_torch.local_rank], find_unused_parameters=True)
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])
+    logger.info(f'----------- Model {cfg.MODEL.NAME} created, param count: {sum([m.numel() for m in model.parameters()])} -----------')
     logger.info(model)
 
     lr_scheduler, lr_warmup_scheduler = build_scheduler(
