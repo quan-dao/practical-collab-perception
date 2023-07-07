@@ -16,8 +16,18 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
         
-        self.exchange_database = self.root_path / dataset_cfg.EXCHANGE_DATABASE_DIRECTORY
-        assert self.exchange_database.exists(), f"{self.exchange_database} does not exist"
+        pillar_dir = 'exchange_database_flow'
+        second_dir = 'exchange_database_second'
+        self.exchange_database = {
+            0: self.root_path / second_dir,  # remember to change this back when eval five seconds
+            1: self.root_path / second_dir,
+            2: self.root_path / second_dir,
+            3: self.root_path / second_dir,
+            4: self.root_path / second_dir,
+            5: self.root_path / second_dir,
+        }
+        for _, path_ in self.exchange_database.items():
+            assert path_.exists(), f"{path_} does not exist"
 
         self._lidars_name = set([f'LIDAR_TOP_id_{lidar_id}' for lidar_id in range(6)])  # watchout for SEMLIDAR_TOP_id_
         self._nms_config = EasyDict({
@@ -140,7 +150,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         # gt_names: (N_tot,)
         
         # final features: x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | pr-bg, pr-stat, pr-dyn | sweep_idx, inst_idx
-        points_ = np.zeros((points.shape[0], 5 + 6 + 3 + 2))
+        points_ = np.zeros((points.shape[0], 5 + 6 + 2))
         points_[:, :5] = points[:, :5]
         points_[:, -2:] = points[:, -2:]
         num_original = points_.shape[0]
@@ -173,7 +183,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
                 glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
                 target_se3_lidar = target_se3_glob @ glob_se3_lidar
 
-                exchange_database = self.exchange_database
+                exchange_database = self.exchange_database[lidar_id]
                 exchanged_points = list()
                 path_foregr = exchange_database / f"{prev_sample_token}_id{lidar_id}_foreground.pth"
                 if path_foregr.exists() and self.dataset_cfg.EXCHANGE_FOREGROUND:
