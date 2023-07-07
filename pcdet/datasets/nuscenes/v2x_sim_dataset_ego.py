@@ -38,23 +38,30 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         })
 
         if self.dataset_cfg.get('USE_GT_FROM_EVERY_AGENT', True):
-            self.logger.info('get gt_boxes from every agent')
-            if self.dataset_cfg.get('EVAL_FILTER_GT_BEYOND_RANGE', -1) > 0:
-                self.logger.info(f'keep only gt_boxes in range {self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE}')
-                
-            for idx, info in tqdm(enumerate(self.infos), total=len(self.infos), desc='update gt_boxes'):
-                gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
-                if self.dataset_cfg.get('EVAL_FILTER_GT_BEYOND_RANGE', -1) > 0:
-                    mask_kept = np.linalg.norm(gt_boxes[:, :2], axis=1) < self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE
-                    if np.any(mask_kept):
-                        gt_boxes = gt_boxes[mask_kept]
-                        gt_names = gt_names[mask_kept]
-                    else:
-                        gt_boxes = np.zeros((1, gt_boxes.shape[1]))
-                        gt_names = gt_names[[0]]
+            self.logger.info(f'keep only gt_boxes in range {self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE}')
+            _path_gt_from_all = self.root_path / "gt_from_all_range60.pkl"
+            if _path_gt_from_all.exists():
+                self.logger.info('load gt_boxes from every agent')
+                with open(_path_gt_from_all, 'rb') as f:
+                    self.infos = pickle.load(f)
+            else:
+                self.logger.info('computing gt_boxes from every agent')
+                for idx, info in tqdm(enumerate(self.infos), total=len(self.infos), desc='update gt_boxes'):
+                    gt_boxes, gt_names = self.get_all_ground_truth(info['lidar_token'])
+                    if self.dataset_cfg.get('EVAL_FILTER_GT_BEYOND_RANGE', -1) > 0:
+                        mask_kept = np.linalg.norm(gt_boxes[:, :2], axis=1) < self.dataset_cfg.EVAL_FILTER_GT_BEYOND_RANGE
+                        if np.any(mask_kept):
+                            gt_boxes = gt_boxes[mask_kept]
+                            gt_names = gt_names[mask_kept]
+                        else:
+                            gt_boxes = np.zeros((1, gt_boxes.shape[1]))
+                            gt_names = gt_names[[0]]
 
-                self.infos[idx]['gt_boxes'] = gt_boxes
-                self.infos[idx]['gt_names'] = gt_names
+                    self.infos[idx]['gt_boxes'] = gt_boxes
+                    self.infos[idx]['gt_names'] = gt_names
+                
+                with open(_path_gt_from_all, 'wb') as f:
+                    pickle.dump(self.infos, f)
         else:
             self.logger.info('use gt_boxes the ego vehicle only')
 
