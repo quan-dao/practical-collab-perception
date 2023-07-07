@@ -180,17 +180,19 @@ def init_dist_slurm():
     return total_gpus, idr_torch.rank
 
 
-def init_dist_pytorch():
+def init_dist_pytorch(tcp_port, local_rank, backend='nccl'):
     if mp.get_start_method(allow_none=True) is None:
         mp.set_start_method('spawn')
+    # os.environ['MASTER_PORT'] = str(tcp_port)
+    # os.environ['MASTER_ADDR'] = 'localhost'
+    num_gpus = torch.cuda.device_count()
+    torch.cuda.set_device(local_rank % num_gpus)
 
-    num_gpus = idr_torch.size
-    torch.cuda.set_device(idr_torch.local_rank)
     dist.init_process_group(
-        backend='nccl',
-        init_method='env://',
-        rank=idr_torch.rank,
-        world_size=num_gpus
+        backend=backend,
+        # init_method='tcp://127.0.0.1:%d' % tcp_port,
+        # rank=local_rank,
+        # world_size=num_gpus
     )
     rank = dist.get_rank()
     return num_gpus, rank

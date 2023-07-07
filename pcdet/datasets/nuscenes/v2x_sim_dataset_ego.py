@@ -140,7 +140,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         # gt_names: (N_tot,)
         
         # final features: x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | pr-bg, pr-stat, pr-dyn | sweep_idx, inst_idx
-        points_ = np.zeros((points.shape[0], 5 + 6 + 3 + 2))
+        points_ = np.zeros((points.shape[0], 5 + 6 + 2))
         points_[:, :5] = points[:, :5]
         points_[:, -2:] = points[:, -2:]
         num_original = points_.shape[0]
