@@ -9,6 +9,8 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
         self.exchange_database = None  # don't need this in early fusion
+        if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False):
+            self.logger.info('exchange prev feat map for DiscoNet')
 
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
@@ -43,6 +45,9 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
         # ---------------------------
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
+        if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False):
+            sample_token = sample['prev']
+            sample = self.nusc.get('sample', sample_token)
         exchange_metadata = dict([(i, 0.) for i in range(6) if i != 1])
         exchange_points = list()
         se3_from_ego = dict()
@@ -52,9 +57,6 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
             
             lidar_id = int(lidar_name.split('_')[-1])
             if lidar_id == 1:
-                continue
-
-            if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id != 0:
                 continue
 
             glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)
