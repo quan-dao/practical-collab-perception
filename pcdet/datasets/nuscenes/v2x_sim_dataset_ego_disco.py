@@ -45,7 +45,8 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
         # ---------------------------
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
-        if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False):
+        if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False) and sample['prev'] != '':
+            # use sample['prev'] != '' to account for 1st sample in a sequence
             sample_token = sample['prev']
             sample = self.nusc.get('sample', sample_token)
         exchange_metadata = dict([(i, 0.) for i in range(6) if i != 1])
@@ -86,7 +87,8 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
             exchange_points.append(_xpoints)
             se3_from_ego[lidar_id] = np.linalg.inv(target_se3_lidar)
 
-        if len(exchange_points) > 0:
+        if len(exchange_points) > 0 and sample['prev'] != '':
+            # use sample['prev'] != '' to account for 1st sample in a sequence
             points = np.concatenate([points, *exchange_points], axis=0)
         
         # assemble datadict
