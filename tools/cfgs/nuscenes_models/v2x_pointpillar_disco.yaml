@@ -7,6 +7,8 @@ DATA_CONFIG:
     DATASET_DOWNSAMPLING_RATIO: 2
     POINTS_IN_BOXES_GPU: True
     EXCHANGE_DATABASE_DIRECTORY: exchange_database_flow
+    USE_GT_FROM_EVERY_AGENT: True
+    EVAL_FILTER_GT_BEYOND_RANGE: 60.
 
     POINT_FEATURE_ENCODING: {
         encoding_type: absolute_coordinates_encoding,

@@ -18,16 +18,17 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         
         pillar_dir = 'exchange_database_flow'
         second_dir = 'exchange_database_second'
+        dummy_dir = Path('blah')
         self.exchange_database = {
             0: self.root_path / second_dir,  # remember to change this back when eval five seconds
-            1: self.root_path / second_dir,
-            2: self.root_path / second_dir,
-            3: self.root_path / second_dir,
-            4: self.root_path / second_dir,
-            5: self.root_path / second_dir,
+            1: self.root_path / pillar_dir,
+            2: self.root_path / pillar_dir,
+            3: self.root_path / pillar_dir,
+            4: self.root_path / pillar_dir,
+            5: self.root_path / pillar_dir,
         }
-        for _, path_ in self.exchange_database.items():
-            assert path_.exists(), f"{path_} does not exist"
+        # for _, path_ in self.exchange_database.items():
+        #     assert path_.exists(), f"{path_} does not exist"
 
         self._lidars_name = set([f'LIDAR_TOP_id_{lidar_id}' for lidar_id in range(6)])  # watchout for SEMLIDAR_TOP_id_
         self._nms_config = EasyDict({

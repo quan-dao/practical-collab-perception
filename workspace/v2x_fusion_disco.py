@@ -118,13 +118,8 @@ class V2XMidFusionDisco(nn.Module):
 
         if self.training and 'bev_img_early' in batch_dict:
             smax_fused_bev = F.softmax(fused_bev, dim=1)
-            log_smax_fused_bev = F.log_softmax(fused_bev, dim=1)
-
             smax_bev_early = F.softmax(batch_dict['bev_img_early'], dim=1)
-            log_smax_bev_early = F.log_softmax(batch_dict['bev_img_early'], dim=1)
-            
-            loss_kd = F.kl_div(smax_fused_bev, log_smax_bev_early, log_target=True) + F.kl_div(smax_bev_early, log_smax_fused_bev, log_target=True)
-            loss_kd = loss_kd * 1e5
+            loss_kd = F.smooth_l1_loss(smax_fused_bev, smax_bev_early) * 10.
             self.loss_dict['loss_distill'] = loss_kd
 
         batch_dict['spatial_features_2d'] = fused_bev
