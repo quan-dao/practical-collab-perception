@@ -11,13 +11,22 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
         self.exchange_database = None  # don't need this in early fusion
         if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False):
             self.logger.info('exchange prev feat map for DiscoNet')
+            # remove info that do not have prev
+            valid_idx = []
+            for idx, info in enumerate(self.infos):
+                sample = self.nusc.get('sample', info['token'])
+                if sample['prev'] != '':
+                    valid_idx.append(idx)
+            
+            self.logger.info(f"num samples have previous: {len(valid_idx)} ({float(len(valid_idx)) / len(self)})")
+            self.infos = [self.infos[_i] for _i in valid_idx]
 
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
             index = index % len(self.infos)
         
         info = copy.deepcopy(self.infos[index])
-        
+
         # ---------------------------
         # ego vehicle's stuff
         # ---------------------------
@@ -45,8 +54,7 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
         # ---------------------------
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
-        if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False) and sample['prev'] != '':
-            # use sample['prev'] != '' to account for 1st sample in a sequence
+        if self.dataset_cfg.get('EXCHANGE_PREVIOUS', False):
             sample_token = sample['prev']
             sample = self.nusc.get('sample', sample_token)
         exchange_metadata = dict([(i, 0.) for i in range(6) if i != 1])
@@ -87,7 +95,7 @@ class V2XSimDataset_EGO_DISCO(V2XSimDataset_EGO):
             exchange_points.append(_xpoints)
             se3_from_ego[lidar_id] = np.linalg.inv(target_se3_lidar)
 
-        if len(exchange_points) > 0 and sample['prev'] != '':
+        if len(exchange_points) > 0:
             # use sample['prev'] != '' to account for 1st sample in a sequence
             points = np.concatenate([points, *exchange_points], axis=0)
         
