@@ -45,8 +45,8 @@ def measure_mid_fusion():
         total_epochs=1, seed=666,
         workers=0)
 
-    rsu_bev_maker = BEVMaker(cfg.BEV_MAKER_RSU, 10, dataset)
-    car_bev_maker = BEVMaker(cfg.BEV_MAKER_CAR, 10, dataset)
+    rsu_bev_maker = BEVMaker(cfg.MODEL.BEV_MAKER_RSU, 10, dataset)
+    car_bev_maker = BEVMaker(cfg.MODEL.BEV_MAKER_CAR, 10, dataset)
     
     rsu_bev_maker.eval()
     car_bev_maker.eval()
