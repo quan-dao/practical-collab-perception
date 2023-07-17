@@ -2,6 +2,7 @@ import open3d as o3d
 import numpy as np
 import torch
 from typing import Union, List
+import matplotlib.pyplot as plt
 
 from workspace.nuscenes_temporal_utils import apply_se3_, make_se3
 
@@ -108,6 +109,17 @@ class PointsPainter(object):
             all_o3d_offsets.append(o3d_offset)
 
         return all_o3d_offsets
+    
+    def _draw_special_points(self, xyz: np.ndarray):
+        assert xyz.shape[1] == 3, f"{xyz.shape[1]} != 3"
+        out = list()
+        for i in range(xyz.shape[0]):
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.2)
+            sphere.translate(xyz[i].reshape(3, 1))
+            sphere.paint_uniform_color(np.array([255. / 255., 102. / 255., 0]))
+            out.append(sphere)
+        
+        return out
 
     def show(self,
              xyz_color: np.ndarray = None, 
@@ -135,6 +147,10 @@ class PointsPainter(object):
             # kwargs['points_offset']: (N_pts, 3)
             o3d_points_offset = self._draw_points_offset(kwargs['points_offset'])
             objects_to_draw += o3d_points_offset
+        
+        if 'special_points' in kwargs:
+            o3d_special_points = self._draw_special_points(kwargs['special_points'])
+            objects_to_draw += o3d_special_points
 
         o3d.visualization.draw_geometries(objects_to_draw)
 
@@ -164,3 +180,71 @@ def color_points_binary(points_binary_channel: np.ndarray):
     points_color = np.zeros((points_binary_channel.shape[0], 3))
     points_color[points_binary_channel.astype(int) == 1, 0] = 1.0  # red for 1, black for 0
     return points_color
+
+
+class BEVPainter:
+    def __init__(self, pc_range: np.ndarray) -> None:
+        self.pc_range = pc_range
+
+    def draw_1box(self, axe, box: np.ndarray, box_color, linestyle='solid', linewidth=1):
+        vertices = np.array([
+            [1,   1],
+            [-1,  1],
+            [-1, -1],
+            [1, -1],
+        ]) / 2.0
+        vertices *= box[3: 5]  # (4, 2)
+        vertices = np.pad(vertices, pad_width=[(0, 0), (0, 1)], constant_values=1.)  # (4, 3)
+
+        cos, sin = np.cos(box[-1]), np.sin(box[-1])
+        box_to_lidar = np.array([
+            [cos,  -sin, box[0]],
+            [sin,  cos,  box[1]],
+            [0.,   0.,   1.]
+        ])
+        vertices = vertices @ box_to_lidar.T  # (4, 3)
+
+        axe.plot(vertices[[0, 1, 2, 3, 0], 0], vertices[[0, 1, 2, 3, 0], 1], c=box_color, linestyle=linestyle, linewidth=linewidth)
+
+    def show_bev(self, xyz: np.ndarray, axe=None, xyz_color=None, special_points: np.ndarray = None, 
+                 gt_boxes=None, gt_boxes_color=None, show_gt_idx=False, invisible_gt_indices=list(),
+                 pred_boxes=None, pred_boxes_color=None):
+        if axe is None:
+            fig, axe = plt.subplots()
+        
+        if xyz_color is None:
+            xyz_color = np.zeros((xyz.shape[0], 3))
+            xyz_color[:, 2] = 1.  # blue
+
+        axe.scatter(xyz[:, 0], xyz[:, 1], c=xyz_color, s=5.)
+
+        if special_points is not None:
+            axe.scatter(special_points[:, 0], special_points[:, 1], c='darkorange', marker='*', s=25.0)
+
+        if gt_boxes is not None:
+            assert gt_boxes.shape[1] == 7, f"{gt_boxes.shape[1]} != 7"
+            if gt_boxes_color is None:
+                gt_boxes_color = np.zeros((gt_boxes.shape[0], 3))
+                gt_boxes_color[:, 0] = 1.
+
+            for bidx, box in enumerate(gt_boxes):
+                self.draw_1box(axe, box, gt_boxes_color[bidx], 
+                               linestyle='solid' if bidx not in invisible_gt_indices else 'dashed',
+                               linewidth=2)
+                if show_gt_idx:
+                    axe.text(box[0], box[1], f"gt_{bidx}")
+
+        if pred_boxes is not None:
+            assert pred_boxes.shape[1] == 7, f"{pred_boxes.shape[1]} != 7"
+            if pred_boxes_color is None:
+                pred_boxes_color = np.zeros((pred_boxes.shape[0], 3))
+                pred_boxes_color[:, 0] = 1.
+
+            for bidx, box in enumerate(pred_boxes):
+                self.draw_1box(axe, box, pred_boxes_color[bidx])
+        
+        axe.set_xlim([self.pc_range[0], self.pc_range[3]])
+        axe.set_ylim([self.pc_range[1], self.pc_range[4]])
+        axe.set_aspect('equal', 'box')
+        axe.set_xticks([])
+        axe.set_yticks([])
