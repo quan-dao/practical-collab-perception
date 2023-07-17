@@ -3,6 +3,7 @@ import torch
 from pathlib import Path
 import argparse
 from tqdm import tqdm
+from copy import deepcopy
 
 from pcdet.config import cfg, cfg_from_yaml_file
 from pcdet.datasets import build_dataloader
@@ -14,7 +15,7 @@ from workspace.nuscenes_temporal_utils import get_one_pointcloud, get_nuscenes_s
 
 
 def main(ckpt_path: str, chosen_batch_dict_idx: int):
-    cfg_file = f'../cfgs/nuscenes_models/v2x_pointpillar_basic_ego.yaml'
+    cfg_file = f'../tools/cfgs/nuscenes_models/v2x_pointpillar_basic_ego.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     logger = common_utils.create_logger(f'log_v2x_gen_qualitative_performance.txt')
     dataset, dataloader, _ = build_dataloader(
@@ -33,22 +34,26 @@ def main(ckpt_path: str, chosen_batch_dict_idx: int):
     _batch_dict_idx = 0
     for batch_dict in dataloader:
         if _batch_dict_idx != chosen_batch_dict_idx:
+            _batch_dict_idx += 1
             continue
         to_tensor(batch_dict, move_to_gpu=True)
         with torch.no_grad():
             pred_dicts, recall_dicts = model(batch_dict)
         
-        for k in batch_dict.keys():
+        all_keys = deepcopy(list(batch_dict.keys()))
+        for k in all_keys:
             if k not in ['points', 'gt_boxes', 'gt_names', 'metadata', 'final_box_dicts']:
                 batch_dict.pop(k)
         
+        break
+
     # get point cloud from others
     ego_lidar_token = batch_dict['metadata'][0]['lidar_token']
     ego_se3_glob = np.linalg.inv(get_nuscenes_sensor_pose_in_global(dataset.nusc, ego_lidar_token))
 
     lidar_rec = dataset.nusc.get('sample_data', ego_lidar_token)
     sample = dataset.nusc.get('sample', lidar_rec['sample_token'])
-    batch_dict['exchagne'] = dict()
+    batch_dict['exchange'] = dict()
     for lidar_name, lidar_token in sample['data'].items():
         if lidar_name not in dataset._lidars_name:
             continue
@@ -77,4 +82,4 @@ if __name__ == '__main__':
     parser.add_argument('--chosen_batch_dict_idx', type=int)
     args = parser.parse_args()
     main(args.ckpt_path, args.chosen_batch_dict_idx)
-    # python for_journal_gen_qualitative.py --ckpt_path ../tools/pretrained_model/pillar_pil4sec1_for_qualitative.pth --chosen_batch_dict_idx 1
+    # python for_journal_gen_qualitative.py --ckpt_path ../tools/pretrained_models/pillar_pil4sec1_for_qualitative.pth --chosen_batch_dict_idx 1
