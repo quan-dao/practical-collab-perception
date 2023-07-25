@@ -12,7 +12,7 @@ def main():
     width = 0.35
     multiplier = 0
     
-    fig, ax1 = plt.subplots(figsize=(12, 10))
+    fig, ax1 = plt.subplots(figsize=(12, 6))
     ax2 = ax1.twinx()
 
     for agent_type, agent_number in settings.items():

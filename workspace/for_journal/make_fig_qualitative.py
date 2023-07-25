@@ -75,7 +75,21 @@ def main(filename_batch_dict: str, invisible_gt_indices: list, saveimg=False):
 
 
 if __name__ == '__main__':
+    invisible_dict = {
+        'for_quali_gxyl78y304i5637k6mq376abyxgeharx.pth': [8, 9],
+        'for_quali_p9572g7z415y2p0ka6na6tzpyziz5sof.pth': [],
+        'for_quali_2269615u3uku5rbrgn37ux4iqi44q0hf.pth': [5, 12, 13],  # - 5 is occluded
+        'for_quali_3wq3h16h60upojri1q684ya1c371152r.pth': [],
+        'for_quali_p2bt96217b00195wp301rl3m8f035877.pth': [4,],
+        'for_quali_j31xj68tr99kont9b3ui8607s71w25fw.pth': [10, 1, 11, 16, 14, 4, 3, 5],
+    }
     # filename = 'for_quali_gxyl78y304i5637k6mq376abyxgeharx.pth'  # invisible: [8, 9]
     # filename = 'for_quali_p9572g7z415y2p0ka6na6tzpyziz5sof.pth'  # invisible: []
-    filename = 'for_quali_2269615u3uku5rbrgn37ux4iqi44q0hf.pth'  # [5, 12, 13] - 5 is occluded
-    main(filename, invisible_gt_indices=[5, 12, 13], saveimg=True)
+    # filename = 'for_quali_2269615u3uku5rbrgn37ux4iqi44q0hf.pth'  # invisible: [5, 12, 13] - 5 is occluded
+    # filename = 'for_quali_3wq3h16h60upojri1q684ya1c371152r.pth'  # invisible: [] - a lot of FP in MoDAR
+    # filename = 'for_quali_8td8g5oce50a322cw9kddo303ljn1129.pth'  # invisible: [1, 9, 8, 13, 0, 2, 6, 16]
+    # filename = 'for_quali_p2bt96217b00195wp301rl3m8f035877.pth'  # invisible: [4,]
+    # filename = 'for_quali_j31xj68tr99kont9b3ui8607s71w25fw.pth'
+    filename = 'for_quali_p2bt96217b00195wp301rl3m8f035877' + '.pth'
+    invisible_gt_indices = invisible_dict[filename]
+    main(filename, invisible_gt_indices=invisible_gt_indices, saveimg=True)
