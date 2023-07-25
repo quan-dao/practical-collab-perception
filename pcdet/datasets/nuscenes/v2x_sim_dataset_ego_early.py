@@ -9,6 +9,18 @@ class V2XSimDataset_EGO_EARLY(V2XSimDataset_EGO):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
         self.exchange_database = None  # don't need this in early fusion
+        self.exchange_previous = self.dataset_cfg.get('EXCHANGE_PREVIOUS', False)
+        if self.exchange_previous:
+            self.logger.info('exchange prev feat map for Early')
+            # remove info that do not have prev
+            valid_idx = []
+            for idx, info in enumerate(self.infos):
+                sample = self.nusc.get('sample', info['token'])
+                if sample['prev'] != '':
+                    valid_idx.append(idx)
+            
+            self.logger.info(f"num samples have previous: {len(valid_idx)} ({float(len(valid_idx)) / len(self)})")
+            self.infos = [self.infos[_i] for _i in valid_idx]
 
     def __getitem__(self, index):
         if self._merge_all_iters_to_one_epoch:
@@ -41,6 +53,9 @@ class V2XSimDataset_EGO_EARLY(V2XSimDataset_EGO):
         # ---------------------------
         sample_token = info['token']
         sample = self.nusc.get('sample', sample_token)
+        if self.exchange_previous:
+            sample = self.nusc.get('sample', sample['prev'])
+            
         exchange_metadata = dict([(i, 0.) for i in range(6) if i != 1])
         exchange_points = list()
         for lidar_name, lidar_token in sample['data'].items():
@@ -49,9 +64,6 @@ class V2XSimDataset_EGO_EARLY(V2XSimDataset_EGO):
             
             lidar_id = int(lidar_name.split('_')[-1])
             if lidar_id == 1:
-                continue
-
-            if self.dataset_cfg.get('EXCHANGE_WITH_RSU_ONLY', False) and lidar_id != 0:
                 continue
 
             glob_se3_lidar = get_nuscenes_sensor_pose_in_global(self.nusc, lidar_token)

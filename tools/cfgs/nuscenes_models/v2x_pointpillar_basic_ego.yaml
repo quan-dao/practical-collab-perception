@@ -4,11 +4,10 @@ DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego.yaml
     POINTS_IN_BOXES_GPU: True
     DATASET_DOWNSAMPLING_RATIO: 2
-    EXCHANGE_WITH_RSU_ONLY: False
     EXCHANGE_MODAR: True
-    EXCHANGE_FOREGROUND: False
     USE_GT_FROM_EVERY_AGENT: True
     EVAL_FILTER_GT_BEYOND_RANGE: 60.
+    EXCHANGE_NOW: False
     
 MODEL:
     NAME: CenterPoint
