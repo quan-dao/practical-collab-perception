@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.linalg as LA
 from nuscenes.nuscenes import NuScenes
-from _dev_space.tools_box import apply_tf, tf, get_sweeps_token, get_nuscenes_sensor_pose_in_global
+from pcdet.datasets.nuscenes._legacy_tools_box import apply_tf, tf, get_sweeps_token, get_nuscenes_sensor_pose_in_global
 from pcdet.datasets.nuscenes.nuscenes_utils import map_name_from_general_to_detection
 
 

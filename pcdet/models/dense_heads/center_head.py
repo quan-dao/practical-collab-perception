@@ -7,7 +7,7 @@ from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
 from ...utils import loss_utils
 from einops import rearrange
-from workspace.box_utils import get_axis_aligned_iou
+from pcdet.models.dense_heads.box_utils import get_axis_aligned_iou
 
 
 class SeparateHead(nn.Module):

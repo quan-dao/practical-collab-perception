@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from nuscenes import NuScenes
 from nuscenes.prediction import PredictHelper
 from nuscenes.prediction.input_representation.static_layers import load_all_maps
-from _dev_space.tools_box import get_nuscenes_sensor_pose_in_global, get_nuscenes_sensor_pose_in_ego_vehicle
+from pcdet.datasets.nuscenes._legacy_tools_box import get_nuscenes_sensor_pose_in_global, get_nuscenes_sensor_pose_in_ego_vehicle
 from pyquaternion import Quaternion
 import cv2
 from einops import rearrange

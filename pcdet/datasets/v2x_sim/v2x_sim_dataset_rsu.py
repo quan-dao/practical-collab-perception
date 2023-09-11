@@ -16,7 +16,7 @@ from ..dataset import DatasetTemplate
 from pcdet.datasets.nuscenes import nuscenes_utils
 from pcdet.utils import common_utils
 from pcdet.datasets.v2x_sim.v2x_sim_utils import get_points_and_boxes_of_1lidar, get_nuscenes_sensor_pose_in_global, get_pseudo_sweeps_of_1lidar
-from workspace.v2x_sim_eval_utils import transform_det_annos_to_nusc_annos, V2XSimDetectionEval
+from pcdet.datasets.v2x_sim.v2x_sim_eval_utils import transform_det_annos_to_nusc_annos, V2XSimDetectionEval
 
 
 class V2XSimDataset_RSU(DatasetTemplate):

@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from nuscenes import NuScenes
-from workspace.nuscenes_map_helper import MapMaker
+from pcdet.datasets.nuscenes.nuscenes_map_utils import MapMaker
 from copy import deepcopy
 from einops import rearrange
 
