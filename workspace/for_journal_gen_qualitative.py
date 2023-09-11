@@ -11,7 +11,7 @@ from pcdet.utils import common_utils
 from pcdet.models.detectors import build_detector
 
 from test_space.tools import to_tensor
-from workspace.nuscenes_temporal_utils import get_one_pointcloud, get_nuscenes_sensor_pose_in_global
+from pcdet.datasets.nuscenes.nuscenes_temporal_utils import get_one_pointcloud, get_nuscenes_sensor_pose_in_global
 
 
 def main(ckpt_path: str, chosen_batch_dict_idx: int):

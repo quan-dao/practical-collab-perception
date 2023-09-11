@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from einops import rearrange
 import cv2
 
-from workspace.nuscenes_temporal_utils import get_one_pointcloud, get_nuscenes_sensor_pose_in_global, apply_se3_
+from pcdet.datasets.nuscenes.nuscenes_temporal_utils import get_one_pointcloud, get_nuscenes_sensor_pose_in_global, apply_se3_
 from workspace.o3d_visualization import PointsPainter
 
 

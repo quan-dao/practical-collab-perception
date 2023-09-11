@@ -8,8 +8,8 @@ from easydict import EasyDict
 import yaml
 
 from pcdet.utils import common_utils
-from pcdet.datasets.nuscenes.v2x_sim_dataset import V2XSimDataset_RSU
-from workspace.v2x_sim_utils import get_points_and_boxes_of_1lidar, get_nuscenes_sensor_pose_in_global
+from pcdet.datasets.v2x_sim.v2x_sim_dataset_rsu import V2XSimDataset_RSU
+from pcdet.datasets.v2x_sim.v2x_sim_utils import get_points_and_boxes_of_1lidar, get_nuscenes_sensor_pose_in_global
 
 
 class V2XSimDataset_CAR(V2XSimDataset_RSU):

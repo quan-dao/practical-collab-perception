@@ -8,8 +8,8 @@ from easydict import EasyDict
 from tqdm import tqdm
 
 from pcdet.models.model_utils import model_nms_utils
-from pcdet.datasets.nuscenes.v2x_sim_dataset_car import V2XSimDataset_CAR
-from workspace.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_, roiaware_pool3d_utils, get_points_and_boxes_of_1lidar
+from pcdet.datasets.v2x_sim.v2x_sim_dataset_car import V2XSimDataset_CAR
+from pcdet.datasets.v2x_sim.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_, roiaware_pool3d_utils, get_points_and_boxes_of_1lidar
 
 
 class V2XSimDataset_EGO(V2XSimDataset_CAR):

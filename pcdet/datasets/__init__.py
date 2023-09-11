@@ -8,27 +8,17 @@ from pcdet.utils import common_utils
 from .dataset import DatasetTemplate
 from .kitti.kitti_dataset import KittiDataset
 from .nuscenes.nuscenes_dataset import NuScenesDataset
-from .nuscenes.nuscenes_dataset_4self_training import NuScenesDataset4SelfTraining
-from .waymo.waymo_dataset import WaymoDataset
-from .pandaset.pandaset_dataset import PandasetDataset
-from .lyft.lyft_dataset import LyftDataset
-from .custom.custom_dataset import CustomDataset
-from .nuscenes.v2x_sim_dataset import V2XSimDataset_RSU
-from .nuscenes.v2x_sim_dataset_car import V2XSimDataset_CAR
-from .nuscenes.v2x_sim_dataset_ego import V2XSimDataset_EGO
-from .nuscenes.v2x_sim_dataset_ego_early import V2XSimDataset_EGO_EARLY
-from .nuscenes.v2x_sim_dataset_ego_late import V2XSimDataset_EGO_LATE
-from .nuscenes.v2x_sim_dataset_ego_disco import V2XSimDataset_EGO_DISCO
+from .v2x_sim.v2x_sim_dataset_rsu import V2XSimDataset_RSU
+from .v2x_sim.v2x_sim_dataset_car import V2XSimDataset_CAR
+from .v2x_sim.v2x_sim_dataset_ego import V2XSimDataset_EGO
+from .v2x_sim.v2x_sim_dataset_ego_early import V2XSimDataset_EGO_EARLY
+from .v2x_sim.v2x_sim_dataset_ego_late import V2XSimDataset_EGO_LATE
+from .v2x_sim.v2x_sim_dataset_ego_disco import V2XSimDataset_EGO_DISCO
 
 __all__ = {
     'DatasetTemplate': DatasetTemplate,
     'KittiDataset': KittiDataset,
     'NuScenesDataset': NuScenesDataset,
-    'NuScenesDataset4SelfTraining': NuScenesDataset4SelfTraining,
-    'WaymoDataset': WaymoDataset,
-    'PandasetDataset': PandasetDataset,
-    'LyftDataset': LyftDataset,
-    'CustomDataset': CustomDataset,
     'V2XSimDataset_RSU': V2XSimDataset_RSU,
     'V2XSimDataset_CAR': V2XSimDataset_CAR,
     'V2XSimDataset_EGO': V2XSimDataset_EGO,

@@ -10,7 +10,7 @@ from pcdet.models.detectors import build_detector
 
 from test_space.tools import to_tensor
 from workspace.o3d_visualization import PointsPainter, print_dict
-from workspace.nuscenes_temporal_utils import get_nuscenes_sensor_pose_in_global, apply_se3_, get_one_pointcloud
+from pcdet.datasets.nuscenes.nuscenes_temporal_utils import get_nuscenes_sensor_pose_in_global, apply_se3_, get_one_pointcloud
 
 
 def make_batch_dict(batch_size: int = 2, target_batch_idx: int = 3):

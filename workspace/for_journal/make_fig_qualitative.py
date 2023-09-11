@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from workspace.o3d_visualization import PointsPainter, print_dict, BEVPainter
-from workspace.nuscenes_temporal_utils import apply_se3_
+from pcdet.datasets.nuscenes.nuscenes_temporal_utils import apply_se3_
 
 
 def main(filename_batch_dict: str, invisible_gt_indices: list, saveimg=False):

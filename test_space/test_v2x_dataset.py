@@ -5,7 +5,7 @@ import pickle
 
 from test_space.tools import build_dataset_for_testing
 from workspace.o3d_visualization import PointsPainter, print_dict
-from workspace.v2x_sim_utils import correction_numpy
+from pcdet.datasets.v2x_sim.v2x_sim_utils import correction_numpy
 
 
 classes_color = np.array([

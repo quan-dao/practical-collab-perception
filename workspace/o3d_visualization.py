@@ -4,7 +4,7 @@ import torch
 from typing import Union, List
 import matplotlib.pyplot as plt
 
-from workspace.nuscenes_temporal_utils import apply_se3_, make_se3
+from pcdet.datasets.nuscenes.nuscenes_temporal_utils import apply_se3_, make_se3
 
 
 def get_boxes_vertices_coord(boxes: Union[np.ndarray, torch.Tensor]) -> List[np.ndarray]:

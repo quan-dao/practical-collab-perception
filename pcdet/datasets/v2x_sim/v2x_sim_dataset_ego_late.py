@@ -5,8 +5,8 @@ from pathlib import Path
 from torch_scatter import scatter
 from typing import Dict, Tuple
 
-from pcdet.datasets.nuscenes.v2x_sim_dataset_ego import V2XSimDataset_EGO, get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_
-from workspace.v2x_sim_utils import roiaware_pool3d_utils
+from pcdet.datasets.v2x_sim.v2x_sim_dataset_ego import V2XSimDataset_EGO, get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_
+from pcdet.datasets.v2x_sim.v2x_sim_utils import roiaware_pool3d_utils
 
 
 class V2XSimDataset_EGO_LATE(V2XSimDataset_EGO):

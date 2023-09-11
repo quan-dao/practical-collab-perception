@@ -7,7 +7,7 @@ from typing import Set, Tuple, Dict
 from pcdet.datasets.nuscenes.nuscenes_utils import map_name_from_general_to_detection
 from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
 
-from workspace.nuscenes_temporal_utils import apply_se3_, get_nuscenes_sensor_pose_in_global, get_one_pointcloud
+from pcdet.datasets.nuscenes.nuscenes_temporal_utils import apply_se3_, get_nuscenes_sensor_pose_in_global, get_one_pointcloud
 
 
 def get_annos_of_1lidar(nusc: NuScenes, 
