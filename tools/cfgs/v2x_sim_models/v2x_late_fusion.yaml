@@ -1,0 +1,47 @@
+CLASS_NAMES: ['car']
+
+DATA_CONFIG:
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_ego_late.yaml
+    POINTS_IN_BOXES_GPU: True
+    BOX_FUSION_EGO_WEIGHT: 2.0
+    EXCHANGE_DATABASE_DIRECTORY: exchange_database_flow
+    EXCHANGE_SETTING: 'now'
+    USE_GT_FROM_EVERY_AGENT: True
+    EVAL_FILTER_GT_BEYOND_RANGE: 60.
+    
+MODEL:
+    NAME: V2XLateFusion
+
+    BOX_FUSION_METHOD: nms
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.1
+        EVAL_METRIC: nuscenes
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.3
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 4
+    NUM_EPOCHS: 20
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.00051
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
