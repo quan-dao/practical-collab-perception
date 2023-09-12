@@ -8,7 +8,7 @@ import logging
 from pcdet.models.backbones_3d import vfe
 from pcdet.models.backbones_2d import map_to_bev
 from pcdet.models import backbones_2d
-from workspace.orcale_corrector import OracleCorrector
+from pcdet.models.bev_layers.oracle_corrector import OracleCorrector
 from pcdet.utils.spconv_utils import find_all_spconv_keys
 
 

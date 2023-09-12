@@ -1,9 +1,94 @@
 import torch
 import torch.nn as nn
+import torch_scatter
 from einops import rearrange
 from typing import List, Dict
 
-from _dev_space.tail_cutter_utils import bilinear_interpolate_torch, bev_scatter, quat2mat
+
+def bilinear_interpolate_torch(im, x, y):
+    """
+    Args:
+        im: (H, W, C) [y, x]
+        x: (N)
+        y: (N)
+
+    Returns:
+
+    """
+    x0 = torch.floor(x).long()
+    x1 = x0 + 1
+
+    y0 = torch.floor(y).long()
+    y1 = y0 + 1
+
+    x0 = torch.clamp(x0, 0, im.shape[1] - 1)
+    x1 = torch.clamp(x1, 0, im.shape[1] - 1)
+    y0 = torch.clamp(y0, 0, im.shape[0] - 1)
+    y1 = torch.clamp(y1, 0, im.shape[0] - 1)
+
+    Ia = im[y0, x0]
+    Ib = im[y1, x0]
+    Ic = im[y0, x1]
+    Id = im[y1, x1]
+
+    wa = (x1.type_as(x) - x) * (y1.type_as(y) - y)
+    wb = (x1.type_as(x) - x) * (y - y0.type_as(y))
+    wc = (x - x0.type_as(x)) * (y1.type_as(y) - y)
+    wd = (x - x0.type_as(x)) * (y - y0.type_as(y))
+    ans = torch.t((torch.t(Ia) * wa)) + torch.t(torch.t(Ib) * wb) + torch.t(torch.t(Ic) * wc) + torch.t(torch.t(Id) * wd)
+    return ans
+
+
+def quat2mat(quat):
+    """
+    convert quaternion to rotation matrix ([x, y, z, w] to follow scipy
+    :param quat: (B, 4) four quaternion of rotation
+    :return: rotation matrix [B, 3, 3]
+    """
+    # norm_quat = torch.cat([quat[:, :1].detach()*0 + 1, quat], dim=1)
+    # norm_quat = norm_quat/norm_quat.norm(p=2, dim=1, keepdim=True)
+    # w, x, y, z = norm_quat[:,0], norm_quat[:,1], norm_quat[:,2], norm_quat[:,3]
+    x, y, z, w = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+
+    B = quat.size(0)
+
+    w2, x2, y2, z2 = w.pow(2), x.pow(2), y.pow(2), z.pow(2)
+    wx, wy, wz = w*x, w*y, w*z
+    xy, xz, yz = x*y, x*z, y*z
+
+    rotMat = torch.stack([w2 + x2 - y2 - z2, 2*xy - 2*wz, 2*wy + 2*xz,
+                          2*wz + 2*xy, w2 - x2 + y2 - z2, 2*yz - 2*wx,
+                          2*xz - 2*wy, 2*wx + 2*yz, w2 - x2 - y2 + z2], dim=1).reshape(B, 3, 3)
+    return rotMat
+
+
+def bev_scatter(points_bev_coord: torch.Tensor, points_batch_idx: torch.Tensor, points_feat: torch.Tensor,
+                bev_img_size: tuple):
+    """
+    Args:
+        points_bev_coord: (N, 2) - bev_x, bev_y
+        points_batch_idx: (N,)
+        points_feat: (N, C)
+        bev_img_size: (height, width)
+    """
+    batch_size = torch.max(points_batch_idx).item() + 1
+    num_channels = points_feat.shape[1]
+    height, width = bev_img_size
+    area = height * width
+
+    # make sure points are in range
+    mask_in = ((points_bev_coord[:, 0] > 0) & (points_bev_coord[:, 0] < width)
+               & (points_bev_coord[:, 1] > 0) & (points_bev_coord[:, 1] < height))
+
+    points_bev_coord = points_bev_coord[mask_in].long()  # (N, 2) - bev_x, bev_y
+    points_merge = points_batch_idx[mask_in] * area + points_bev_coord[:, 1] * width + points_bev_coord[:, 0]
+
+    unq, inv = torch.unique(points_merge, return_inverse=True)
+    bev_img = points_feat.new_zeros(batch_size * height * width, num_channels)
+    bev_img[unq] = torch_scatter.scatter_mean(points_feat[mask_in], inv, dim=0)
+
+    bev_img = rearrange(bev_img, '(B H W) C -> B C H W', B=batch_size, H=height, W=width).contiguous()
+    return bev_img
 
 
 def interpolate_points_feat_from_bev_img(bev_img: torch.Tensor, 

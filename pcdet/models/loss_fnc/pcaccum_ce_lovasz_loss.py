@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from _dev_space.loss_utils.lovasz_softmax import Lovasz_softmax
+from pcdet.models.loss_fnc.lovasz_softmax import Lovasz_softmax
 
 
 _EPS = 1e-5  # To prevent division by zero

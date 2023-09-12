@@ -1,20 +1,9 @@
 import numpy as np
-import torch
 import copy
 import pickle
 from pathlib import Path
-from typing import Tuple
-from tqdm import tqdm
 from nuscenes import NuScenes
-import hdbscan
-from sklearn.neighbors import KDTree
-import torch_scatter
-
-from pcdet.ops.iou3d_nms import iou3d_nms_utils
-from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
-from ...utils import common_utils
 from ..dataset import DatasetTemplate
-
 from pcdet.datasets.nuscenes.nuscenes_temporal_utils import get_sweeps
 
 
@@ -39,8 +28,6 @@ class NuScenesDataset(DatasetTemplate):
 
         self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
-
-        num_sweeps = self.dataset_cfg.NUM_SWEEPS_TO_BUILD_DATABASE
 
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
@@ -113,7 +100,7 @@ class NuScenesDataset(DatasetTemplate):
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
-        from workspace.nuscenes_eval_utils import MyDetectionEval
+        from pcdet.datasets.nuscenes.nuscenes_eval_utils import MyDetectionEval
 
         nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
 

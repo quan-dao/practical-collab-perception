@@ -9,10 +9,10 @@ from .. import backbones_2d, backbones_3d, dense_heads, roi_heads
 from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
 from ..model_utils import model_nms_utils
-from _dev_space.pc_corrector import PointCloudCorrector
-from workspace.hunter_jr import HunterJr
-from workspace.bev_maker import BEVMaker
-from workspace.v2x_fusion_disco import V2XMidFusionDisco
+
+from pcdet.models.bev_layers.hunter_jr import HunterJr
+from pcdet.models.bev_layers.bev_maker import BEVMaker
+from pcdet.models.bev_layers.v2x_fusion_disco import V2XMidFusionDisco
 
 
 class Detector3DTemplate(nn.Module):
@@ -149,10 +149,10 @@ class Detector3DTemplate(nn.Module):
     def build_corrector(self, model_info_dict):
         if self.model_cfg.get('CORRECTOR', None) is None:
             return None, model_info_dict
-        
-        corrector_module = HunterJr if self.model_cfg.CORRECTOR.get('NAME', 'HunterJr') == 'HunterJr' else PointCloudCorrector
 
-        corrector = corrector_module(
+        assert self.model_cfg.CORRECTOR.NAME == 'HunterJr', f"{self.model_cfg.CORRECTOR.NAME} is unknown"
+        
+        corrector = HunterJr(
             model_cfg=self.model_cfg.CORRECTOR,
             num_bev_features=model_info_dict['num_bev_features'],
             voxel_size=model_info_dict['voxel_size'],

@@ -12,9 +12,9 @@ from .pv_rcnn_plusplus import PVRCNNPlusPlus
 from .mppnet import MPPNet
 from .mppnet_e2e import MPPNetE2E
 from .pillarnet import PillarNet
-from .alginer import Aligner
-from .obj_discoverer import ObjectDiscoverer
+
 from .v2x_late_fusion import V2XLateFusion
+
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -31,8 +31,6 @@ __all__ = {
     'MPPNet': MPPNet,
     'MPPNetE2E': MPPNetE2E,
     'PillarNet': PillarNet,
-    'Aligner': Aligner,
-    'ObjectDiscoverer': ObjectDiscoverer,
     'V2XLateFusion': V2XLateFusion
 }
 

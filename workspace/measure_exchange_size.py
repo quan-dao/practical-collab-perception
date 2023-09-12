@@ -9,7 +9,7 @@ from pcdet.datasets import build_dataloader
 
 from test_space.tools import build_dataset_for_testing
 from test_space.tools import to_tensor
-from workspace.bev_maker import BEVMaker
+from pcdet.models.bev_layers.bev_maker import BEVMaker
 
 
 def measure_early_fusion(dataloader, size_dataset: int):

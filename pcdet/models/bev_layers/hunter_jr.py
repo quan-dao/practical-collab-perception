@@ -7,10 +7,16 @@ from typing import List, Dict, Tuple
 from functools import partial
 from einops import rearrange
 
-from _dev_space.loss_utils.pcaccum_ce_lovasz_loss import CELovaszLoss
-from workspace.sc_conv import conv_bn_relu
-from workspace.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat, \
-    hard_mining_regression_loss
+from pcdet.models.loss_fnc.pcaccum_ce_lovasz_loss import CELovaszLoss
+from pcdet.models.bev_layers.hunter_toolbox import interpolate_points_feat_from_bev_img, nn_make_mlp, remove_gt_boxes_outside_range, bev_scatter, quat2mat, hard_mining_regression_loss
+
+
+def conv_bn_relu(in_channels, out_channels, kernel_size=3, stride=1, padding=0, norm_layer=nn.BatchNorm2d):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False),
+        norm_layer(out_channels),
+        nn.ReLU(inplace=True)
+    )
 
 
 class HunterObjectHead(nn.Module):

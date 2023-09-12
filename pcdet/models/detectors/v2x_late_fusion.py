@@ -2,7 +2,6 @@ import numpy as np
 import torch
 from typing import List, Dict
 from .detector3d_template import Detector3DTemplate, model_nms_utils
-from workspace.box_fusion_utils import label_fusion
 
 
 class V2XLateFusion(Detector3DTemplate):
@@ -33,30 +32,6 @@ class V2XLateFusion(Detector3DTemplate):
                     'pred_boxes': exchange_boxes[selected, :7],
                     'pred_scores': selected_scores,
                     'pred_labels': exchange_boxes[selected, -1].long()
-                }
-            elif self.model_cfg.BOX_FUSION_METHOD == 'kde':
-                exchange_boxes = list()
-                weights = list()
-                for lidar_id, boxes in dict_exchange_boxes.items():
-                    if boxes.shape[0] == 0:
-                        continue
-                    boxes = boxes[:, [0, 1, 2, 3, 4, 5, 6, 8, 7]]  # (N, 7 + 2) - box-7, score, label -> box-7, label, score
-                    exchange_boxes.append(boxes)
-                    
-                    w = boxes[:, -1]
-                    if lidar_id == 1:
-                        w *= 2.0
-                    
-                    weights.append(w)
-
-                exchange_boxes = np.concatenate(exchange_boxes)
-                weights = np.concatenate(weights)
-                fused_boxes, _ = label_fusion(exchange_boxes, 'kde_fusion', discard=1, radius=2.0, weights=weights)
-                fused_boxes = torch.from_numpy(fused_boxes).float().contiguous().cuda()
-                this_pred_dict = {
-                    'pred_boxes': fused_boxes[:, :7],
-                    'pred_scores': fused_boxes[:, -1],
-                    'pred_labels': fused_boxes[:, -2].long()
                 }
             elif self.model_cfg.BOX_FUSION_METHOD == 'ego_only':
                 # hack for eval trained ego+modar
