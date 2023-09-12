@@ -5,6 +5,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: ../tools/cfgs/dataset_configs/v2x_sim_dataset_car.yaml
     DATASET_DOWNSAMPLING_RATIO: 16  # remember to comment this out when generating exchange database
     POINTS_IN_BOXES_GPU: True
+    POINT_CLOUD_RANGE: [-51.2, -51.2, -8.0, 51.2, 51.2, 0.0]
     
 MODEL:
     NAME: CenterPoint

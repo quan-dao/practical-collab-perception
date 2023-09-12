@@ -5,6 +5,7 @@ DATA_CONFIG:
     MINI_TRAINVAL_STRIDE: 1
     # DATASET_DOWNSAMPLING_RATIO: 16
     POINTS_IN_BOXES_GPU: True
+    POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
     DATA_PROCESSOR:
         -   NAME: mask_points_and_boxes_outside_range
             REMOVE_OUTSIDE_BOXES: False

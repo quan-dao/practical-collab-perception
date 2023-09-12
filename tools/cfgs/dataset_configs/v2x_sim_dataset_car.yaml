@@ -7,7 +7,7 @@ POINTS_IN_BOXES_GPU: True
 THRESHOLD_BOXES_BY_POINTS: 1
 CLASSES_OF_INTEREST: ['car', 'pedestrian']
 DETECTION_CLS: ['car', 'pedestrian']
-POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+POINT_CLOUD_RANGE: [-51.2, -51.2, -8.0, 51.2, 51.2, 0.0]
 
 DATA_SPLIT: {
     'train': train,
