@@ -21,7 +21,7 @@ class V2XSimDataset_EGO(V2XSimDataset_CAR):
         second_dir = 'exchange_database_second'
         dummy_dir = Path('blah')
         self.exchange_database = {
-            0: self.root_path / second_dir,  # remember to change this back when eval five seconds
+            0: self.root_path / pillar_dir,  # remember to change this back when eval five seconds
             1: self.root_path / pillar_dir,
             2: self.root_path / pillar_dir,
             3: self.root_path / pillar_dir,

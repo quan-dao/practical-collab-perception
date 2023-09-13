@@ -18,7 +18,7 @@ def gen_exchange_database(model_type: str,
                           batch_size: int = 4):
     np.random.seed(666)
     assert model_type in ['car', 'rsu'], f"{model_type} is invalid"
-    cfg_file = f'../tools/cfgs/nuscenes_models/v2x_second_{model_type}.yaml'
+    cfg_file = f'../tools/cfgs/v2x_sim_models/v2x_pointpillar_basic_{model_type}.yaml'
     cfg_from_yaml_file(cfg_file, cfg)
     # shutdown data augmentation
     cfg.DATA_CONFIG.DATA_AUGMENTOR.DISABLE_AUG_LIST = ['gt_sampling', 'random_world_flip', 
@@ -26,6 +26,13 @@ def gen_exchange_database(model_type: str,
     cfg.DATA_CONFIG.MINI_TRAINVAL_STRIDE = 1
     if cfg.DATA_CONFIG.get('DATASET_DOWNSAMPLING_RATIO', 1) > 1:
         cfg.DATA_CONFIG.DATASET_DOWNSAMPLING_RATIO = 1
+
+    dir_exchange_database = '../data/v2x-sim/v2.0-trainval/exchange_database_flow'
+    cfg.CORRECTOR.GENERATING_EXCHANGE_DATA = True
+    cfg.CORRECTOR.DATABASE_EXCHANGE_DATA = dir_exchange_database
+    cfg.DENSE_HEAD.GENERATING_EXCHANGE_DATA = True
+    cfg.DENSE_HEAD.DATABASE_EXCHANGE_DATA = dir_exchange_database
+
     logger = common_utils.create_logger(f'log_v2x_gen_exchange_database_{model_type}.txt')
 
     dataset, dataloader, _ = build_dataloader(
@@ -41,7 +48,7 @@ def gen_exchange_database(model_type: str,
     model.cuda()
     model.eval()
 
-    exchange_root = dataset.root_path / "exchange_database_second"
+    exchange_root = dataset.root_path / "exchange_database_flow"
     if not exchange_root.exists():
         exchange_root.mkdir(parents=True, exist_ok=True)
 
