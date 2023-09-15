@@ -374,7 +374,7 @@ class HunterJr(nn.Module):
         if self.training:
             batch_dict = remove_gt_boxes_outside_range(batch_dict, self.point_cloud_range)
         
-        if not self.training and self.model_cfg.get('GENERATING_EXCHANGE_DATA', False):
+        if not self.training and (self.model_cfg.get('GENERATING_EXCHANGE_DATA', False) or self.model_cfg.get('RETURN_SCENE_FLOW', False)):
             # make points to be sent away
             points_cls_prob = torch.sigmoid(points_cls_logit)  # (N, 3)
             mask_send = points_cls_prob[:, 0] < 0.3  # prob background is sufficiently small
@@ -390,8 +390,11 @@ class HunterJr(nn.Module):
                     lidar_id = metadata['lidar_id']
                     sample_points = points_to_send[points_to_send_batch_idx == b_idx]
                     if sample_points.shape[0] > 0:
-                        save_path = f"{self.model_cfg.DATABASE_EXCHANGE_DATA}/{sample_token}_id{lidar_id}_foreground.pth"
-                        torch.save(sample_points, save_path)
+                        if self.model_cfg.get('GENERATING_EXCHANGE_DATA', False):
+                            save_path = f"{self.model_cfg.DATABASE_EXCHANGE_DATA}/{sample_token}_id{lidar_id}_foreground.pth"
+                            torch.save(sample_points, save_path)
+                        else:
+                            batch_dict['scene_flow'] = sample_points
 
         return batch_dict
 

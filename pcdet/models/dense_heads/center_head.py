@@ -406,7 +406,7 @@ class CenterHead(nn.Module):
             else:
                 data_dict['final_box_dicts'] = pred_dicts
 
-            if self.model_cfg.get('GENERATING_EXCHANGE_DATA', False):
+            if self.model_cfg.get('GENERATING_EXCHANGE_DATA', False) or self.model_cfg.get('RETURN_MODAR_POINTS', False):
                 for batch_idx in range(len(pred_dicts)):
                     pred = pred_dicts[batch_idx]
                     
@@ -420,7 +420,10 @@ class CenterHead(nn.Module):
                         metadata = data_dict['metadata'][batch_idx]
                         sample_token = metadata['sample_token']
                         lidar_id = metadata['lidar_id']
-                        save_path = f"{self.model_cfg.DATABASE_EXCHANGE_DATA}/{sample_token}_id{lidar_id}_modar.pth"
-                        torch.save(mo_pts, save_path)
+                        if self.model_cfg.get('GENERATING_EXCHANGE_DATA', False):
+                            save_path = f"{self.model_cfg.DATABASE_EXCHANGE_DATA}/{sample_token}_id{lidar_id}_modar.pth"
+                            torch.save(mo_pts, save_path)
+                        else:
+                            data_dict['mo_pts'] = mo_pts
 
         return data_dict

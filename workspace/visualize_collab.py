@@ -50,6 +50,9 @@ def build_model(agent_type: str):
 
     cfg = _init_config()
     cfg_from_yaml_file(CFG_DIR / cfg_name, cfg)
+    cfg.MODEL.RETURN_BATCH_DICT = True
+    cfg.MODEL.CORRECTOR.RETURN_SCENE_FLOW = True
+    cfg.MODEL.DENSE_HEAD.RETURN_MODAR_POINTS =True
 
     dataset, _, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=1,
                                      dist=False, logger=logger, training=False, total_epochs=1, seed=666, workers=0, nusc=nusc)
@@ -110,6 +113,33 @@ def filter_overlap_gt_boxes(gt_boxes: np.ndarray, detection_range: float = 60.) 
     return gt_boxes
 
 
+def propagate_modar(modar_: torch.Tensor, foregr: torch.Tensor) -> None:
+    """
+    Args:
+        modar: (N_modar, 7 + 2) - box-7, score, label
+        foregr: (N_fore, 5 + 2 + 3 + 3) - point-5, sweep_idx, inst_idx, cls_prob-3, flow-3
+    """
+    assert modar_.shape[1] == 9, f"{modar_.shape[1]} != 9 | expect: box-7, score, label"
+    assert foregr.shape[1] == 13, f"{foregr.shape[1]} != 13 | expect: point-5, sweep_idx, inst_idx, cls_prob-3, flow-3"
+    # pool
+    box_idx_of_foregr = roiaware_pool3d_utils.points_in_boxes_gpu(
+        foregr[:, :3].unsqueeze(0), modar_[:, :7].unsqueeze(0)
+    ).squeeze(0).long()  # (N_foregr,) | == -1 mean not belong to any boxes
+
+    mask_valid_foregr = box_idx_of_foregr > -1
+    foregr = foregr[mask_valid_foregr]
+    box_idx_of_foregr = box_idx_of_foregr[mask_valid_foregr]
+    
+    unq_box_idx, inv_unq_box_idx = torch.unique(box_idx_of_foregr, return_inverse=True)
+
+    # weighted sum of foregrounds' offset; weights = foreground's prob dynamic
+    boxes_offset = scatter(foregr[:, -3:], inv_unq_box_idx, dim=0, reduce='mean') * 2.  # (N_modar, 3)
+    # offset modar; here, assume objects maintain the same speed
+    modar_[unq_box_idx, :3] += boxes_offset
+
+    return
+
+
 @torch.no_grad()
 def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool = False):
     point_cloud_range = np.array([-51.2, -51.2, -8.0, 51.2, 51.2, 0.0])
@@ -121,7 +151,9 @@ def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool
         sample = nusc.get('sample', sample_token)
         sample_token = sample['next']
 
-    dict_viz = dict()
+    model_car = build_model('car')
+    model_rsu = build_model('rsu')
+    model_ego_collab = build_model('collab')
 
     # MAIN LOOP
     for sample_idx in range(start_idx, end_idx):
@@ -154,16 +186,77 @@ def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool
         gt_boxes = np.concatenate(gt_boxes)
         gt_boxes = filter_overlap_gt_boxes(gt_boxes)
 
+        # x, y, z, instensity, time-lag | dx, dy, dz, heading, box-score, box-label | sweep_idx, inst_idx
+        points_ = np.zeros((ego_pc.shape[0], 5 + 6 + 2))
+        points_[:, :5] = ego_pc[:, :5]
+        points_[:, -2:] = ego_pc[:, -2:]
+        max_sweep_idx = ego_pc[:, -2].max()
+
+        # for computation: get point cloud PREV of other agents
+        dict_point_clouds_prev, dict_ego_se3_lidars, _ = get_point_clouds(nusc, sample['prev'], ego_lidar_token, point_cloud_range)
+        dict_modar = dict()
+        for lidar_name in dict_point_clouds_prev.keys():
+            if lidar_name == 'LIDAR_TOP_id_1':
+                continue
+            lidar_id = int(lidar_name.split('_')[-1])
+            
+            points = np.pad(dict_point_clouds_prev[lidar_name], pad_width=[(0, 0), (1, 0)], constant_values=0.0)  # pad batch_idx
+            batch_dict = {
+                'points': torch.from_numpy(points).float().cuda(),
+                'batch_size': 1,
+                'metadata': [{
+                    'lidar_id': lidar_id,
+                    'sample_token': sample['prev'],
+                    'batch_size': 1,
+                }] 
+            }
+            if lidar_id == 0:
+                pred_dicts, batch_dict = model_rsu(batch_dict)
+            else:
+                pred_dicts, batch_dict = model_car(batch_dict)
+
+            modar = batch_dict['mo_pts']
+            # propagate MoDAR
+            propagate_modar(modar, batch_dict['scene_flow'])
+
+            # map modar (center & heading) to target frame
+            modar = modar.cpu().numpy()
+            modar[:, :7] = apply_se3_(dict_ego_se3_lidars[lidar_name], boxes_=modar[:, :7], return_transformed=True)
+
+            # format modar
+            modar_ = np.zeros((modar.shape[0], points_.shape[1]))
+            modar_[:, :3] = modar[:, :3]
+            modar_[:, 4] = 0.  # after offset, trying set it to zero
+            modar_[:, 5: 11] = modar[:, 3:]
+            modar_[:, -2] = max_sweep_idx
+            modar_[:, -1] = -1  # dummy instance_idx
+
+            # store
+            dict_modar[lidar_name] = modar_
+
+        # merge modar & ego_points
+        points_ = np.concatenate([points_,] + [modar for _, modar in dict_modar.items()], axis=0)
+        points_ = np.pad(points_, pad_width=[(0, 0), (1, 0)], constant_values=0.0)
+        _batch_dict = {
+            'points': torch.from_numpy(points_).float().cuda(),
+            'batch_size': 1,
+            'metadata': [{
+                'lidar_id': 1,
+                'sample_token': sample_token,
+                'batch_size': 1,
+            }] 
+        }
+        pred_dicts, _ = model_ego_collab(_batch_dict)
+
         if debug:
+            dict_viz = dict()
             dict_viz['ego_pc_now'] = ego_pc
             dict_viz['other_pc_now'] = other_pc
             dict_viz['gt_boxes'] = gt_boxes
-            with open(VIZ_OUTPUT_DIR / f'debug_dict_viz.pkl', 'wb') as f:
-                logger.info(f"debug dict is saved to {VIZ_OUTPUT_DIR}")
-                pickle.dump(dict_viz, f)
-            return 
-
-        # for computation: get point cloud PREV of other agents
+            dict_viz['pred_dict'] = pred_dicts
+            logger.info(f"debug dict is saved to {VIZ_OUTPUT_DIR}")
+            torch.save(dict_viz, VIZ_OUTPUT_DIR / 'dict_debug_visualize_collab.pth')
+            return
 
         # move to next sample
         sample_token = sample['next']

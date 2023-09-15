@@ -48,7 +48,7 @@ MODEL:
         OBJ_HEAD_HIDDEN_CHANNELS: [64]
         THRESHOLD_POINT_CLS_PROB: 0.3
         # v2x stuff
-        GENERATING_EXCHANGE_DATA: True
+        GENERATING_EXCHANGE_DATA: False
         DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_second
 
     DENSE_HEAD:
@@ -97,7 +97,7 @@ MODEL:
                 NMS_POST_MAXSIZE: 83
         
         # v2x stuff
-        GENERATING_EXCHANGE_DATA: True
+        GENERATING_EXCHANGE_DATA: False
         DATABASE_EXCHANGE_DATA: ../data/v2x-sim/v2.0-trainval/exchange_database_second
 
     POST_PROCESSING:
