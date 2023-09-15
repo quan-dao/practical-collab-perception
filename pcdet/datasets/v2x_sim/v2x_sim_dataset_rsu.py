@@ -20,13 +20,16 @@ from pcdet.datasets.v2x_sim.v2x_sim_eval_utils import transform_det_annos_to_nus
 
 
 class V2XSimDataset_RSU(DatasetTemplate):
-    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
+    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, nusc=None):
         root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
         super().__init__(dataset_cfg, class_names, training, root_path, logger)
         self.infos: List[Dict] = list()        
 
         self._prefix = 'mini' if 'mini' in self.dataset_cfg.VERSION else 'full'
-        self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
+        if nusc is None:
+            self.nusc = NuScenes(dataroot=root_path, version=dataset_cfg.VERSION, verbose=False)
+        else:
+            self.nusc = nusc
         self.point_cloud_range = np.array(dataset_cfg.POINT_CLOUD_RANGE)
         self.classes_of_interest = set(dataset_cfg.get('CLASSES_OF_INTEREST', ['car', 'pedestrian']))
         self.num_sweeps = dataset_cfg.get('NUM_HISTORICAL_SWEEPS', 10) + 1

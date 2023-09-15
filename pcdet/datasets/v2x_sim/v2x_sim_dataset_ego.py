@@ -13,8 +13,8 @@ from pcdet.datasets.v2x_sim.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, ge
 
 
 class V2XSimDataset_EGO(V2XSimDataset_CAR):
-    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
-        super().__init__(dataset_cfg, class_names, training, root_path, logger)
+    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, nusc=None):
+        super().__init__(dataset_cfg, class_names, training, root_path, logger, nusc)
         self.exchange_now = dataset_cfg.EXCHANGE_NOW
         self.logger.info(f'EXCHANGE_NOW: {self.exchange_now}')
         pillar_dir = 'exchange_database_flow'

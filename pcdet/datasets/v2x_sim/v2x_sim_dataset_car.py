@@ -13,10 +13,10 @@ from pcdet.datasets.v2x_sim.v2x_sim_utils import get_points_and_boxes_of_1lidar,
 
 
 class V2XSimDataset_CAR(V2XSimDataset_RSU):
-    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
+    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, nusc=None):
         assert dataset_cfg.get('MINI_TRAINVAL_STRIDE', 1) == 1, "don't use MINI_TRAINVAL_STRIDE to reduce dataset, use DATASET_DOWNSAMPLING_RATIO"
         root_path = root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)
-        super().__init__(dataset_cfg, class_names, training, root_path, logger)
+        super().__init__(dataset_cfg, class_names, training, root_path, logger, nusc)
 
     def include_v2x_sim_data(self, mode):
         self.logger.info('Loading V2X-Sim dataset')

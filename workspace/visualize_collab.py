@@ -51,8 +51,9 @@ def build_model(agent_type: str):
     cfg = _init_config()
     cfg_from_yaml_file(CFG_DIR / cfg_name, cfg)
     cfg.MODEL.RETURN_BATCH_DICT = True
-    cfg.MODEL.CORRECTOR.RETURN_SCENE_FLOW = True
-    cfg.MODEL.DENSE_HEAD.RETURN_MODAR_POINTS =True
+    if agent_type != 'collab':
+        cfg.MODEL.CORRECTOR.RETURN_SCENE_FLOW = True
+        cfg.MODEL.DENSE_HEAD.RETURN_MODAR_POINTS =True
 
     dataset, _, _ = build_dataloader(dataset_cfg=cfg.DATA_CONFIG, class_names=cfg.CLASS_NAMES, batch_size=1,
                                      dist=False, logger=logger, training=False, total_epochs=1, seed=666, workers=0, nusc=nusc)
@@ -193,7 +194,7 @@ def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool
         max_sweep_idx = ego_pc[:, -2].max()
 
         # for computation: get point cloud PREV of other agents
-        dict_point_clouds_prev, dict_ego_se3_lidars, _ = get_point_clouds(nusc, sample['prev'], ego_lidar_token, point_cloud_range)
+        dict_point_clouds_prev, dict_ego_se3_lidars, _ = get_point_clouds(sample['prev'], ego_lidar_token, point_cloud_range)
         dict_modar = dict()
         for lidar_name in dict_point_clouds_prev.keys():
             if lidar_name == 'LIDAR_TOP_id_1':
@@ -263,5 +264,5 @@ def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool
 
     
 if __name__ == '__main__':
-    main()
+    main(start_idx=50, debug=True)
     
