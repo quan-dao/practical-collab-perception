@@ -40,13 +40,21 @@ both syncrhonous (agents obtain and process point cloud at the same time) and as
 | [Early](tools/cfgs/v2x_sim_models/v2x_pointpillar_basic_ego_early.yaml)            | 78.10  | 77.30  | 33.95   | [pillar_early_sync](https://uncloud.univ-nantes.fr/index.php/s/WXrSCRjiSw7RxYL) |
 | [Ours](tools/cfgs/v2x_sim_models/v2x_pointpillar_basic_ego.yaml)            | 79.20  | 76.72  | 0.02   | [pillar_colab_async](https://uncloud.univ-nantes.fr/index.php/s/4rPJ2T7Q3STAw6T) |
 
+Qualitative result on the V2X-Sim dataset
+
+<p align="center">
+  <img src="docs/media/qualitative_results.gif">
+</p>
+
+
 ## Overview
-1. [Installation](#installation)
-2. [Reproduce Our Result](#reproduce-our-result)
-3. [Qualitative Result](#qualitative-result)
+1. [Getting Started](#getting-started)
+2. [Qualitative Result](#qualitative-result)
+3. [Reproduce Our Result](#reproduce-our-result)
 4. [Citation](#citation)
 
-## Installation
+## Getting Started
+### Installation
 Our codebase is based on [OpenPCDet](https://github.com/open-mmlab/OpenPCDet). 
 Please refer to their [installation instruction](https://github.com/open-mmlab/OpenPCDet/blob/master/docs/INSTALL.md) for setting OpenPCDet.
 
@@ -62,13 +70,7 @@ To interface with the V2X-Sim dataset, please install `nuscenes-devkit`
 pip install nuscenes-devkit==1.1.9
 ```
 
-## Reproduce Our Result
-
-If you just want to evaluate our models, you can skip the training of single-agent models and collaborative model.
-The weights of these models are provided [here](https://uncloud.univ-nantes.fr/index.php/s/ecQjo9NfxiQQXGS) (or in the table above).
-Please download them and put them in `$DIR_OpenPCDet/tools/pretrained_models`.
-
-### Prepare The Data
+### Get The Data
 We use **V2X-Sim 2.0** for our experiment. 
 This dataset can be downloaded [here](https://drive.google.com/drive/folders/1nVmY7g_kprOX-I0Bqsiz6-zdJM-UXFXa).
 As our models use only point clouds, the download of the full dataset is unnecessary.
@@ -97,6 +99,34 @@ $DIR_V2X
 ```
 If you don't download *lidarseg.zip*, please remove *$DIR_V2X/lidarseg.json* to avoid error when 
 loading the dataset using nuscenes-devkit.
+
+## Qualitative Result
+To use our models in inference mode, please download the following models
+- PointPillar for connected vehicles [here](https://uncloud.univ-nantes.fr/index.php/s/rZcDaP4GEZPaJ2q)
+- SECOND for IRSU [here](https://uncloud.univ-nantes.fr/index.php/s/cKc8ttTLNfzntPr)
+- Collaborative model based on PointPillar backbone for the ego vehicle [here](https://uncloud.univ-nantes.fr/index.php/s/3yHcp9BnrS49eso)
+
+and place them in `$DIR_OpenPCDet/tools/pretrained_models`
+
+The prediction of a scene of V2X-Sim dataset is generated and visualized sample-by-sample by
+
+```shell
+cd $DIR_OpenPCDet/workspace
+
+python visualize_collab.py --scene_idx 0
+```
+
+Note that this visualization can be run on the **mini** partition of V2X-Sim as well. 
+If this is what you want, please unzip the mini partition of V2X-Sim to `$DIR_V2X`and replace `trainval` in the line 29 of 
+`$DIR_OpenPCDet/workspace/visualize_collab.py` with `mini`.
+
+## Reproduce Our Result
+
+If you just want to evaluate our models, you can skip the training of single-agent models and collaborative model.
+The weights of these models are provided [here](https://uncloud.univ-nantes.fr/index.php/s/ecQjo9NfxiQQXGS) (or in the table above).
+Please download them and put them in `$DIR_OpenPCDet/tools/pretrained_models`.
+
+### Prepare V2X-Sim dataset for training
 
 To parse data of the roadside unit for training and evaluation
 
@@ -179,9 +209,6 @@ cp $DIR_OUTPUT/v2x_pointpillar_basic_ego/default/ckpt/checkpoint_epoch_20.pth $D
 
 python test.py --cfg_file cfgs/v2x_sim_models/v2x_pointpillar_basic_ego.yaml --batch_size 8 --workers 0 --ckpt pretrained_models/v2x_pointpillar_lately.pth
 ```
-
-## Qualitative Result
-TODO
 
 ## Citation
 ```
