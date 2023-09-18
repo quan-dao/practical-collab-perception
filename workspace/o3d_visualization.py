@@ -159,18 +159,18 @@ class PointsPainter(object):
             for obj in objects_to_draw:
                 vis.add_geometry(obj)
 
-            ctr = vis.get_view_control()
+            if kwargs['view_point'] is not None:
+                ctr = vis.get_view_control()
+                ctr.set_front(kwargs['view_point']['front'])
+                ctr.set_lookat(kwargs['view_point']['lookat'])
+                ctr.set_up(kwargs['view_point']['up'])
+                ctr.set_zoom(kwargs['view_point']['zoom'])
 
-            ctr.set_front(kwargs['view_point']['front'])
-            ctr.set_lookat(kwargs['view_point']['lookat'])
-            ctr.set_up(kwargs['view_point']['up'])
-            ctr.set_zoom(kwargs['view_point']['zoom'])
             vis.get_render_option().point_size = 2.0
-
             vis.update_renderer()         
             vis.poll_events()
-
-            vis.capture_screen_image(kwargs['save_to_path'])
+            if 'save_to_path' in kwargs:
+                vis.capture_screen_image(kwargs['save_to_path'])
         else:
             o3d.visualization.draw_geometries(objects_to_draw)
 

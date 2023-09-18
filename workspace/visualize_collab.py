@@ -6,7 +6,7 @@ from pathlib import Path
 from easydict import EasyDict
 from typing import Dict, Tuple
 from datetime import datetime
-import pickle
+import argparse
 
 from pcdet.utils import common_utils
 from pcdet.models.model_utils import model_nms_utils
@@ -14,6 +14,7 @@ from pcdet.config import cfg_from_yaml_file
 from pcdet.models.detectors import build_detector
 from pcdet.datasets import build_dataloader
 from pcdet.datasets.v2x_sim.v2x_sim_utils import get_pseudo_sweeps_of_1lidar, get_nuscenes_sensor_pose_in_global, apply_se3_, roiaware_pool3d_utils
+from workspace.o3d_visualization import PointsPainter
 
 
 CFG_DIR = Path('../tools/cfgs/v2x_sim_models')
@@ -141,9 +142,37 @@ def propagate_modar(modar_: torch.Tensor, foregr: torch.Tensor) -> None:
     return
 
 
+def draw_scene(dict_data: dict, sample_idx: int, scene_output_dir: Path, view_point: dict = None):
+    ego_pc = dict_data['ego_pc_now']
+    other_pc = dict_data['other_pc_now']
+    gt_boxes = dict_data['gt_boxes']
+    
+    pred_dict = dict_data['pred_dict'][0]
+    pred_boxes = pred_dict['pred_boxes'].cpu().numpy()  # (N, 7)
+    pred_scores = pred_dict['pred_scores'].cpu().numpy()  # (N,)
+    pred_boxes = pred_boxes[pred_scores > 0.3]
+    
+    # ------------
+    pc = np.concatenate([ego_pc, other_pc])
+    pc_color = np.zeros((pc.shape[0], 3))
+    pc_color[:ego_pc.shape[0], 2] = 1.0
+    pc_color[ego_pc.shape[0]:] = np.array([0.5, 0.5, 0.5])
+
+    boxes = np.concatenate([gt_boxes, pred_boxes])
+    boxes_color = np.zeros((boxes.shape[0], 3))
+    boxes_color[:gt_boxes.shape[0]] = np.array([0, 1, 0])
+    boxes_color[gt_boxes.shape[0]:] = np.array([0, 0, 1])
+
+    painter = PointsPainter(pc[:, :3], boxes)
+    painter.show(pc_color, boxes_color, view_point=view_point, save_to_path=scene_output_dir / f"sample_{sample_idx}.png")
+
+
 @torch.no_grad()
-def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool = False):
+def main(scene_idx: int, start_idx: int = 10, end_idx: int = 90, debug: bool = False, view_point: dict = None):
     point_cloud_range = np.array([-51.2, -51.2, -8.0, 51.2, 51.2, 0.0])
+    scene_output_dir = VIZ_OUTPUT_DIR / f'scene_{scene_idx}'
+    if not scene_output_dir.exists():
+        scene_output_dir.mkdir(parents=True)
 
     scene = nusc.scene[scene_idx]
     
@@ -249,20 +278,38 @@ def main(scene_idx: int = 0, start_idx: int = 10, end_idx: int = 90, debug: bool
         }
         pred_dicts, _ = model_ego_collab(_batch_dict)
 
+        dict_viz = dict()
+        dict_viz['ego_pc_now'] = ego_pc
+        dict_viz['other_pc_now'] = other_pc
+        dict_viz['gt_boxes'] = gt_boxes
+        dict_viz['pred_dict'] = pred_dicts
         if debug:
-            dict_viz = dict()
-            dict_viz['ego_pc_now'] = ego_pc
-            dict_viz['other_pc_now'] = other_pc
-            dict_viz['gt_boxes'] = gt_boxes
-            dict_viz['pred_dict'] = pred_dicts
             logger.info(f"debug dict is saved to {VIZ_OUTPUT_DIR}")
             torch.save(dict_viz, VIZ_OUTPUT_DIR / 'dict_debug_visualize_collab.pth')
             return
+        else:
+            logger.info(f'saving output of sample {sample_idx}')
+            draw_scene(dict_viz, sample_idx, scene_output_dir, view_point)
 
         # move to next sample
         sample_token = sample['next']
 
     
 if __name__ == '__main__':
-    main(start_idx=50, debug=True)
+    parser = argparse.ArgumentParser(description='arg parser')
+    parser.add_argument('--scene_idx', type=int, default=0, help='specify scene for visualization')
+    args = parser.parse_args()
+
+    scene_idx = args.scene_idx
+    if scene_idx == 0:
+        view_point = {
+            "front" : [ -0.69790464097988081, -0.039023220234865395, 0.71512677224478527 ],
+            "lookat" : [ 26.769546783064907, 0.072182490889707351, -15.202964500520691 ],
+            "up" : [ 0.71547012226586004, 0.00679146569914983, 0.69861032066419726 ],
+            "zoom" : 0.31999999999999962
+        }
+    else:
+        logger.info(f'view_point for scene {scene_idx} is not pre-fixed -> please set it yourself')
+        view_point = None
+    main(scene_idx, debug=False, view_point=view_point)
     
