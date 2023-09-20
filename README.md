@@ -2,7 +2,20 @@
 
 This is the official code release for **Practical Collaborative Perception: A Framework for Asynchronous and Multi-Agent 3D Object Detection**
 
-We propose a new framework for collaborative 3D object detection named *lately* fusion that takes objects detected by other connected agents, 
+## TL;DR
+We propose an asynchronous collaborative 3D object detection method that achieves comparable performance with Early Fusion and consumes as 
+little bandwidth as Late Fusion.
+
+<p align="center">
+  <img src="docs/media/qualitative_static.png">
+</p>
+Qualitative performance on the [V2X-Sim dataset](https://ai4ce.github.io/V2X-Sim/) Blue points are LiDAR points collected by the ego vehicle. 
+Gray points are LiDAR points collected by other agents which are displayed for visualization purposes only. 
+Orange stars denote the MoDAR points broadcast by other connected agents. Green solid and dashed rectangles respectively represent ground truth 
+visible and invisible to the ego vehicle. Red rectangles are the detections made by the ego vehicle using our method.
+
+## Introduction
+Our a new framework for collaborative 3D object detection, called *lately* fusion, takes objects detected by other connected agents, 
 including connected autonomous vehicles (CAV) and intelligent roadside units (IRSU), and fuse them with the raw point cloud of the ego vehicle.
 Our method is the combination of *late* fusion that exchanges connected agents' output (i.e., detected objects) and ear*ly* fusion that fuses 
 exchanged information at the input of the ego vehicle, thus its name *lately*.
@@ -39,12 +52,6 @@ both syncrhonous (agents obtain and process point cloud at the same time) and as
 | [Mid-DiscoNet](tools/cfgs/v2x_sim_models/v2x_pointpillar_disco.yaml)            | 78.70  | 73.10  | 25.16   | [pillar_mid_sync](https://uncloud.univ-nantes.fr/index.php/s/FXN7ciHzXDazjNB)|
 | [Early](tools/cfgs/v2x_sim_models/v2x_pointpillar_basic_ego_early.yaml)            | 78.10  | 77.30  | 33.95   | [pillar_early_sync](https://uncloud.univ-nantes.fr/index.php/s/WXrSCRjiSw7RxYL) |
 | [Ours](tools/cfgs/v2x_sim_models/v2x_pointpillar_basic_ego.yaml)            | 79.20  | 76.72  | 0.02   | [pillar_colab_async](https://uncloud.univ-nantes.fr/index.php/s/4rPJ2T7Q3STAw6T) |
-
-Qualitative result on the V2X-Sim dataset
-
-<p align="center">
-  <img src="docs/media/qualitative_results.gif">
-</p>
 
 
 ## Overview
@@ -115,6 +122,12 @@ cd $DIR_OpenPCDet/workspace
 
 python visualize_collab.py --scene_idx 0
 ```
+
+Qualitative result on the V2X-Sim dataset
+<p align="center">
+  <img src="docs/media/qualitative_results.gif">
+</p>
+
 
 Note that this visualization can be run on the **mini** partition of V2X-Sim as well. 
 If this is what you want, please unzip the mini partition of V2X-Sim to `$DIR_V2X`and replace `trainval` in the line 29 of 
